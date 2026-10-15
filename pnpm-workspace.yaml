@@ -8,3 +8,9 @@ allowBuilds:
   electron: true
   esbuild: true
   protobufjs: true
+
+onlyBuiltDependencies:
+  - '@firebase/util'
+  - 'electron'
+  - 'esbuild'
+  - 'protobufjs'
