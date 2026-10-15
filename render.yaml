@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: xxq-chat-backend
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter xxq-chat-server build
+    startCommand: node server/dist/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: CORS_ORIGIN
+        value: '*'
+      - key: INITIAL_ADMIN_EMAIL
+        value: admin@xxqchat.com
+      - key: WHITELIST_MODE_DEFAULT
+        value: 'true'
+      - key: DB_PATH
+        value: /var/data/xxq-chat.db
+      - key: JWT_DEV_SECRET
+        generateValue: true
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+    disk:
+      name: xxq-chat-data
+      mountPath: /var/data
+      sizeGB: 1

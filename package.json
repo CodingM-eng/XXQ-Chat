@@ -1,0 +1,21 @@
+{
+  "name": "xxq-chat-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "XXQ Chat - Multi-platform production-grade messaging platform",
+  "scripts": {
+    "dev:server": "pnpm --filter xxq-chat-server dev",
+    "dev:web": "pnpm --filter xxq-chat-web dev",
+    "dev:desktop": "pnpm --filter xxq-chat-desktop dev",
+    "build:server": "pnpm --filter xxq-chat-server build",
+    "build:web": "pnpm --filter xxq-chat-web build",
+    "build:desktop": "pnpm --filter xxq-chat-desktop build",
+    "test:server": "pnpm --filter xxq-chat-server test",
+    "test:web": "pnpm --filter xxq-chat-web test",
+    "test": "pnpm test:server && pnpm test:web",
+    "lint": "pnpm --filter xxq-chat-server lint && pnpm --filter xxq-chat-web lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

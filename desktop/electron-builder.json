@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.xxq.chat.desktop",
+  "productName": "XXQ Chat",
+  "copyright": "Copyright © 2026 XXQ Chat Team",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "src/**/*",
+    {
+      "from": "../web/dist",
+      "to": "web",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": ["dir"],
+    "artifactName": "XXQ-Chat-${version}-${arch}.${ext}"
+  }
+}

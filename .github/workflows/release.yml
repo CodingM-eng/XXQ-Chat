@@ -1,0 +1,118 @@
+name: XXQ Chat Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows-exe:
+    name: Build Windows Desktop Release (.exe)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Web Production Assets
+        run: pnpm --filter xxq-chat-web build
+
+      - name: Copy Web Dist to Desktop
+        run: Copy-Item -Recurse -Force "web\dist" "desktop\web"
+
+      - name: Build Windows Executable
+        run: pnpm --filter xxq-chat-desktop build
+
+      - name: Archive Windows Application
+        run: Compress-Archive -Path "desktop\release\win-unpacked\*" -DestinationPath "desktop\release\XXQ-Chat-Windows-x64.zip" -Force
+
+      - name: Upload Windows Archive Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xxq-chat-windows-x64
+          path: desktop/release/XXQ-Chat-Windows-x64.zip
+
+  build-android-apk:
+    name: Build Android APK Release (.apk)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Build Android Release / Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xxq-chat-android-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  publish-github-release:
+    name: Create GitHub Release with Artifacts
+    needs: [build-windows-exe, build-android-apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xxq-chat-windows-x64
+          path: release-artifacts/windows
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xxq-chat-android-apk
+          path: release-artifacts/android
+
+      - name: Prepare Release Assets
+        run: |
+          mkdir -p dist-release
+          cp release-artifacts/windows/XXQ-Chat-Windows-x64.zip dist-release/XXQ-Chat-Windows-x64.zip
+          cp release-artifacts/android/app-debug.apk dist-release/XXQ-Chat-Android-debug.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-release/XXQ-Chat-Windows-x64.zip
+            dist-release/XXQ-Chat-Android-debug.apk
+          name: XXQ Chat Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true

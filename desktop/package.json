@@ -1,0 +1,15 @@
+{
+  "name": "xxq-chat-desktop",
+  "version": "1.0.0",
+  "description": "XXQ Chat native Windows desktop application",
+  "main": "src/main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder --win dir --config electron-builder.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}
