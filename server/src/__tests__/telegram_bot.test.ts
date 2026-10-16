@@ -195,4 +195,106 @@ describe('XXQ Chat Telegram Bot Integration Suite', () => {
     expect(delRes.status).toBe(200);
     expect(delRes.body.success).toBe(true);
   });
+
+  it('tests bot connection status and webhook info via /api/telegram/bots/:id/test', async () => {
+    vi.spyOn(TelegramBotService, 'testBot').mockResolvedValueOnce({
+      botInfo: { username: 'xxq_health_bot', botName: 'Health Checker', botId: 123456 },
+      webhookInfo: { url: 'https://example.com/api/telegram/webhook/test', pendingUpdateCount: 0 },
+    });
+
+    const bot = await dataStore.addTelegramBot({
+      botName: 'Health Checker',
+      username: 'xxq_health_bot',
+      encryptedToken: encryptSecret('tok_health'),
+      webhookSecretToken: 'sec_health',
+      isEnabled: true,
+      customCommands: [],
+    });
+
+    const res = await request(app)
+      .post(`/api/telegram/bots/${bot.id}/test`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.bot.username).toBe('xxq_health_bot');
+    expect(res.body.webhookInfo.pendingUpdateCount).toBe(0);
+  });
+
+  it('replaces bot token securely and updates webhook via /api/telegram/bots/:id/token', async () => {
+    vi.spyOn(TelegramBotService, 'validateToken').mockResolvedValueOnce({
+      username: 'xxq_rotated_bot',
+      botName: 'Rotated Bot',
+      botId: 777888999,
+    });
+    const setupSpy = vi.spyOn(TelegramBotService, 'setupWebhookAndCommands').mockResolvedValue();
+
+    const bot = await dataStore.addTelegramBot({
+      botName: 'Old Bot Name',
+      username: 'xxq_old_bot',
+      encryptedToken: encryptSecret('tok_old'),
+      webhookSecretToken: 'sec_old',
+      isEnabled: true,
+      customCommands: [{ command: 'duyuru', response: 'aktif' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/telegram/bots/${bot.id}/token`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ token: '999888777:NEW_TOKEN_AFTER_REVOKE' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.bot.username).toBe('xxq_rotated_bot');
+    expect(res.body.bot.botName).toBe('Rotated Bot');
+    // Ensure token is not returned
+    expect(res.body.bot.encryptedToken).toBeUndefined();
+    // Ensure setupWebhookAndCommands was called with updated bot
+    expect(setupSpy).toHaveBeenCalled();
+  });
+
+  it('unregisters webhook when bot is toggled off or deleted', async () => {
+    const deleteWebhookSpy = vi.spyOn(TelegramBotService, 'deleteWebhook').mockResolvedValue(true);
+
+    const bot = await dataStore.addTelegramBot({
+      botName: 'Toggle Bot',
+      username: 'xxq_toggle_bot',
+      encryptedToken: encryptSecret('tok_toggle'),
+      webhookSecretToken: 'sec_toggle',
+      isEnabled: true,
+      customCommands: [],
+    });
+
+    // 1. Toggle off
+    const toggleRes = await request(app)
+      .post(`/api/telegram/bots/${bot.id}/toggle`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isEnabled: false });
+
+    expect(toggleRes.status).toBe(200);
+    expect(deleteWebhookSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Delete
+    const deleteRes = await request(app)
+      .delete(`/api/telegram/bots/${bot.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(deleteRes.status).toBe(200);
+    expect(deleteWebhookSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('blocks non-admin users from accessing telegram bot management', async () => {
+    const userToken = generateDevToken({ id: 'reg_user', email: 'regular@user.com', displayName: 'Standart Kullanıcı', isAdmin: false });
+
+    const getRes = await request(app)
+      .get('/api/telegram/bots')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(getRes.status).toBe(403);
+
+    const postRes = await request(app)
+      .post('/api/telegram/bots')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ token: '123456789:test' });
+    expect(postRes.status).toBe(403);
+  });
 });

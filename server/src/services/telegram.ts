@@ -123,6 +123,90 @@ export class TelegramBotService {
   }
 
   /**
+   * Removes webhook registration from Telegram API.
+   */
+  static async deleteWebhook(bot: DbTelegramBot): Promise<boolean> {
+    try {
+      const token = decryptSecret(bot.encryptedToken);
+      const res = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`);
+      return res.ok;
+    } catch (err) {
+      console.warn('[TELEGRAM] Delete webhook failed:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Tests bot credentials and live webhook status with Telegram API.
+   */
+  static async testBot(bot: DbTelegramBot): Promise<{
+    ok: boolean;
+    botInfo: { id: number; username: string; botName: string };
+    webhookInfo?: {
+      url: string;
+      hasCustomCertificate: boolean;
+      pendingUpdateCount: number;
+      lastErrorDate?: number;
+      lastErrorMessage?: string;
+    };
+  }> {
+    const token = decryptSecret(bot.encryptedToken);
+    const info = await this.validateToken(token);
+
+    let webhookInfo: any = undefined;
+    try {
+      const whRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+      if (whRes.ok) {
+        const whData = (await whRes.json()) as any;
+        if (whData.ok && whData.result) {
+          webhookInfo = {
+            url: whData.result.url || '',
+            hasCustomCertificate: !!whData.result.has_custom_certificate,
+            pendingUpdateCount: whData.result.pending_update_count || 0,
+            lastErrorDate: whData.result.last_error_date,
+            lastErrorMessage: whData.result.last_error_message,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[TELEGRAM] Could not retrieve webhook info during test:', err);
+    }
+
+    return {
+      ok: true,
+      botInfo: { id: info.botId, username: info.username, botName: info.botName },
+      webhookInfo,
+    };
+  }
+
+  /**
+   * Replaces an existing bot's token with a newly generated one from @BotFather.
+   */
+  static async replaceToken(botId: string, newToken: string): Promise<DbTelegramBot> {
+    const trimmed = newToken.trim();
+    const info = await this.validateToken(trimmed);
+    const encryptedToken = encryptSecret(trimmed);
+    const webhookSecretToken = crypto.randomBytes(32).toString('hex');
+
+    const updated = await dataStore.updateTelegramBot(botId, {
+      botName: info.botName,
+      username: info.username,
+      encryptedToken,
+      webhookSecretToken,
+    });
+
+    if (!updated) {
+      throw new Error('Bot bulunamadı.');
+    }
+
+    if (updated.isEnabled) {
+      await this.setupWebhookAndCommands(updated, trimmed);
+    }
+
+    return updated;
+  }
+
+  /**
    * Sends a message via Telegram bot.
    */
   static async sendMessage(bot: DbTelegramBot, chatId: number | string, text: string): Promise<boolean> {

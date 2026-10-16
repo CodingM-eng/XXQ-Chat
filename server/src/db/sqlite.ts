@@ -1694,7 +1694,7 @@ export class SqliteStore implements DataStore {
     };
   }
 
-  async updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null> {
+  async updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken' | 'botName' | 'username'>>): Promise<DbTelegramBot | null> {
     const updateParts: string[] = [];
     const params: any[] = [];
 
@@ -1713,6 +1713,14 @@ export class SqliteStore implements DataStore {
     if (updates.webhookSecretToken !== undefined) {
       updateParts.push('webhook_secret_token = ?');
       params.push(updates.webhookSecretToken);
+    }
+    if (updates.botName !== undefined) {
+      updateParts.push('bot_name = ?');
+      params.push(updates.botName);
+    }
+    if (updates.username !== undefined) {
+      updateParts.push('username = ?');
+      params.push(updates.username);
     }
 
     if (updateParts.length > 0) {

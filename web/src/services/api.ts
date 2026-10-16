@@ -368,6 +368,28 @@ class ApiService {
     });
   }
 
+  async testTelegramBot(id: string): Promise<{
+    success: boolean;
+    bot: { id: string; botName: string; username: string; isEnabled: boolean };
+    webhookInfo?: { url: string; pendingUpdateCount: number; lastErrorDate?: number; lastErrorMessage?: string };
+    message: string;
+  }> {
+    return this.request(`/api/telegram/bots/${id}/test`, {
+      method: 'POST',
+    });
+  }
+
+  async replaceTelegramBotToken(id: string, token: string): Promise<{
+    success: boolean;
+    bot: TelegramBot;
+    message: string;
+  }> {
+    return this.request(`/api/telegram/bots/${id}/token`, {
+      method: 'PUT',
+      body: JSON.stringify({ token }),
+    });
+  }
+
   async deleteTelegramBot(id: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/api/telegram/bots/${id}`, {
       method: 'DELETE',

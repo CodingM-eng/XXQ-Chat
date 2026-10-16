@@ -302,7 +302,7 @@ export interface DataStore {
   addTelegramBot(bot: Omit<DbTelegramBot, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbTelegramBot>;
   getTelegramBots(): Promise<DbTelegramBot[]>;
   getTelegramBotById(id: string): Promise<DbTelegramBot | null>;
-  updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null>;
+  updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken' | 'botName' | 'username'>>): Promise<DbTelegramBot | null>;
   deleteTelegramBot(id: string): Promise<boolean>;
 
   // Support & Problem Reports

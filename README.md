@@ -265,6 +265,46 @@ cd android
 
 ---
 
+## 🤖 Telegram Bot Entegrasyonu ve Yönetimi
+
+XXQ Chat, yöneticilerin tek tıkla Telegram botu bağlamasını, durumunu yönetmesini ve komut yanıtlarını özelleştirmesini sağlar.
+
+### 1. Bot Oluşturma ve Ekleme
+1. Telegram uygulamasında resmi `@BotFather` botunu açın ve `/newbot` komutunu gönderin.
+2. Botunuza bir isim ve benzersiz bir `@kullaniciadi` (sonu `bot` ile biten) belirleyin.
+3. `@BotFather` tarafından verilen API belirtecini (token) kopyalayın (örn: `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
+4. XXQ Chat Yönetim Paneline gidin: **Yönetim Paneli > Telegram Botları** sekmesine tıklayın.
+5. **"+ Telegram Botu Ekle"** butonuna tıklayarak belirteci yapıştırın.
+6. Sunucu, Telegram API'sinin `getMe` metodunu çağırarak belirteci anında doğrular, bot adını ve `@kullaniciadi` bilgisini kaydeder.
+7. Belirteç, sunucu tarafında **AES-256-GCM** ile şifrelenerek saklanır. Belirteç asla ön yüze döndürülmez, günlüklere (log) yazılmaz veya GitHub'a gönderilmez.
+
+### 2. Önemli Telegram API Kısıtlaması (Uyarı)
+> [!IMPORTANT]
+> **Telegram Botları Kendiliğinden İletişim Başlatamaz:**
+> Telegram platformunun gizlilik ve spam koruma kuralları gereği, bir bot hiçbir zaman bir Telegram kullanıcısına ya da başka bir bota kendiliğinden ilk mesajı gönderemez.
+> Bir botun komutları yanıtlayabilmesi veya mesaj gönderebilmesi için, gerçek bir Telegram kullanıcısının ilgili botu açıp (`https://t.me/<bot_kullanici_adi>`) bota ilk olarak **`/start`** komutunu göndermiş olması **zorunludur**.
+
+### 3. Yerleşik ve Özel Komutlar
+- **`/start`**: Kullanıcıyı karşılar, botun XXQ Chat sistemine bağlı olduğunu doğrular ve yardım menüsünü sunar.
+- **`/yardim`**: Kullanılabilir tüm yerleşik ve yönetici tanımlı komutları listeler.
+- **`/stat`**: Güvenli, toplanmış (aggregated) sistem metriklerini döndürür (kayıtlı kullanıcı sayısı, onaylı kullanıcılar, toplam mesaj sayısı, whitelist modu durumu).
+  - *Gizlilik Güvencesi:* `/stat` çıktısında hiçbir zaman telefon numarası, şifreli anahtarlar, belirteçler veya kişisel sohbet içerikleri yer almaz.
+- **Özel Komutlar (Custom Commands)**: Yönetici paneli üzerinden bota özel metin tabanlı komutlar ve yanıtlar eklenebilir. Güvenlik gereği kesinlikle harici kod (eval/script) çalıştırılmaz; yalnızca güvenli metin yanıtları döndürülür.
+
+### 4. Yönetim ve Yaşam Döngüsü Kontrolleri
+- **Test Et**: Bot kimlik bilgilerini (`getMe`) ve Render üzerindeki canlı HTTPS webhook durumunu (`getWebhookInfo`, bekleyen güncelleme sayısı, son hata kaydı) anlık olarak sorgular.
+- **Durdur / Başlat**: Bot durdurulduğunda Telegram API `deleteWebhook` metodu çağrılarak Render üzerindeki webhook kaydı temizlenir ve gereksiz istek trafiği önlenir. Başlatıldığında webhook gizli belirteçle (`X-Telegram-Bot-Api-Secret-Token`) yeniden kurulur.
+- **Komutlar**: Botun komut listesini ve açıklamalarını düzenleme imkanı sunar.
+- **Belirteci Yenile (Token Rotation)**: `@BotFather` üzerinden belirteç sıfırlandığında, eski belirteci silip yenisini doğrulayarak sistemi kesintisiz günceller.
+- **Sil**: Bot kaydını ve Telegram API webhookunu tamamen kaldırır.
+
+### 5. Render Ortam Değişkenleri
+Telegram webhookunun çalışabilmesi için Render backend servisinizde aşağıdaki değişkenler tanımlıdır:
+- `SERVER_BASE_URL`: `https://xxq-chat-backend.onrender.com` (Telegram'a bildirilecek HTTPS webhook URL'si için kullanılır).
+- `ENCRYPTION_KEY`: Bot belirteçlerini AES-256-GCM ile şifrelemek için kullanılan 32 karakterlik anahtar (Render tarafından otomatik üretilir).
+
+---
+
 ## 🧪 Comprehensive Two-User & Multi-User Verification Guide
 
 To verify end-to-end functionality across authenticated accounts:

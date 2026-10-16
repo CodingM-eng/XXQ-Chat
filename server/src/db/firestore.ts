@@ -1244,7 +1244,7 @@ export class FirestoreStore implements DataStore {
     };
   }
 
-  async updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null> {
+  async updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken' | 'botName' | 'username'>>): Promise<DbTelegramBot | null> {
     const ref = this.getFirestore().collection('telegram_bots').doc(id);
     const doc = await ref.get();
     if (!doc.exists) return null;
@@ -1254,6 +1254,8 @@ export class FirestoreStore implements DataStore {
     if (updates.customCommands !== undefined) toUpdate.customCommands = updates.customCommands;
     if (updates.encryptedToken !== undefined) toUpdate.encryptedToken = updates.encryptedToken;
     if (updates.webhookSecretToken !== undefined) toUpdate.webhookSecretToken = updates.webhookSecretToken;
+    if (updates.botName !== undefined) toUpdate.botName = updates.botName;
+    if (updates.username !== undefined) toUpdate.username = updates.username;
 
     await ref.set(toUpdate, { merge: true });
     return this.getTelegramBotById(id);
