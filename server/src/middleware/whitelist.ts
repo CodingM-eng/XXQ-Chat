@@ -1,17 +1,29 @@
 import { Request, Response, NextFunction } from 'express';
-import { isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
+import { isWhitelistModeEnabled, isEmailWhitelisted, dataStore } from '../db/index.js';
 
 export async function enforceWhitelist(req: Request, res: Response, next: NextFunction): Promise<void> {
   const user = req.user;
 
   if (!user) {
-    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication required' });
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Yetkilendirme gereklidir.' });
     return;
   }
 
-  // Administrators always have access
+  // Administrators always have full access
   if (user.isAdmin) {
     return next();
+  }
+
+  // If user state is pending, immediately deny access
+  if (user.status === 'pending') {
+    await dataStore.recordPendingAccess(user.email, user.displayName, user.avatarUrl);
+    res.status(403).json({
+      error: 'ACCESS_DENIED_NOT_WHITELISTED',
+      message: 'XXQ Chat şu anda kısıtlı beyaz liste modunda çalışmaktadır. Hesabınız henüz bir yönetici tarafından onaylanmamıştır.',
+      email: user.email,
+      whitelistActive: true,
+    });
+    return;
   }
 
   // Check if whitelist mode is currently enabled
@@ -26,6 +38,7 @@ export async function enforceWhitelist(req: Request, res: Response, next: NextFu
   const approved = await isEmailWhitelisted(user.email);
 
   if (!approved) {
+    await dataStore.recordPendingAccess(user.email, user.displayName, user.avatarUrl);
     res.status(403).json({
       error: 'ACCESS_DENIED_NOT_WHITELISTED',
       message: 'XXQ Chat şu anda kısıtlı beyaz liste modunda çalışmaktadır. Hesabınız henüz bir yönetici tarafından onaylanmamıştır.',

@@ -1,4 +1,13 @@
-import { User, Conversation, Message, WhitelistItem, AuditLog, AdminStats, WhitelistStatus } from '../types';
+import {
+  User,
+  Conversation,
+  Message,
+  WhitelistItem,
+  AuditLog,
+  AdminStats,
+  WhitelistStatus,
+  PendingRequest,
+} from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -83,7 +92,26 @@ class ApiService {
     return this.request('/api/users/me');
   }
 
-  async updateMe(data: { displayName?: string; avatarUrl?: string }): Promise<{ user: User }> {
+  async completeOnboarding(data: {
+    firstName?: string;
+    lastName?: string;
+    displayName: string;
+    avatarUrl?: string;
+    phoneNumber?: string;
+  }): Promise<{ user: User }> {
+    return this.request('/api/users/onboarding', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateMe(data: {
+    firstName?: string;
+    lastName?: string;
+    displayName?: string;
+    avatarUrl?: string;
+    phoneNumber?: string;
+  }): Promise<{ user: User }> {
     return this.request('/api/users/me', {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -99,6 +127,10 @@ class ApiService {
     return this.request('/api/conversations');
   }
 
+  async getConversation(id: string): Promise<{ conversation: Conversation }> {
+    return this.request(`/api/conversations/${id}`);
+  }
+
   async createDirectConversation(peerEmail: string): Promise<{ conversationId: string; isNew: boolean; peer: any }> {
     return this.request('/api/conversations/direct', {
       method: 'POST',
@@ -106,14 +138,62 @@ class ApiService {
     });
   }
 
+  async createGroupConversation(
+    name: string,
+    memberIds: string[],
+    avatarUrl?: string
+  ): Promise<{ conversation: Conversation }> {
+    return this.request('/api/conversations/group', {
+      method: 'POST',
+      body: JSON.stringify({ name, memberIds, avatarUrl }),
+    });
+  }
+
+  async addGroupParticipants(conversationId: string, userIds: string[]): Promise<{ conversation: Conversation }> {
+    return this.request(`/api/conversations/${conversationId}/participants`, {
+      method: 'POST',
+      body: JSON.stringify({ userIds }),
+    });
+  }
+
+  async removeGroupParticipant(conversationId: string, userId: string): Promise<{ success: boolean }> {
+    return this.request(`/api/conversations/${conversationId}/participants/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateGroup(conversationId: string, data: { name?: string; avatarUrl?: string }): Promise<{ conversation: Conversation }> {
+    return this.request(`/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getMessages(conversationId: string, limit: number = 50): Promise<{ messages: Message[] }> {
     return this.request(`/api/conversations/${conversationId}/messages?limit=${limit}`);
   }
 
-  async sendMessage(conversationId: string, content: string, clientMessageId?: string): Promise<{ message: Message }> {
+  async sendMessage(
+    conversationId: string,
+    content: string,
+    clientMessageId?: string,
+    replyToMessageId?: string,
+    forwardedFrom?: { senderName: string }
+  ): Promise<{ message: Message }> {
     return this.request(`/api/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, clientMessageId }),
+      body: JSON.stringify({ content, clientMessageId, replyToMessageId, forwardedFrom }),
+    });
+  }
+
+  async toggleReaction(
+    conversationId: string,
+    messageId: string,
+    emoji: string
+  ): Promise<{ success: boolean; reactions: Record<string, string[]> }> {
+    return this.request(`/api/conversations/${conversationId}/messages/${messageId}/reactions`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji }),
     });
   }
 
@@ -131,6 +211,17 @@ class ApiService {
 
   async getWhitelist(): Promise<{ whitelist: WhitelistItem[] }> {
     return this.request('/api/admin/whitelist');
+  }
+
+  async getPendingRequests(): Promise<{ pendingRequests: PendingRequest[] }> {
+    return this.request('/api/admin/pending');
+  }
+
+  async approvePendingRequest(email: string): Promise<{ success: boolean; email: string; message: string }> {
+    return this.request('/api/admin/whitelist/approve', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
   }
 
   async addWhitelist(email: string): Promise<{ success: boolean; email: string; message: string }> {

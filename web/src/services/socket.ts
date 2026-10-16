@@ -1,6 +1,5 @@
 import { io, Socket } from 'socket.io-client';
 import { api } from './api';
-import { Message } from '../types';
 
 let socket: Socket | null = null;
 
@@ -8,19 +7,24 @@ export function getSocket(): Socket | null {
   return socket;
 }
 
-export function connectSocket(onMessageNew?: (msg: Message) => void): Socket {
+export function connectSocket(): Socket {
   const token = api.getToken();
+  const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
+
+  // If already connected with valid socket, reuse it
+  if (socket && socket.connected) {
+    return socket;
+  }
 
   if (socket) {
     socket.disconnect();
   }
 
-  const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
-
   socket = io(socketUrl, {
     auth: { token },
+    transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: 10,
+    reconnectionAttempts: 20,
     reconnectionDelay: 1000,
   });
 
@@ -31,10 +35,6 @@ export function connectSocket(onMessageNew?: (msg: Message) => void): Socket {
   socket.on('connect_error', (err) => {
     console.warn('[XXQ Socket] Connection error:', err.message);
   });
-
-  if (onMessageNew) {
-    socket.on('message:new', onMessageNew);
-  }
 
   return socket;
 }

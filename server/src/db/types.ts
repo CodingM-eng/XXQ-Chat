@@ -1,11 +1,27 @@
 export interface DbUser {
   id: string;
   email: string;
+  firstName?: string | null;
+  lastName?: string | null;
   displayName: string;
   avatarUrl?: string | null;
+  phoneNumber?: string | null; // private, never returned to other users
   isAdmin: boolean;
+  onboarded: boolean;
+  status: 'active' | 'pending' | 'blocked';
   createdAt: string;
   lastActiveAt: string;
+}
+
+export interface DbPendingAccessRequest {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  firstAttemptAt: string;
+  lastAttemptAt: string;
+  attemptCount: number;
+  status: 'pending' | 'approved' | 'rejected';
 }
 
 export interface DbWhitelistEntry {
@@ -32,6 +48,17 @@ export interface DbConversationSummary {
   id: string;
   type: 'direct' | 'group';
   name: string;
+  avatarUrl?: string | null;
+  creatorId?: string | null;
+  adminIds?: string[];
+  participantCount?: number;
+  participants?: Array<{
+    id: string;
+    email: string;
+    displayName: string;
+    avatarUrl?: string | null;
+    isAdmin?: boolean;
+  }>;
   peer: {
     id: string;
     email: string;
@@ -51,6 +78,17 @@ export interface DbConversationSummary {
   updatedAt: string;
 }
 
+export interface DbMessageReply {
+  id: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+}
+
+export interface DbMessageForward {
+  senderName: string;
+}
+
 export interface DbMessage {
   id: string;
   conversationId: string;
@@ -59,6 +97,9 @@ export interface DbMessage {
   senderAvatar?: string | null;
   clientMessageId?: string | null;
   content: string;
+  replyTo?: DbMessageReply | null;
+  forwardedFrom?: DbMessageForward | null;
+  reactions?: Record<string, string[]>; // { "👍": ["userId1", "userId2"] }
   status: 'pending' | 'sent' | 'delivered' | 'read';
   createdAt: string;
 }
@@ -80,17 +121,60 @@ export interface DataStore {
   addToWhitelist(email: string, approvedBy: string): Promise<void>;
   removeFromWhitelist(email: string): Promise<boolean>;
 
+  // Pending access requests
+  recordPendingAccess(email: string, displayName?: string, avatarUrl?: string, ipAddress?: string): Promise<void>;
+  getPendingAccessRequests(): Promise<DbPendingAccessRequest[]>;
+  resolvePendingAccess(email: string, status: 'approved' | 'rejected'): Promise<void>;
+
   // Users
   getUserById(id: string): Promise<DbUser | null>;
   getUserByEmail(email: string): Promise<DbUser | null>;
-  upsertUser(user: { id: string; email: string; displayName: string; avatarUrl?: string | null; isAdmin?: boolean }): Promise<DbUser>;
-  updateUserProfile(id: string, updates: { displayName?: string; avatarUrl?: string }): Promise<DbUser | null>;
+  upsertUser(user: {
+    id: string;
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    displayName: string;
+    avatarUrl?: string | null;
+    phoneNumber?: string | null;
+    isAdmin?: boolean;
+    onboarded?: boolean;
+    status?: 'active' | 'pending' | 'blocked';
+  }): Promise<DbUser>;
+  updateUserProfile(
+    id: string,
+    updates: {
+      firstName?: string | null;
+      lastName?: string | null;
+      displayName?: string;
+      avatarUrl?: string | null;
+      phoneNumber?: string | null;
+    }
+  ): Promise<DbUser | null>;
+  completeOnboarding(
+    userId: string,
+    data: {
+      firstName?: string | null;
+      lastName?: string | null;
+      displayName: string;
+      avatarUrl?: string | null;
+      phoneNumber?: string | null;
+    }
+  ): Promise<DbUser>;
   updateUserLastActive(id: string): Promise<void>;
   getAllUsers(): Promise<DbUser[]>;
   searchUsers(excludeUserId: string, query?: string): Promise<DbUser[]>;
 
   // Audit Logs
-  recordAuditLog(log: { id?: string; actorId?: string | null; actorEmail: string; action: string; target?: string | null; details?: string | null; ipAddress?: string | null }): Promise<void>;
+  recordAuditLog(log: {
+    id?: string;
+    actorId?: string | null;
+    actorEmail: string;
+    action: string;
+    target?: string | null;
+    details?: string | null;
+    ipAddress?: string | null;
+  }): Promise<void>;
   getAuditLogs(limit?: number): Promise<DbAuditLog[]>;
 
   // Stats
@@ -98,11 +182,30 @@ export interface DataStore {
 
   // Conversations & Messages
   getUserConversations(userId: string): Promise<DbConversationSummary[]>;
+  getConversation(conversationId: string, userId: string): Promise<DbConversationSummary | null>;
   getDirectConversation(userId1: string, userId2: string): Promise<string | null>;
   createDirectConversation(userId1: string, userId2: string): Promise<string>;
+  createGroupConversation(creatorId: string, name: string, memberIds: string[], avatarUrl?: string | null): Promise<string>;
+  addConversationParticipants(conversationId: string, userIds: string[]): Promise<void>;
+  removeConversationParticipant(conversationId: string, userId: string): Promise<void>;
+  updateConversation(conversationId: string, updates: { name?: string; avatarUrl?: string | null }): Promise<void>;
   isConversationParticipant(conversationId: string, userId: string): Promise<boolean>;
+  isConversationAdmin(conversationId: string, userId: string): Promise<boolean>;
+  getConversationParticipantIds(conversationId: string): Promise<string[]>;
   getConversationMessages(conversationId: string, limit?: number): Promise<DbMessage[]>;
   findMessageByClientId(clientMessageId: string, senderId: string): Promise<DbMessage | null>;
-  saveMessage(message: { id?: string; conversationId: string; senderId: string; senderName: string; senderAvatar?: string | null; clientMessageId?: string | null; content: string; status?: 'pending' | 'sent' | 'delivered' | 'read' }): Promise<DbMessage>;
+  saveMessage(message: {
+    id?: string;
+    conversationId: string;
+    senderId: string;
+    senderName: string;
+    senderAvatar?: string | null;
+    clientMessageId?: string | null;
+    content: string;
+    replyTo?: DbMessageReply | null;
+    forwardedFrom?: DbMessageForward | null;
+    status?: 'pending' | 'sent' | 'delivered' | 'read';
+  }): Promise<DbMessage>;
   markConversationRead(conversationId: string, userId: string, messageId: string): Promise<void>;
+  toggleMessageReaction(conversationId: string, messageId: string, userId: string, emoji: string): Promise<Record<string, string[]>>;
 }

@@ -13,6 +13,42 @@ export function getSocketServer(): Server | null {
 // Track active connections per user
 const activeUsers = new Map<string, Set<string>>();
 
+export async function onWhitelistRevoked(email: string): Promise<void> {
+  if (!ioInstance) return;
+  const normalized = email.toLowerCase().trim();
+  try {
+    const sockets = await ioInstance.fetchSockets();
+    for (const s of sockets) {
+      const sUser = s.data?.user as AuthUser | undefined;
+      if (sUser && sUser.email.toLowerCase().trim() === normalized && !sUser.isAdmin) {
+        s.emit('auth:revoked', { message: 'Beyaz liste onayınız kaldırıldı.' });
+        s.disconnect(true);
+      }
+    }
+  } catch (err) {
+    console.error('Error disconnecting revoked user sockets:', err);
+  }
+}
+
+export async function onWhitelistModeChanged(enabled: boolean): Promise<void> {
+  if (!ioInstance || !enabled) return;
+  try {
+    const sockets = await ioInstance.fetchSockets();
+    for (const s of sockets) {
+      const sUser = s.data?.user as AuthUser | undefined;
+      if (sUser && !sUser.isAdmin) {
+        const approved = await isEmailWhitelisted(sUser.email);
+        if (!approved) {
+          s.emit('auth:revoked', { message: 'Kısıtlı beyaz liste modu etkinleştirildi.' });
+          s.disconnect(true);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error disconnecting non-whitelisted sockets after mode change:', err);
+  }
+}
+
 export function setupSocketServer(httpServer: HttpServer): Server {
   const allowedOrigins = config.CORS_ORIGIN === '*' ? '*' : config.CORS_ORIGIN.split(',').map((o) => o.trim());
 
@@ -41,11 +77,16 @@ export function setupSocketServer(httpServer: HttpServer): Server {
         return next(new Error('INVALID_TOKEN'));
       }
 
+      if (user.status === 'pending') {
+        return next(new Error('ACCESS_DENIED_NOT_WHITELISTED'));
+      }
+
       // Check whitelist access control
       const whitelistActive = await isWhitelistModeEnabled();
       if (whitelistActive && !user.isAdmin) {
         const approved = await isEmailWhitelisted(user.email);
         if (!approved) {
+          await dataStore.recordPendingAccess(user.email, user.displayName, user.avatarUrl);
           return next(new Error('ACCESS_DENIED_NOT_WHITELISTED'));
         }
       }
@@ -89,69 +130,124 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     }
 
     // Handle sending a message
-    socket.on('message:send', async (data: { conversationId: string; content: string; clientMessageId?: string }, callback) => {
-      try {
-        // Enforce whitelist on every real-time message event: fail closed
-        const whitelistActive = await isWhitelistModeEnabled();
-        if (whitelistActive && !user.isAdmin) {
-          const approved = await isEmailWhitelisted(user.email);
-          if (!approved) {
-            if (typeof callback === 'function') {
-              callback({ error: 'ACCESS_DENIED_NOT_WHITELISTED' });
+    socket.on(
+      'message:send',
+      async (
+        data: {
+          conversationId: string;
+          content: string;
+          clientMessageId?: string;
+          replyTo?: { id: string; senderId: string; senderName: string; content: string };
+          forwardedFrom?: { senderName: string };
+        },
+        callback
+      ) => {
+        try {
+          // Enforce whitelist on every real-time message event: fail closed
+          const whitelistActive = await isWhitelistModeEnabled();
+          if (whitelistActive && !user.isAdmin) {
+            const approved = await isEmailWhitelisted(user.email);
+            if (!approved) {
+              socket.emit('auth:revoked', { message: 'Beyaz liste onayınız bulunmuyor.' });
+              socket.disconnect(true);
+              if (typeof callback === 'function') callback({ error: 'ACCESS_DENIED_NOT_WHITELISTED' });
+              return;
             }
+          }
+
+          const { conversationId, content, clientMessageId, replyTo, forwardedFrom } = data;
+          if (!conversationId || !content || typeof content !== 'string') {
+            if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
             return;
           }
-        }
 
-        const { conversationId, content, clientMessageId } = data;
-        if (!conversationId || !content || typeof content !== 'string') {
+          const trimmedContent = content.trim();
+          if (!trimmedContent || trimmedContent.length > 5000) {
+            if (typeof callback === 'function') callback({ error: 'INVALID_LENGTH' });
+            return;
+          }
+
+          // Verify participant
+          const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+          if (!isParticipant) {
+            if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
+            return;
+          }
+
+          // Deduplication check
+          if (clientMessageId) {
+            const existing = await dataStore.findMessageByClientId(clientMessageId, user.id);
+            if (existing) {
+              if (typeof callback === 'function') callback({ success: true, message: existing, deduplicated: true });
+              return;
+            }
+          }
+
+          const savedMessage = await dataStore.saveMessage({
+            conversationId,
+            senderId: user.id,
+            senderName: user.displayName,
+            senderAvatar: user.avatarUrl || null,
+            clientMessageId: clientMessageId || null,
+            content: trimmedContent,
+            replyTo: replyTo || null,
+            forwardedFrom: forwardedFrom || null,
+            status: 'sent',
+          });
+
+          // Dynamically join all participant sockets to this conversation room
+          const participantIds = await dataStore.getConversationParticipantIds(conversationId);
+          await Promise.all(
+            participantIds.map((pId) => io.in(`user:${pId}`).socketsJoin(`conversation:${conversationId}`))
+          );
+
+          // Broadcast to conversation room AND all participant user rooms deduplicated
+          const targetRooms = [`conversation:${conversationId}`, ...participantIds.map((pId) => `user:${pId}`)];
+          io.to(targetRooms).emit('message:new', savedMessage);
+
+          if (typeof callback === 'function') {
+            callback({ success: true, message: savedMessage });
+          }
+        } catch (err: any) {
+          console.error('Socket message:send error:', err);
+          if (typeof callback === 'function') {
+            callback({ error: 'SERVER_ERROR', message: err.message });
+          }
+        }
+      }
+    );
+
+    // Handle emoji reaction
+    socket.on('message:reaction', async (data: { conversationId: string; messageId: string; emoji: string }, callback) => {
+      try {
+        const { conversationId, messageId, emoji } = data;
+        if (!conversationId || !messageId || !emoji) {
           if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
           return;
         }
 
-        const trimmedContent = content.trim();
-        if (!trimmedContent || trimmedContent.length > 5000) {
-          if (typeof callback === 'function') callback({ error: 'INVALID_LENGTH' });
-          return;
-        }
-
-        // Verify participant
         const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
         if (!isParticipant) {
           if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
           return;
         }
 
-        // Deduplication check
-        if (clientMessageId) {
-          const existing = await dataStore.findMessageByClientId(clientMessageId, user.id);
-          if (existing) {
-            if (typeof callback === 'function') callback({ success: true, message: existing, deduplicated: true });
-            return;
-          }
-        }
+        const reactions = await dataStore.toggleMessageReaction(conversationId, messageId, user.id, emoji);
 
-        const savedMessage = await dataStore.saveMessage({
+        const participantIds = await dataStore.getConversationParticipantIds(conversationId);
+        const targetRooms = [`conversation:${conversationId}`, ...participantIds.map((pId) => `user:${pId}`)];
+        io.to(targetRooms).emit('message:reaction', {
           conversationId,
-          senderId: user.id,
-          senderName: user.displayName,
-          senderAvatar: user.avatarUrl || null,
-          clientMessageId: clientMessageId || null,
-          content: trimmedContent,
-          status: 'sent',
+          messageId,
+          reactions,
         });
 
-        // Broadcast to conversation room (including sender)
-        io.to(`conversation:${conversationId}`).emit('message:new', savedMessage);
-
         if (typeof callback === 'function') {
-          callback({ success: true, message: savedMessage });
+          callback({ success: true, reactions });
         }
       } catch (err: any) {
-        console.error('Socket message:send error:', err);
-        if (typeof callback === 'function') {
-          callback({ error: 'SERVER_ERROR', message: err.message });
-        }
+        console.error('Socket message:reaction error:', err);
+        if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
       }
     });
 

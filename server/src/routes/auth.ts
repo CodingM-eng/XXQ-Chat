@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { generateDevToken, requireAuth, verifyFirebaseIdToken, upsertUserAndGetAuth } from '../auth/index.js';
-import { isWhitelistModeEnabled, isEmailWhitelisted, dataStore } from '../db/index.js';
+import { generateDevToken, requireAuth, verifyFirebaseIdToken, authorizeUser } from '../auth/index.js';
+import { isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -11,13 +11,14 @@ router.get('/session', requireAuth, async (req, res) => {
   const user = req.user!;
   const whitelistMode = await isWhitelistModeEnabled();
   const whitelisted = await isEmailWhitelisted(user.email);
+  const isApproved = user.isAdmin || whitelisted;
 
   res.json({
     user,
     whitelist: {
       modeActive: whitelistMode,
-      isApproved: user.isAdmin || whitelisted,
-      canAccessApp: !whitelistMode || user.isAdmin || whitelisted,
+      isApproved,
+      canAccessApp: !whitelistMode || isApproved,
     },
   });
 });
@@ -45,8 +46,8 @@ router.post(['/google', '/firebase'], async (req, res) => {
     return;
   }
 
-  // Server-side upsert with verified claims from Google
-  const user = await upsertUserAndGetAuth({
+  // Server-side authorization check & conditional user upsert
+  const user = await authorizeUser({
     id: verifiedUser.uid,
     email: verifiedUser.email,
     displayName: verifiedUser.displayName,
@@ -63,20 +64,15 @@ router.post(['/google', '/firebase'], async (req, res) => {
 
   const whitelistMode = await isWhitelistModeEnabled();
   const whitelisted = await isEmailWhitelisted(user.email);
+  const isApproved = user.isAdmin || whitelisted;
 
   res.json({
     token,
-    user: {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
-      isAdmin: user.isAdmin,
-    },
+    user,
     whitelist: {
       modeActive: whitelistMode,
-      isApproved: user.isAdmin || whitelisted,
-      canAccessApp: !whitelistMode || user.isAdmin || whitelisted,
+      isApproved,
+      canAccessApp: !whitelistMode || isApproved,
     },
   });
 });
@@ -105,46 +101,33 @@ router.post('/dev-login', async (req, res) => {
 
   const { email, displayName } = parseResult.data;
   const normalizedEmail = email.toLowerCase().trim();
-  const isInitialAdmin = normalizedEmail === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
+  const uid = 'usr_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
 
-  // Check if user exists in DB
-  let userRow = await dataStore.getUserByEmail(normalizedEmail);
-
-  if (!userRow) {
-    const id = 'usr_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
-    const name = displayName || normalizedEmail.split('@')[0];
-    userRow = await dataStore.upsertUser({
-      id,
-      email: normalizedEmail,
-      displayName: name,
-      isAdmin: isInitialAdmin,
-    });
-  }
+  const user = await authorizeUser({
+    id: uid,
+    email: normalizedEmail,
+    displayName: displayName || normalizedEmail.split('@')[0],
+  });
 
   const token = generateDevToken({
-    id: userRow.id,
-    email: userRow.email,
-    displayName: userRow.displayName,
-    avatarUrl: userRow.avatarUrl || undefined,
-    isAdmin: userRow.isAdmin,
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    isAdmin: user.isAdmin,
   });
 
   const whitelistMode = await isWhitelistModeEnabled();
-  const whitelisted = await isEmailWhitelisted(userRow.email);
+  const whitelisted = await isEmailWhitelisted(user.email);
+  const isApproved = user.isAdmin || whitelisted;
 
   res.json({
     token,
-    user: {
-      id: userRow.id,
-      email: userRow.email,
-      displayName: userRow.displayName,
-      avatarUrl: userRow.avatarUrl,
-      isAdmin: userRow.isAdmin,
-    },
+    user,
     whitelist: {
       modeActive: whitelistMode,
-      isApproved: userRow.isAdmin || whitelisted,
-      canAccessApp: !whitelistMode || userRow.isAdmin || whitelisted,
+      isApproved,
+      canAccessApp: !whitelistMode || isApproved,
     },
   });
 });

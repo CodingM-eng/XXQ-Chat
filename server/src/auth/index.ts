@@ -3,14 +3,18 @@ import jwt from 'jsonwebtoken';
 import { getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { config } from '../config.js';
-import { dataStore } from '../db/index.js';
+import { dataStore, isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
 
 export interface AuthUser {
   id: string;
   email: string;
+  firstName?: string | null;
+  lastName?: string | null;
   displayName: string;
   avatarUrl?: string;
   isAdmin: boolean;
+  onboarded: boolean;
+  status: 'active' | 'pending' | 'blocked';
 }
 
 declare global {
@@ -22,7 +26,13 @@ declare global {
 }
 
 // Generate a development JWT token
-export function generateDevToken(user: { id: string; email: string; displayName: string; avatarUrl?: string; isAdmin?: boolean }): string {
+export function generateDevToken(user: {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl?: string;
+  isAdmin?: boolean;
+}): string {
   return jwt.sign(
     {
       uid: user.id,
@@ -96,22 +106,71 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: str
   }
 }
 
-// Upsert user into database and return full AuthUser with verified permissions
-export async function upsertUserAndGetAuth(user: { id: string; email: string; displayName: string; avatarUrl?: string }): Promise<AuthUser> {
+// Authorize user with strict whitelist enforcement:
+// When whitelist mode is ON, unapproved authenticated accounts must be denied access BEFORE becoming active XXQ Chat users.
+// They must NOT have full active user profiles created, nor appear in user directories, search, conversation suggestions, or presence.
+export async function authorizeUser(user: {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl?: string;
+}): Promise<AuthUser> {
+  const normalizedEmail = user.email.toLowerCase().trim();
+  const isInitialAdmin = config.INITIAL_ADMIN_EMAIL && normalizedEmail === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
+  const existingUser = await dataStore.getUserByEmail(normalizedEmail);
+  const isAdmin = isInitialAdmin || existingUser?.isAdmin || false;
+
+  const whitelistActive = await isWhitelistModeEnabled();
+  const isApproved = isAdmin || (await isEmailWhitelisted(normalizedEmail));
+
+  // If whitelist mode is ON and account is unapproved:
+  if (whitelistActive && !isApproved) {
+    // Record pending request in isolated table/collection (admin view only)
+    await dataStore.recordPendingAccess(normalizedEmail, user.displayName, user.avatarUrl);
+
+    // Return pending status without adding to users directory
+    return {
+      id: existingUser?.id || user.id,
+      email: normalizedEmail,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      isAdmin: false,
+      onboarded: false,
+      status: 'pending',
+    };
+  }
+
+  // Account is authorized (whitelist is OFF, or user is whitelisted / admin):
   const dbUser = await dataStore.upsertUser({
-    id: user.id,
-    email: user.email,
-    displayName: user.displayName,
-    avatarUrl: user.avatarUrl,
+    id: existingUser?.id || user.id,
+    email: normalizedEmail,
+    displayName: existingUser?.displayName || user.displayName,
+    avatarUrl: user.avatarUrl || existingUser?.avatarUrl || null,
+    isAdmin,
+    onboarded: existingUser ? existingUser.onboarded : (isAdmin ? true : false),
+    status: 'active',
   });
 
   return {
     id: dbUser.id,
     email: dbUser.email,
+    firstName: dbUser.firstName,
+    lastName: dbUser.lastName,
     displayName: dbUser.displayName,
     avatarUrl: dbUser.avatarUrl || undefined,
     isAdmin: dbUser.isAdmin,
+    onboarded: dbUser.onboarded,
+    status: dbUser.status,
   };
+}
+
+export async function upsertUserAndGetAuth(user: {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl?: string;
+}): Promise<AuthUser> {
+  return authorizeUser(user);
 }
 
 // Verify auth token (supporting server-signed session JWTs or direct Firebase ID tokens)
@@ -122,7 +181,7 @@ export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
   try {
     const decoded = jwt.verify(token, config.JWT_DEV_SECRET) as any;
     if (decoded && decoded.email) {
-      return await upsertUserAndGetAuth({
+      return await authorizeUser({
         id: decoded.uid || 'usr_' + Buffer.from(decoded.email).toString('hex').slice(0, 16),
         email: decoded.email,
         displayName: decoded.name || decoded.email.split('@')[0],
@@ -136,7 +195,7 @@ export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
   // 2. Verify as Firebase ID token directly
   const verifiedFirebase = await verifyFirebaseIdToken(token);
   if (verifiedFirebase) {
-    return await upsertUserAndGetAuth({
+    return await authorizeUser({
       id: verifiedFirebase.uid,
       email: verifiedFirebase.email,
       displayName: verifiedFirebase.displayName,
@@ -159,7 +218,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const user = await verifyAuthToken(token);
 
   if (!user) {
-    res.status(401).json({ error: 'INVALID_TOKEN', message: 'Oturum belirteci geçersiz veya süresi dolmuş.' });
+    res.status(401).json({ error: 'INVALID_TOKEN', message: 'Geçersiz veya süresi dolmuş yetkilendirme belirteci.' });
     return;
   }
 
@@ -167,15 +226,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-// Admin-only authorization middleware
+// Admin only middleware
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
-    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Kimlik doğrulaması gereklidir.' });
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Giriş yapmanız gerekmektedir.' });
     return;
   }
 
   if (!req.user.isAdmin) {
-    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu işlem için yönetici yetkileri gereklidir.' });
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu işlem için yönetici yetkisi gereklidir.' });
     return;
   }
 

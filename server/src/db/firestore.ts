@@ -8,6 +8,9 @@ import {
   DbAuditLog,
   DbConversationSummary,
   DbMessage,
+  DbPendingAccessRequest,
+  DbMessageReply,
+  DbMessageForward,
 } from './types.js';
 
 export class FirestoreStore implements DataStore {
@@ -85,6 +88,8 @@ export class FirestoreStore implements DataStore {
           email: adminEmail,
           displayName: 'Initial Admin',
           isAdmin: true,
+          onboarded: true,
+          status: 'active',
           createdAt: new Date().toISOString(),
           lastActiveAt: new Date().toISOString(),
         });
@@ -170,7 +175,7 @@ export class FirestoreStore implements DataStore {
         return true;
       }
 
-      // Check users collection for admin status
+      // Check if user is an existing admin
       const userSnap = await this.getFirestore().collection('users').where('email', '==', normalized).limit(1).get();
       if (!userSnap.empty) {
         const u = userSnap.docs[0].data();
@@ -179,7 +184,6 @@ export class FirestoreStore implements DataStore {
         }
       }
 
-      // Check whitelist document
       const doc = await this.getFirestore().collection('whitelist').doc(normalized).get();
       return doc.exists;
     } catch (err) {
@@ -189,9 +193,8 @@ export class FirestoreStore implements DataStore {
   }
 
   async getWhitelist(): Promise<DbWhitelistEntry[]> {
-    const firestore = this.getFirestore();
-    const whitelistSnap = await firestore.collection('whitelist').get();
-    const usersSnap = await firestore.collection('users').get();
+    const whitelistSnap = await this.getFirestore().collection('whitelist').get();
+    const usersSnap = await this.getFirestore().collection('users').get();
 
     const userMap = new Map<string, any>();
     usersSnap.forEach((doc) => {
@@ -226,6 +229,8 @@ export class FirestoreStore implements DataStore {
       approvedBy,
       createdAt: new Date().toISOString(),
     });
+
+    await this.resolvePendingAccess(normalized, 'approved');
   }
 
   async removeFromWhitelist(email: string): Promise<boolean> {
@@ -237,6 +242,68 @@ export class FirestoreStore implements DataStore {
     return true;
   }
 
+  // Pending Access Requests
+  async recordPendingAccess(email: string, displayName?: string, avatarUrl?: string, ipAddress?: string): Promise<void> {
+    const normalized = email.toLowerCase().trim();
+    const ref = this.getFirestore().collection('pending_access_requests').doc(normalized);
+    const doc = await ref.get();
+    const now = new Date().toISOString();
+
+    if (doc.exists) {
+      const d = doc.data()!;
+      await ref.set(
+        {
+          attemptCount: (d.attemptCount || 1) + 1,
+          lastAttemptAt: now,
+          displayName: displayName || d.displayName || null,
+          avatarUrl: avatarUrl || d.avatarUrl || null,
+        },
+        { merge: true }
+      );
+    } else {
+      await ref.set({
+        id: 'pend_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
+        email: normalized,
+        displayName: displayName || null,
+        avatarUrl: avatarUrl || null,
+        firstAttemptAt: now,
+        lastAttemptAt: now,
+        attemptCount: 1,
+        status: 'pending',
+      });
+    }
+  }
+
+  async getPendingAccessRequests(): Promise<DbPendingAccessRequest[]> {
+    const snap = await this.getFirestore().collection('pending_access_requests').get();
+    const requests: DbPendingAccessRequest[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data();
+      requests.push({
+        id: d.id || doc.id,
+        email: d.email || doc.id,
+        displayName: d.displayName || null,
+        avatarUrl: d.avatarUrl || null,
+        firstAttemptAt: d.firstAttemptAt || new Date().toISOString(),
+        lastAttemptAt: d.lastAttemptAt || new Date().toISOString(),
+        attemptCount: d.attemptCount || 1,
+        status: (d.status || 'pending') as 'pending' | 'approved' | 'rejected',
+      });
+    });
+
+    return requests.sort((a, b) => b.lastAttemptAt.localeCompare(a.lastAttemptAt));
+  }
+
+  async resolvePendingAccess(email: string, status: 'approved' | 'rejected'): Promise<void> {
+    const normalized = email.toLowerCase().trim();
+    const ref = this.getFirestore().collection('pending_access_requests').doc(normalized);
+    const doc = await ref.get();
+    if (doc.exists) {
+      await ref.set({ status }, { merge: true });
+    }
+  }
+
+  // Users
   async getUserById(id: string): Promise<DbUser | null> {
     const doc = await this.getFirestore().collection('users').doc(id).get();
     if (!doc.exists) return null;
@@ -244,9 +311,14 @@ export class FirestoreStore implements DataStore {
     return {
       id: d.id || doc.id,
       email: d.email,
+      firstName: d.firstName || d.first_name || null,
+      lastName: d.lastName || d.last_name || null,
       displayName: d.displayName || d.display_name,
       avatarUrl: d.avatarUrl || d.avatar_url || null,
+      phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin: d.isAdmin === true || d.is_admin === 1,
+      onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
+      status: d.status || 'active',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
       lastActiveAt: d.lastActiveAt || d.last_active_at || new Date().toISOString(),
     };
@@ -261,15 +333,31 @@ export class FirestoreStore implements DataStore {
     return {
       id: d.id || doc.id,
       email: d.email,
+      firstName: d.firstName || d.first_name || null,
+      lastName: d.lastName || d.last_name || null,
       displayName: d.displayName || d.display_name,
       avatarUrl: d.avatarUrl || d.avatar_url || null,
+      phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin: d.isAdmin === true || d.is_admin === 1,
+      onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
+      status: d.status || 'active',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
       lastActiveAt: d.lastActiveAt || d.last_active_at || new Date().toISOString(),
     };
   }
 
-  async upsertUser(user: { id: string; email: string; displayName: string; avatarUrl?: string | null; isAdmin?: boolean }): Promise<DbUser> {
+  async upsertUser(user: {
+    id: string;
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    displayName: string;
+    avatarUrl?: string | null;
+    phoneNumber?: string | null;
+    isAdmin?: boolean;
+    onboarded?: boolean;
+    status?: 'active' | 'pending' | 'blocked';
+  }): Promise<DbUser> {
     const email = user.email.toLowerCase().trim();
     const isInitialAdmin = email === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
     const existing = await this.getUserByEmail(email);
@@ -283,32 +371,32 @@ export class FirestoreStore implements DataStore {
         lastActiveAt: now,
         isAdmin,
       };
-      if (user.avatarUrl && user.avatarUrl !== existing.avatarUrl) {
-        updates.avatarUrl = user.avatarUrl;
-      }
-      if (user.displayName && user.displayName !== existing.displayName) {
-        updates.displayName = user.displayName;
-      }
+      if (user.avatarUrl && user.avatarUrl !== existing.avatarUrl) updates.avatarUrl = user.avatarUrl;
+      if (user.displayName && user.displayName !== existing.displayName) updates.displayName = user.displayName;
+      if (user.firstName !== undefined) updates.firstName = user.firstName;
+      if (user.lastName !== undefined) updates.lastName = user.lastName;
+      if (user.phoneNumber !== undefined) updates.phoneNumber = user.phoneNumber;
+      if (user.onboarded !== undefined) updates.onboarded = user.onboarded;
+      if (user.status !== undefined) updates.status = user.status;
 
       await this.getFirestore().collection('users').doc(effectiveId).set(updates, { merge: true });
-
-      return {
-        id: effectiveId,
-        email,
-        displayName: updates.displayName || existing.displayName,
-        avatarUrl: updates.avatarUrl || existing.avatarUrl || null,
-        isAdmin,
-        createdAt: existing.createdAt,
-        lastActiveAt: now,
-      };
+      return (await this.getUserById(effectiveId))!;
     } else {
       const isAdmin = isInitialAdmin || !!user.isAdmin;
+      const onboarded = user.onboarded !== undefined ? user.onboarded : isAdmin;
+      const status = user.status || 'active';
+
       const newUser: DbUser = {
         id: user.id,
         email,
+        firstName: user.firstName || null,
+        lastName: user.lastName || null,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl || null,
+        phoneNumber: user.phoneNumber || null,
         isAdmin,
+        onboarded,
+        status,
         createdAt: now,
         lastActiveAt: now,
       };
@@ -318,25 +406,67 @@ export class FirestoreStore implements DataStore {
     }
   }
 
-  async updateUserProfile(id: string, updates: { displayName?: string; avatarUrl?: string }): Promise<DbUser | null> {
+  async updateUserProfile(
+    id: string,
+    updates: {
+      firstName?: string | null;
+      lastName?: string | null;
+      displayName?: string;
+      avatarUrl?: string | null;
+      phoneNumber?: string | null;
+    }
+  ): Promise<DbUser | null> {
     const docRef = this.getFirestore().collection('users').doc(id);
     const doc = await docRef.get();
     if (!doc.exists) return null;
 
-    const dataToUpdate: any = {
-      lastActiveAt: new Date().toISOString(),
-    };
+    const dataToUpdate: any = { lastActiveAt: new Date().toISOString() };
+    if (updates.firstName !== undefined) dataToUpdate.firstName = updates.firstName;
+    if (updates.lastName !== undefined) dataToUpdate.lastName = updates.lastName;
     if (updates.displayName !== undefined) dataToUpdate.displayName = updates.displayName;
     if (updates.avatarUrl !== undefined) dataToUpdate.avatarUrl = updates.avatarUrl;
+    if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber;
 
     await docRef.set(dataToUpdate, { merge: true });
     return this.getUserById(id);
   }
 
+  async completeOnboarding(
+    userId: string,
+    data: {
+      firstName?: string | null;
+      lastName?: string | null;
+      displayName: string;
+      avatarUrl?: string | null;
+      phoneNumber?: string | null;
+    }
+  ): Promise<DbUser> {
+    const docRef = this.getFirestore().collection('users').doc(userId);
+    await docRef.set(
+      {
+        firstName: data.firstName || null,
+        lastName: data.lastName || null,
+        displayName: data.displayName,
+        avatarUrl: data.avatarUrl || null,
+        phoneNumber: data.phoneNumber || null,
+        onboarded: true,
+        status: 'active',
+        lastActiveAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    const user = await this.getUserById(userId);
+    if (!user) throw new Error('User not found after onboarding');
+    return user;
+  }
+
   async updateUserLastActive(id: string): Promise<void> {
     try {
       await this.getFirestore().collection('users').doc(id).set(
-        { lastActiveAt: new Date().toISOString() },
+        {
+          lastActiveAt: new Date().toISOString(),
+        },
         { merge: true }
       );
     } catch (err) {
@@ -349,16 +479,23 @@ export class FirestoreStore implements DataStore {
     const users: DbUser[] = [];
     snap.forEach((doc) => {
       const d = doc.data();
-      users.push({
-        id: d.id || doc.id,
-        email: d.email,
-        displayName: d.displayName || d.display_name,
-        avatarUrl: d.avatarUrl || d.avatar_url || null,
-        isAdmin: d.isAdmin === true || d.is_admin === 1,
-        createdAt: d.createdAt || d.created_at || new Date().toISOString(),
-        lastActiveAt: d.lastActiveAt || d.last_active_at || new Date().toISOString(),
-      });
+      if (d.status === 'active' || !d.status) {
+        users.push({
+          id: d.id || doc.id,
+          email: d.email,
+          firstName: d.firstName || null,
+          lastName: d.lastName || null,
+          displayName: d.displayName || d.display_name,
+          avatarUrl: d.avatarUrl || d.avatar_url || null,
+          isAdmin: d.isAdmin === true || d.is_admin === 1,
+          onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
+          status: 'active',
+          createdAt: d.createdAt || d.created_at || new Date().toISOString(),
+          lastActiveAt: d.lastActiveAt || d.last_active_at || new Date().toISOString(),
+        });
+      }
     });
+
     return users.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -366,15 +503,15 @@ export class FirestoreStore implements DataStore {
     const all = await this.getAllUsers();
     const q = (query || '').toLowerCase().trim();
 
-    return all
-      .filter((u) => u.id !== excludeUserId)
-      .filter((u) => {
-        if (!q) return true;
-        return u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
-      })
-      .slice(0, 30);
+    return all.filter((u) => {
+      if (u.id === excludeUserId) return false;
+      if (u.status !== 'active') return false;
+      if (!q) return true;
+      return u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+    });
   }
 
+  // Audit Logs
   async recordAuditLog(log: {
     id?: string;
     actorId?: string | null;
@@ -384,24 +521,22 @@ export class FirestoreStore implements DataStore {
     details?: string | null;
     ipAddress?: string | null;
   }): Promise<void> {
-    const id = log.id || 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-    const entry: DbAuditLog = {
-      id,
+    const logId = log.id || 'audit_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    await this.getFirestore().collection('audit_logs').doc(logId).set({
+      id: logId,
       actorId: log.actorId || null,
       actorEmail: log.actorEmail,
       action: log.action,
       target: log.target || null,
       details: log.details || null,
-      ipAddress: log.ipAddress || 'unknown',
+      ipAddress: log.ipAddress || null,
       createdAt: new Date().toISOString(),
-    };
-
-    await this.getFirestore().collection('audit_logs').doc(id).set(entry);
+    });
   }
 
-  async getAuditLogs(limit = 50): Promise<DbAuditLog[]> {
+  async getAuditLogs(limit = 100): Promise<DbAuditLog[]> {
     const boundedLimit = Math.min(Math.max(limit, 1), 200);
-    const snap = await this.getFirestore().collection('audit_logs').get();
+    const snap = await this.getFirestore().collection('audit_logs').orderBy('createdAt', 'desc').limit(boundedLimit).get();
     const logs: DbAuditLog[] = [];
     snap.forEach((doc) => {
       const d = doc.data();
@@ -417,82 +552,129 @@ export class FirestoreStore implements DataStore {
       });
     });
 
-    return logs
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, boundedLimit);
+    return logs;
   }
 
+  // Stats
   async getStats(): Promise<{ totalUsers: number; approvedWhitelistCount: number; adminCount: number; totalMessages: number }> {
-    const firestore = this.getFirestore();
-    const usersSnap = await firestore.collection('users').get();
+    const usersSnap = await this.getFirestore().collection('users').get();
+    const whitelistSnap = await this.getFirestore().collection('whitelist').get();
+
+    let totalUsers = 0;
     let adminCount = 0;
     usersSnap.forEach((doc) => {
       const d = doc.data();
-      if (d.isAdmin === true || d.is_admin === 1) adminCount++;
-    });
-
-    const whitelistSnap = await firestore.collection('whitelist').get();
-    const conversationsSnap = await firestore.collection('conversations').get();
-
-    // Sum messages count across conversations
-    let totalMessages = 0;
-    conversationsSnap.forEach((doc) => {
-      const d = doc.data();
-      if (typeof d.messageCount === 'number') {
-        totalMessages += d.messageCount;
-      } else if (d.lastMessage) {
-        totalMessages += 1;
+      if (d.status === 'active' || !d.status) {
+        totalUsers++;
+        if (d.isAdmin === true || d.is_admin === 1) adminCount++;
       }
     });
 
-    return {
-      totalUsers: usersSnap.size,
-      approvedWhitelistCount: whitelistSnap.size,
-      adminCount,
-      totalMessages,
-    };
+    const approvedWhitelistCount = whitelistSnap.size;
+
+    let totalMessages = 0;
+    const convSnap = await this.getFirestore().collection('conversations').get();
+    convSnap.forEach((doc) => {
+      totalMessages += doc.data()?.messageCount || 0;
+    });
+
+    return { totalUsers, approvedWhitelistCount, adminCount, totalMessages };
   }
 
+  // Conversations & Messages
   async getUserConversations(userId: string): Promise<DbConversationSummary[]> {
-    const firestore = this.getFirestore();
-    const snap = await firestore
+    const snap = await this.getFirestore()
       .collection('conversations')
       .where('participantIds', 'array-contains', userId)
       .get();
 
-    const usersSnap = await firestore.collection('users').get();
-    const userMap = new Map<string, any>();
-    usersSnap.forEach((doc) => {
-      userMap.set(doc.id, doc.data());
-    });
+    const summaries: DbConversationSummary[] = [];
 
-    const results: DbConversationSummary[] = [];
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const participants = (data.participantIds as string[]) || [];
 
-    snap.forEach((doc) => {
-      const conv = doc.data();
-      const peerId = (conv.participantIds as string[]).find((id) => id !== userId);
-      const peerUser = peerId ? userMap.get(peerId) : null;
+      let peer = null;
+      let participantList: any[] = [];
 
-      results.push({
-        id: conv.id || doc.id,
-        type: conv.type || 'direct',
-        name: conv.type === 'direct' && peerUser ? peerUser.displayName || peerUser.display_name : conv.name || 'Chat',
-        peer: peerUser
-          ? {
-              id: peerUser.id || peerId,
+      if (data.type === 'direct') {
+        const peerId = participants.find((id) => id !== userId);
+        if (peerId) {
+          const peerUser = await this.getUserById(peerId);
+          if (peerUser) {
+            peer = {
+              id: peerUser.id,
               email: peerUser.email,
-              displayName: peerUser.displayName || peerUser.display_name,
-              avatarUrl: peerUser.avatarUrl || peerUser.avatar_url || null,
-              lastActiveAt: peerUser.lastActiveAt || peerUser.last_active_at || null,
-            }
-          : null,
-        lastMessage: conv.lastMessage || null,
-        unreadCount: conv.unreadCounts?.[userId] || 0,
-        updatedAt: conv.updatedAt || new Date().toISOString(),
-      });
-    });
+              displayName: peerUser.displayName,
+              avatarUrl: peerUser.avatarUrl,
+              lastActiveAt: peerUser.lastActiveAt,
+            };
+          }
+        }
+      } else {
+        // Group participants
+        for (const pid of participants) {
+          const pUser = await this.getUserById(pid);
+          if (pUser) {
+            participantList.push({
+              id: pUser.id,
+              email: pUser.email,
+              displayName: pUser.displayName,
+              avatarUrl: pUser.avatarUrl,
+              isAdmin: (data.adminIds as string[])?.includes(pid) || data.creatorId === pid,
+            });
+          }
+        }
+      }
 
-    return results.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      // Query latest message
+      let lastMessage = null;
+      const lastMsgSnap = await this.getFirestore()
+        .collection('conversations')
+        .doc(doc.id)
+        .collection('messages')
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+      if (!lastMsgSnap.empty) {
+        const d = lastMsgSnap.docs[0].data();
+        lastMessage = {
+          id: d.id || lastMsgSnap.docs[0].id,
+          senderId: d.senderId || d.sender_id,
+          senderName: d.senderName || d.sender_name,
+          content: d.content,
+          status: d.status || 'sent',
+          createdAt: d.createdAt || d.created_at || new Date().toISOString(),
+        };
+      }
+
+      const unreadCount = data.unreadCounts?.[userId] || 0;
+
+      summaries.push({
+        id: doc.id,
+        type: data.type || 'direct',
+        name: data.type === 'direct' && peer ? peer.displayName : data.name || 'Chat',
+        avatarUrl: data.avatarUrl || null,
+        creatorId: data.creatorId || null,
+        adminIds: data.adminIds || [],
+        participantCount: participants.length,
+        participants: data.type === 'group' ? participantList : undefined,
+        peer,
+        lastMessage,
+        unreadCount,
+        updatedAt: data.updatedAt || new Date().toISOString(),
+      });
+    }
+
+    return summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getConversation(conversationId: string, userId: string): Promise<DbConversationSummary | null> {
+    const isParticipant = await this.isConversationParticipant(conversationId, userId);
+    if (!isParticipant) return null;
+
+    const convs = await this.getUserConversations(userId);
+    return convs.find((c) => c.id === conversationId) || null;
   }
 
   async getDirectConversation(userId1: string, userId2: string): Promise<string | null> {
@@ -536,11 +718,86 @@ export class FirestoreStore implements DataStore {
     return convId;
   }
 
+  async createGroupConversation(creatorId: string, name: string, memberIds: string[], avatarUrl?: string | null): Promise<string> {
+    const convId = 'group_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+    const uniqueParticipants = Array.from(new Set([creatorId, ...memberIds]));
+
+    const unreadCounts: Record<string, number> = {};
+    for (const pid of uniqueParticipants) {
+      unreadCounts[pid] = 0;
+    }
+
+    const convData = {
+      id: convId,
+      type: 'group',
+      name,
+      avatarUrl: avatarUrl || null,
+      creatorId,
+      adminIds: [creatorId],
+      participantIds: uniqueParticipants,
+      unreadCounts,
+      lastReadMessageIds: {},
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+    };
+
+    await this.getFirestore().collection('conversations').doc(convId).set(convData);
+    return convId;
+  }
+
+  async addConversationParticipants(conversationId: string, userIds: string[]): Promise<void> {
+    const convRef = this.getFirestore().collection('conversations').doc(conversationId);
+    await convRef.set(
+      {
+        participantIds: FieldValue.arrayUnion(...userIds),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  }
+
+  async removeConversationParticipant(conversationId: string, userId: string): Promise<void> {
+    const convRef = this.getFirestore().collection('conversations').doc(conversationId);
+    await convRef.set(
+      {
+        participantIds: FieldValue.arrayRemove(userId),
+        adminIds: FieldValue.arrayRemove(userId),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  }
+
+  async updateConversation(conversationId: string, updates: { name?: string; avatarUrl?: string | null }): Promise<void> {
+    const convRef = this.getFirestore().collection('conversations').doc(conversationId);
+    const data: any = { updatedAt: new Date().toISOString() };
+    if (updates.name !== undefined) data.name = updates.name;
+    if (updates.avatarUrl !== undefined) data.avatarUrl = updates.avatarUrl;
+    await convRef.set(data, { merge: true });
+  }
+
   async isConversationParticipant(conversationId: string, userId: string): Promise<boolean> {
     const doc = await this.getFirestore().collection('conversations').doc(conversationId).get();
     if (!doc.exists) return false;
     const data = doc.data();
     return Array.isArray(data?.participantIds) && data.participantIds.includes(userId);
+  }
+
+  async isConversationAdmin(conversationId: string, userId: string): Promise<boolean> {
+    const doc = await this.getFirestore().collection('conversations').doc(conversationId).get();
+    if (!doc.exists) return false;
+    const data = doc.data();
+    if (data?.creatorId === userId) return true;
+    return Array.isArray(data?.adminIds) && data.adminIds.includes(userId);
+  }
+
+  async getConversationParticipantIds(conversationId: string): Promise<string[]> {
+    const doc = await this.getFirestore().collection('conversations').doc(conversationId).get();
+    if (!doc.exists) return [];
+    const data = doc.data();
+    return Array.isArray(data?.participantIds) ? data.participantIds : [];
   }
 
   async getConversationMessages(conversationId: string, limit = 50): Promise<DbMessage[]> {
@@ -564,6 +821,9 @@ export class FirestoreStore implements DataStore {
         senderAvatar: d.senderAvatar || d.sender_avatar || null,
         clientMessageId: d.clientMessageId || d.client_message_id || null,
         content: d.content,
+        replyTo: d.replyTo || null,
+        forwardedFrom: d.forwardedFrom || null,
+        reactions: d.reactions || {},
         status: d.status || 'sent',
         createdAt: d.createdAt || d.created_at || new Date().toISOString(),
       });
@@ -591,6 +851,9 @@ export class FirestoreStore implements DataStore {
       senderAvatar: d.senderAvatar || d.sender_avatar || null,
       clientMessageId: d.clientMessageId || d.client_message_id || null,
       content: d.content,
+      replyTo: d.replyTo || null,
+      forwardedFrom: d.forwardedFrom || null,
+      reactions: d.reactions || {},
       status: d.status || 'sent',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
     };
@@ -604,13 +867,15 @@ export class FirestoreStore implements DataStore {
     senderAvatar?: string | null;
     clientMessageId?: string | null;
     content: string;
+    replyTo?: DbMessageReply | null;
+    forwardedFrom?: DbMessageForward | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
   }): Promise<DbMessage> {
     const msgId = message.id || 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     const now = new Date().toISOString();
     const status = message.status || 'sent';
 
-    const savedMsg: DbMessage = {
+    const msgData: any = {
       id: msgId,
       conversationId: message.conversationId,
       senderId: message.senderId,
@@ -618,62 +883,78 @@ export class FirestoreStore implements DataStore {
       senderAvatar: message.senderAvatar || null,
       clientMessageId: message.clientMessageId || null,
       content: message.content,
+      replyTo: message.replyTo || null,
+      forwardedFrom: message.forwardedFrom || null,
+      reactions: {},
       status,
       createdAt: now,
     };
 
-    const firestore = this.getFirestore();
-    const convRef = firestore.collection('conversations').doc(message.conversationId);
-    const msgRef = convRef.collection('messages').doc(msgId);
+    const convRef = this.getFirestore().collection('conversations').doc(message.conversationId);
+    await convRef.collection('messages').doc(msgId).set(msgData);
 
-    // Get current conversation to increment unread counts
+    // Update conversation metadata
     const convDoc = await convRef.get();
-    const convData = convDoc.data();
-    const unreadCounts = { ...(convData?.unreadCounts || {}) };
+    if (convDoc.exists) {
+      const convData = convDoc.data()!;
+      const participants = (convData.participantIds as string[]) || [];
+      const unreadUpdates: Record<string, any> = {};
 
-    if (Array.isArray(convData?.participantIds)) {
-      for (const participant of convData.participantIds) {
-        if (participant !== message.senderId) {
-          unreadCounts[participant] = (unreadCounts[participant] || 0) + 1;
-        } else {
-          unreadCounts[participant] = 0;
+      for (const p of participants) {
+        if (p !== message.senderId) {
+          unreadUpdates[`unreadCounts.${p}`] = FieldValue.increment(1);
         }
       }
+
+      await convRef.update({
+        updatedAt: now,
+        messageCount: FieldValue.increment(1),
+        [`lastReadMessageIds.${message.senderId}`]: msgId,
+        ...unreadUpdates,
+      });
     }
 
-    const batch = firestore.batch();
-    batch.set(msgRef, savedMsg);
-    batch.set(
-      convRef,
-      {
-        updatedAt: now,
-        lastMessage: {
-          id: msgId,
-          senderId: message.senderId,
-          senderName: message.senderName,
-          content: message.content,
-          status,
-          createdAt: now,
-        },
-        unreadCounts,
-        [`lastReadMessageIds.${message.senderId}`]: msgId,
-        messageCount: FieldValue.increment(1),
-      },
-      { merge: true }
-    );
-
-    await batch.commit();
-    return savedMsg;
+    return msgData;
   }
 
   async markConversationRead(conversationId: string, userId: string, messageId: string): Promise<void> {
     const convRef = this.getFirestore().collection('conversations').doc(conversationId);
-    await convRef.set(
-      {
-        [`lastReadMessageIds.${userId}`]: messageId,
-        [`unreadCounts.${userId}`]: 0,
-      },
-      { merge: true }
-    );
+    await convRef.update({
+      [`unreadCounts.${userId}`]: 0,
+      [`lastReadMessageIds.${userId}`]: messageId,
+    });
+
+    const msgRef = convRef.collection('messages').doc(messageId);
+    const msgDoc = await msgRef.get();
+    if (msgDoc.exists && msgDoc.data()?.senderId !== userId) {
+      await msgRef.update({ status: 'read' });
+    }
+  }
+
+  async toggleMessageReaction(conversationId: string, messageId: string, userId: string, emoji: string): Promise<Record<string, string[]>> {
+    const msgRef = this.getFirestore()
+      .collection('conversations')
+      .doc(conversationId)
+      .collection('messages')
+      .doc(messageId);
+
+    const doc = await msgRef.get();
+    if (!doc.exists) return {};
+
+    const d = doc.data()!;
+    const reactions: Record<string, string[]> = d.reactions || {};
+    const existingList: string[] = reactions[emoji] || [];
+
+    if (existingList.includes(userId)) {
+      reactions[emoji] = existingList.filter((id) => id !== userId);
+      if (reactions[emoji].length === 0) {
+        delete reactions[emoji];
+      }
+    } else {
+      reactions[emoji] = [...existingList, userId];
+    }
+
+    await msgRef.update({ reactions });
+    return reactions;
   }
 }

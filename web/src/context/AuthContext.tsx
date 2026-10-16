@@ -13,6 +13,7 @@ interface AuthContextType {
   loginWithGoogle: () => Promise<void>;
   logout: () => void;
   refreshSession: () => Promise<void>;
+  updateUser: (updatedUser: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -102,6 +103,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setWhitelist(null);
   };
 
+  const updateUser = (updatedUser: User) => {
+    setUser(updatedUser);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -114,6 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithGoogle,
         logout,
         refreshSession,
+        updateUser,
       }}
     >
       {children}

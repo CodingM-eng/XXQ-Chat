@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './context/AuthContext';
 import { api } from './services/api';
 import { connectSocket, disconnectSocket, getSocket } from './services/socket';
@@ -11,11 +11,12 @@ import { NewChatModal } from './components/chat/NewChatModal';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { AuthModal } from './components/auth/AuthModal';
 import { AccessRestricted } from './components/auth/AccessRestricted';
+import { OnboardingModal } from './components/auth/OnboardingModal';
 import { BrandLogo } from './components/common/BrandLogo';
 import { Loader2 } from 'lucide-react';
 
 export const AppContent: React.FC = () => {
-  const { user, whitelist, isLoading } = useAuth();
+  const { user, whitelist, isLoading, refreshSession } = useAuth();
   const [currentView, setCurrentView] = useState<'chat' | 'admin'>('chat');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -23,6 +24,12 @@ export const AppContent: React.FC = () => {
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
+
+  // Keep a ref to the selected conversation so socket listeners always see the current ID
+  const selectedConvIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedConvIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -44,29 +51,38 @@ export const AppContent: React.FC = () => {
     }
   }, []);
 
-  // Setup Socket connection when user is authenticated
+  // Setup persistent Socket connection when user is authenticated
   useEffect(() => {
     if (!user || (whitelist?.modeActive && !whitelist.isApproved)) {
       disconnectSocket();
       return;
     }
 
-    const socket = connectSocket((newMsg: Message) => {
+    const socket = connectSocket();
+
+    socket.on('message:new', (newMsg: Message) => {
       // Append to active message thread if conversation matches
-      setMessages((prev) => {
-        if (newMsg.conversationId === selectedConversationId) {
-          // Deduplicate if already present
+      if (newMsg.conversationId === selectedConvIdRef.current) {
+        setMessages((prev) => {
           if (prev.some((m) => m.id === newMsg.id || (newMsg.clientMessageId && m.clientMessageId === newMsg.clientMessageId))) {
-            return prev.map((m) => m.clientMessageId === newMsg.clientMessageId ? newMsg : m);
+            return prev.map((m) =>
+              (m.clientMessageId === newMsg.clientMessageId || m.id === newMsg.id) ? newMsg : m
+            );
           }
           return [...prev, newMsg];
-        }
-        return prev;
-      });
+        });
+      }
 
       // Update sidebar conversation preview
-      setConversations((prev) =>
-        prev.map((c) => {
+      setConversations((prev) => {
+        const exists = prev.some((c) => c.id === newMsg.conversationId);
+        if (!exists) {
+          // If conversation is not in sidebar list yet, reload to fetch complete details
+          loadConversations();
+          return prev;
+        }
+
+        return prev.map((c) => {
           if (c.id === newMsg.conversationId) {
             return {
               ...c,
@@ -78,30 +94,50 @@ export const AppContent: React.FC = () => {
                 status: newMsg.status,
                 createdAt: newMsg.createdAt,
               },
-              unreadCount: newMsg.conversationId === selectedConversationId ? 0 : c.unreadCount + 1,
+              unreadCount: newMsg.conversationId === selectedConvIdRef.current ? 0 : c.unreadCount + 1,
               updatedAt: newMsg.createdAt,
             };
           }
           return c;
-        }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      );
+        }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      });
     });
 
     socket.on('connect', () => setIsConnected(true));
     socket.on('disconnect', () => setIsConnected(false));
 
     socket.on('typing:status', (data: { conversationId: string; userName: string; isTyping: boolean }) => {
-      if (data.conversationId === selectedConversationId) {
+      if (data.conversationId === selectedConvIdRef.current) {
         setTypingUser(data.isTyping ? data.userName : null);
       }
     });
 
     socket.on('message:read_receipt', (data: { conversationId: string; messageId: string }) => {
-      if (data.conversationId === selectedConversationId) {
+      if (data.conversationId === selectedConvIdRef.current) {
         setMessages((prev) =>
-          prev.map((m) => m.id === data.messageId ? { ...m, status: 'read' } : m)
+          prev.map((m) => (m.id === data.messageId ? { ...m, status: 'read' } : m))
         );
       }
+    });
+
+    socket.on('message:reaction', (data: { conversationId: string; messageId: string; reactions: Record<string, string[]> }) => {
+      if (data.conversationId === selectedConvIdRef.current) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === data.messageId ? { ...m, reactions: data.reactions } : m))
+        );
+      }
+    });
+
+    socket.on('conversation:new', () => {
+      loadConversations();
+    });
+
+    socket.on('conversation:updated', () => {
+      loadConversations();
+    });
+
+    socket.on('auth:revoked', () => {
+      refreshSession();
     });
 
     loadConversations();
@@ -109,13 +145,18 @@ export const AppContent: React.FC = () => {
     return () => {
       disconnectSocket();
     };
-  }, [user, whitelist, selectedConversationId, loadConversations]);
+  }, [user?.id, whitelist?.isApproved, whitelist?.modeActive, loadConversations, refreshSession]);
 
   // Load messages when conversation selection changes
   useEffect(() => {
     if (selectedConversationId) {
       loadMessages(selectedConversationId);
       setTypingUser(null);
+
+      // Reset unread count locally in conversation list
+      setConversations((prev) =>
+        prev.map((c) => (c.id === selectedConversationId ? { ...c, unreadCount: 0 } : c))
+      );
     } else {
       setMessages([]);
     }
@@ -126,7 +167,6 @@ export const AppContent: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        // Focus search input
         const searchInput = document.querySelector('input[placeholder*="Sohbetlerde ara"]') as HTMLInputElement;
         searchInput?.focus();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
@@ -141,50 +181,101 @@ export const AppContent: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleSendMessage = async (content: string, clientMessageId?: string) => {
+  const handleSendMessage = async (
+    content: string,
+    clientMessageId?: string,
+    replyToMessageId?: string,
+    forwardedFrom?: { senderName: string }
+  ) => {
+    if (!selectedConversationId) return;
+
+    const socket = getSocket();
+    const clientMsgId =
+      clientMessageId ||
+      'client_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+
+    // Optimistic message update
+    const replyTarget = replyToMessageId ? messages.find((m) => m.id === replyToMessageId) : null;
+    const optimisticMsg: Message = {
+      id: 'opt_' + Date.now(),
+      conversationId: selectedConversationId,
+      senderId: user!.id,
+      senderName: user!.displayName,
+      senderAvatar: user!.avatarUrl,
+      clientMessageId: clientMsgId,
+      content,
+      replyTo: replyTarget
+        ? {
+            id: replyTarget.id,
+            senderId: replyTarget.senderId,
+            senderName: replyTarget.senderName,
+            content: replyTarget.content,
+          }
+        : null,
+      forwardedFrom: forwardedFrom || null,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticMsg]);
+
+    if (socket && socket.connected) {
+      socket.emit(
+        'message:send',
+        {
+          conversationId: selectedConversationId,
+          content,
+          clientMessageId: clientMsgId,
+          replyToMessageId,
+          forwardedFrom,
+        },
+        (res: any) => {
+          if (res?.success && res.message) {
+            setMessages((prev) =>
+              prev.map((m) => (m.clientMessageId === clientMsgId || m.id === res.message.id ? res.message : m))
+            );
+          }
+        }
+      );
+    } else {
+      // REST fallback
+      const res = await api.sendMessage(
+        selectedConversationId,
+        content,
+        clientMsgId,
+        replyToMessageId,
+        forwardedFrom
+      );
+      setMessages((prev) =>
+        prev.map((m) => (m.clientMessageId === clientMsgId || m.id === res.message.id ? res.message : m))
+      );
+    }
+  };
+
+  const handleToggleReaction = async (messageId: string, emoji: string) => {
     if (!selectedConversationId) return;
 
     const socket = getSocket();
     if (socket && socket.connected) {
-      // Optimistic message update
-      const optimisticMsg: Message = {
-        id: 'opt_' + Date.now(),
+      socket.emit('message:react', {
         conversationId: selectedConversationId,
-        senderId: user!.id,
-        senderName: user!.displayName,
-        senderAvatar: user!.avatarUrl,
-        clientMessageId,
-        content,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, optimisticMsg]);
-
-      socket.emit('message:send', {
-        conversationId: selectedConversationId,
-        content,
-        clientMessageId,
-      }, (res: any) => {
-        if (res?.success && res.message) {
-          setMessages((prev) =>
-            prev.map((m) => m.clientMessageId === clientMessageId ? res.message : m)
-          );
-        }
+        messageId,
+        emoji,
       });
     } else {
-      // REST fallback
-      const res = await api.sendMessage(selectedConversationId, content, clientMessageId);
-      setMessages((prev) => [...prev, res.message]);
+      const res = await api.toggleReaction(selectedConversationId, messageId, emoji);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, reactions: res.reactions } : m))
+      );
     }
   };
 
   // 1. Loading screen
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-chat-bg flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen bg-[#07050d] flex flex-col items-center justify-center p-4">
         <BrandLogo size={64} showText={false} className="animate-pulse mb-4" />
-        <Loader2 className="w-6 h-6 animate-spin text-brand-400 mb-2" />
-        <span className="text-xs text-slate-400 font-mono tracking-wider">GÜVENLİ OTURUM BAŞLATILIYOR...</span>
+        <Loader2 className="w-6 h-6 animate-spin text-purple-400 mb-2" />
+        <span className="text-xs text-purple-300 font-mono tracking-wider">GÜVENLİ OTURUM BAŞLATILIYOR...</span>
       </div>
     );
   }
@@ -199,10 +290,15 @@ export const AppContent: React.FC = () => {
     return <AccessRestricted />;
   }
 
+  // 4. Authorized user but onboarding incomplete -> Profile onboarding modal
+  if (user && user.onboarded === false) {
+    return <OnboardingModal />;
+  }
+
   const selectedConversation = conversations.find((c) => c.id === selectedConversationId);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-chat-bg overflow-hidden text-slate-100 font-sans">
+    <div className="h-screen w-screen flex flex-col bg-[#07050d] overflow-hidden text-slate-100 font-sans">
       {/* Top Header */}
       <Header
         currentView={currentView}
@@ -233,9 +329,12 @@ export const AppContent: React.FC = () => {
                 conversation={selectedConversation}
                 messages={messages}
                 currentUser={user}
+                conversations={conversations}
                 onSendMessage={handleSendMessage}
+                onToggleReaction={handleToggleReaction}
                 onBackMobile={() => setSelectedConversationId(null)}
                 typingUser={typingUser}
+                onRefreshConversations={loadConversations}
               />
             ) : (
               <EmptyState onOpenNewChat={() => setIsNewChatOpen(true)} />
@@ -244,7 +343,7 @@ export const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* New Direct Chat Modal */}
+      {/* New Direct/Group Chat Modal */}
       <NewChatModal
         isOpen={isNewChatOpen}
         onClose={() => setIsNewChatOpen(false)}

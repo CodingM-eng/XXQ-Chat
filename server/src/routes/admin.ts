@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../auth/index.js';
 import { dataStore, isWhitelistModeEnabled } from '../db/index.js';
 import { config } from '../config.js';
+import { onWhitelistRevoked, onWhitelistModeChanged } from '../sockets/index.js';
 
 const router = Router();
 
@@ -39,6 +40,11 @@ router.post('/whitelist/toggle', async (req, res) => {
 
   await dataStore.setWhitelistMode(enabled);
 
+  // If enabled, disconnect any active unapproved sockets in real-time
+  if (enabled) {
+    await onWhitelistModeChanged(true);
+  }
+
   const action = enabled ? 'WHITELIST_ENABLED' : 'WHITELIST_DISABLED';
   await dataStore.recordAuditLog({
     actorId: user.id,
@@ -60,6 +66,41 @@ router.post('/whitelist/toggle', async (req, res) => {
 router.get('/whitelist', async (req, res) => {
   const items = await dataStore.getWhitelist();
   res.json({ whitelist: items });
+});
+
+// GET /api/admin/pending - list unapproved users pending admin review
+router.get('/pending', async (req, res) => {
+  const requests = await dataStore.getPendingAccessRequests();
+  res.json({ pendingRequests: requests });
+});
+
+// POST /api/admin/whitelist/approve - approve a pending request
+const approveSchema = z.object({
+  email: z.string().email('Geçerli bir e-posta adresi gereklidir.'),
+});
+
+router.post('/whitelist/approve', async (req, res) => {
+  const parseResult = approveSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
+    return;
+  }
+
+  const email = parseResult.data.email.toLowerCase().trim();
+  const user = req.user!;
+
+  await dataStore.addToWhitelist(email, user.email);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'USER_WHITELIST_APPROVED',
+    target: email,
+    details: `${email} kullanıcısı için uygulama erişimi onaylandı`,
+    ipAddress: req.ip,
+  });
+
+  res.json({ success: true, email, message: `${email} hesabı başarıyla onaylandı.` });
 });
 
 // POST /api/admin/whitelist/add
@@ -112,6 +153,9 @@ router.delete('/whitelist/:email', async (req, res) => {
     res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı beyaz listede bulunamadı.' });
     return;
   }
+
+  // Real-time disconnect any active socket connection for this revoked user
+  await onWhitelistRevoked(email);
 
   await dataStore.recordAuditLog({
     actorId: user.id,

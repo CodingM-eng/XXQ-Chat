@@ -1,9 +1,14 @@
 export interface User {
   id: string;
   email: string;
+  firstName?: string | null;
+  lastName?: string | null;
   displayName: string;
   avatarUrl?: string | null;
+  phoneNumber?: string | null;
   isAdmin: boolean;
+  onboarded?: boolean;
+  status?: 'active' | 'pending' | 'blocked';
   createdAt?: string;
   lastActiveAt?: string;
 }
@@ -14,6 +19,17 @@ export interface WhitelistStatus {
   canAccessApp: boolean;
 }
 
+export interface MessageReply {
+  id: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+}
+
+export interface MessageForward {
+  senderName: string;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -22,14 +38,30 @@ export interface Message {
   senderAvatar?: string | null;
   clientMessageId?: string;
   content: string;
+  replyTo?: MessageReply | null;
+  forwardedFrom?: MessageForward | null;
+  reactions?: Record<string, string[]>; // { "👍": ["userId1", "userId2"] }
   status: 'pending' | 'sent' | 'delivered' | 'read';
   createdAt: string;
+}
+
+export interface ConversationParticipant {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  isAdmin?: boolean;
 }
 
 export interface Conversation {
   id: string;
   type: 'direct' | 'group';
   name: string;
+  avatarUrl?: string | null;
+  creatorId?: string | null;
+  adminIds?: string[];
+  participantCount?: number;
+  participants?: ConversationParticipant[];
   peer?: {
     id: string;
     email: string;
@@ -47,6 +79,17 @@ export interface Conversation {
   } | null;
   unreadCount: number;
   updatedAt: string;
+}
+
+export interface PendingRequest {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  firstAttemptAt: string;
+  lastAttemptAt: string;
+  attemptCount: number;
+  status: 'pending' | 'approved' | 'rejected';
 }
 
 export interface WhitelistItem {
