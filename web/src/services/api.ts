@@ -11,6 +11,9 @@ import {
   DriveAccount,
   TelegramBot,
   TelegramCommandConfig,
+  SupportReport,
+  DriveStatus,
+  SearchResults,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -113,13 +116,40 @@ class ApiService {
     firstName?: string;
     lastName?: string;
     displayName?: string;
-    avatarUrl?: string;
+    avatarUrl?: string | null;
     phoneNumber?: string;
+    themePreference?: 'dark' | 'light';
   }): Promise<{ user: User }> {
     return this.request('/api/users/me', {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
+  }
+
+  async uploadAvatar(fileOrUrl: File | string): Promise<{ success: boolean; avatarUrl: string; user: User }> {
+    if (typeof fileOrUrl === 'string') {
+      return this.request('/api/users/avatar', {
+        method: 'POST',
+        body: JSON.stringify({ avatarUrl: fileOrUrl }),
+      });
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileOrUrl);
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/users/avatar`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Resim yüklenemedi' }));
+      throw new Error(err.message || 'Resim yükleme başarısız');
+    }
+    return res.json();
   }
 
   async searchUsers(query: string = ''): Promise<{ users: User[] }> {
@@ -390,6 +420,80 @@ class ApiService {
 
   async getAdminUsers(): Promise<{ users: User[] }> {
     return this.request('/api/admin/users');
+  }
+
+  // Group Avatar endpoints
+  async uploadGroupAvatar(conversationId: string, fileOrUrl: File | string): Promise<{ success: boolean; avatarUrl: string; message: string }> {
+    if (typeof fileOrUrl === 'string') {
+      return this.request(`/api/conversations/${conversationId}/avatar`, {
+        method: 'POST',
+        body: JSON.stringify({ avatarUrl: fileOrUrl }),
+      });
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileOrUrl);
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/avatar`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Grup logosu yüklenemedi' }));
+      throw new Error(err.message || 'Grup logosu yükleme başarısız');
+    }
+    return res.json();
+  }
+
+  async removeGroupAvatar(conversationId: string): Promise<{ success: boolean; avatarUrl: null; message: string }> {
+    return this.request(`/api/conversations/${conversationId}/avatar`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Search
+  async search(query: string, type: 'all' | 'messages' | 'users' | 'conversations' = 'all', conversationId?: string): Promise<SearchResults> {
+    const params = new URLSearchParams({ q: query, type });
+    if (conversationId) params.append('conversationId', conversationId);
+    return this.request(`/api/search?${params.toString()}`);
+  }
+
+  // Support / Problem Reports
+  async submitSupportReport(data: {
+    title: string;
+    description: string;
+    diagnostics?: any;
+  }): Promise<{ success: boolean; report: SupportReport; message: string }> {
+    return this.request('/api/support/reports', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getSupportReports(limit: number = 50): Promise<{ reports: SupportReport[] }> {
+    return this.request(`/api/support/reports?limit=${limit}`);
+  }
+
+  async updateSupportReportStatus(id: string, status: 'open' | 'investigating' | 'resolved'): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/support/reports/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  // Google Drive Status & Quota Sync
+  async getDriveStatus(): Promise<DriveStatus> {
+    return this.request('/api/drive/status');
+  }
+
+  async syncDriveAccountQuota(id: string): Promise<{ success: boolean; quota: { spaceUsed: number; spaceTotal: number }; message: string }> {
+    return this.request(`/api/drive/accounts/${id}/sync`, {
+      method: 'POST',
+    });
   }
 }
 

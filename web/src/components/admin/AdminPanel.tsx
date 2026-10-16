@@ -9,6 +9,8 @@ import {
   DriveAccount,
   TelegramBot,
   TelegramCommandConfig,
+  SupportReport,
+  DriveStatus,
 } from '../../types';
 import {
   Shield,
@@ -33,6 +35,7 @@ import {
   ToggleLeft,
   ToggleRight,
   Sparkles,
+  HelpCircle,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -49,13 +52,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
   const [driveAccounts, setDriveAccounts] = useState<DriveAccount[]>([]);
   const [telegramBots, setTelegramBots] = useState<TelegramBot[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [supportReports, setSupportReports] = useState<SupportReport[]>([]);
+  const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null);
+  const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'pending' | 'whitelist' | 'moderators' | 'drive' | 'telegram' | 'audit'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'whitelist' | 'moderators' | 'drive' | 'telegram' | 'audit' | 'reports'>('pending');
 
   // Search & input states
   const [searchQuery, setSearchQuery] = useState('');
@@ -92,7 +98,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
     try {
       setLoading(true);
       setError(null);
-      const [statusRes, whitelistRes, pendingRes, logsRes, modsRes, driveRes, botsRes, usersRes] = await Promise.all([
+      const [statusRes, whitelistRes, pendingRes, logsRes, modsRes, driveRes, botsRes, usersRes, reportsRes, driveStatusRes] = await Promise.all([
         api.getAdminStatus(),
         api.getWhitelist(),
         api.getPendingRequests().catch(() => ({ pendingRequests: [] })),
@@ -101,6 +107,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         api.getDriveAccounts().catch(() => ({ accounts: [] })),
         api.getTelegramBots().catch(() => ({ bots: [] })),
         api.getAdminUsers().catch(() => ({ users: [] })),
+        api.getSupportReports(50).catch(() => ({ reports: [] })),
+        api.getDriveStatus().catch(() => null),
       ]);
 
       setStats(statusRes.stats);
@@ -112,6 +120,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setDriveAccounts(driveRes.accounts || []);
       setTelegramBots(botsRes.bots || []);
       setAllUsers(usersRes.users || []);
+      setSupportReports(reportsRes.reports || []);
+      setDriveStatus(driveStatusRes);
     } catch (err: any) {
       setError(err.message || 'Yönetim verileri yüklenemedi');
     } finally {
@@ -252,6 +262,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       loadAdminData();
     } catch (err: any) {
       setError(err.message || 'Drive hesabı silinemedi');
+    }
+  };
+
+  const handleSyncDriveQuota = async (id: string) => {
+    try {
+      setSyncingAccountId(id);
+      const res = await api.syncDriveAccountQuota(id);
+      setSuccessMsg(res.message || 'Drive kotası başarıyla eşitlendi.');
+      loadAdminData();
+    } catch (err: any) {
+      setError(err.message || 'Drive kotası eşitlenemedi.');
+    } finally {
+      setSyncingAccountId(null);
+    }
+  };
+
+  const handleUpdateReportStatus = async (id: string, status: 'open' | 'investigating' | 'resolved') => {
+    try {
+      await api.updateSupportReportStatus(id, status);
+      setSuccessMsg('Bildirim durumu güncellendi.');
+      loadAdminData();
+    } catch (err: any) {
+      setError(err.message || 'Bildirim durumu güncellenemedi.');
     }
   };
 
@@ -535,6 +568,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
             <Clock className="w-3.5 h-3.5" />
             <span>Denetim Günlüğü</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'reports'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                : 'bg-[#120e20] text-slate-400 hover:text-white border border-[#241c38]'
+            }`}
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>Sorun Bildirimleri</span>
+            {supportReports.filter((r) => r.status === 'open').length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-extrabold border border-rose-500/30">
+                {supportReports.filter((r) => r.status === 'open').length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* TAB 1: PENDING REQUESTS */}
@@ -762,6 +812,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
               </button>
             </div>
 
+            {/* Drive Configuration Warning/Info */}
+            {driveStatus && !driveStatus.isConfigured ? (
+              <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-2xl flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1 text-xs">
+                  <p className="font-bold text-amber-300">Google Drive OAuth Yapılandırması Eksik</p>
+                  <p className="text-amber-200/80 leading-relaxed">
+                    Render ortam değişkenlerinde <code>GOOGLE_DRIVE_CLIENT_ID</code> ve <code>GOOGLE_DRIVE_CLIENT_SECRET</code> anahtarlarının tanımlanması gerekmektedir.
+                    Google Cloud Console üzerinden OAuth 2.0 Client ID oluşturup Yetkili Yönlendirme URI olarak <code>{driveStatus.redirectUri || 'https://xxq-chat-backend.onrender.com/api/drive/callback'}</code> adresini ekleyin.
+                  </p>
+                </div>
+              </div>
+            ) : driveStatus?.isConfigured ? (
+              <div className="p-3 bg-emerald-950/30 border border-emerald-800/50 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-300 font-semibold">Google OAuth 2.0 API Yapılandırması Aktif</span>
+                </div>
+                <span className="text-[11px] font-mono text-slate-400 truncate max-w-sm">{driveStatus.redirectUri}</span>
+              </div>
+            ) : null}
+
             {driveAccounts.length === 0 ? (
               <div className="py-12 text-center text-slate-500">
                 <HardDrive className="w-12 h-12 mx-auto mb-3 text-slate-600" />
@@ -795,12 +867,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleRemoveDrive(acc.id)}
-                          className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 rounded-xl text-xs font-semibold transition-colors"
-                        >
-                          Bağlantıyı Kaldır
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleSyncDriveQuota(acc.id)}
+                            disabled={syncingAccountId === acc.id}
+                            className="px-3 py-1.5 bg-[#251d3e] hover:bg-[#322754] text-slate-200 border border-[#3b2d63] rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 text-purple-400 ${syncingAccountId === acc.id ? 'animate-spin' : ''}`} />
+                            <span>Kotayı Eşitle</span>
+                          </button>
+                          <button
+                            onClick={() => handleRemoveDrive(acc.id)}
+                            className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 rounded-xl text-xs font-semibold transition-colors"
+                          >
+                            Bağlantıyı Kaldır
+                          </button>
+                        </div>
                       </div>
 
                       {/* Quota Bar */}
@@ -990,6 +1072,121 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* TAB 7: SUPPORT & PROBLEM REPORTS */}
+        {activeTab === 'reports' && (
+          <div className="bg-[#120e20] border border-[#261d3d] rounded-2xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#201834]">
+              <div>
+                <h2 className="text-base font-bold text-white">Sorun & Hata Bildirimleri</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Kullanıcılar tarafından iletilen sorun raporları ve sistem teşhis verileri.
+                </p>
+              </div>
+              <span className="text-xs text-purple-400 font-semibold font-mono">
+                {supportReports.length} Bildirim
+              </span>
+            </div>
+
+            {supportReports.length === 0 ? (
+              <div className="py-12 text-center text-slate-500">
+                <HelpCircle className="w-10 h-10 mx-auto mb-2 text-slate-600" />
+                <p className="text-sm font-semibold text-slate-400">Henüz bildirilmiş bir sorun bulunmuyor.</p>
+                <p className="text-xs text-slate-500 mt-1">Kullanıcılar "Sorun Bildir" formunu kullandığında raporlar burada listelenir.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {supportReports.map((report) => (
+                  <div
+                    key={report.id}
+                    className="p-4 rounded-2xl bg-[#171126] border border-[#2d2247] space-y-3 transition-colors"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#201834]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white">{report.title}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            report.status === 'open'
+                              ? 'bg-rose-950/80 text-rose-300 border-rose-800'
+                              : report.status === 'investigating'
+                              ? 'bg-amber-950/80 text-amber-300 border-amber-800'
+                              : 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                          }`}
+                        >
+                          {report.status === 'open'
+                            ? 'Açık'
+                            : report.status === 'investigating'
+                            ? 'İnceleniyor'
+                            : 'Çözüldü'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                        <span>{report.userDisplayName} ({report.userEmail})</span>
+                        <span>•</span>
+                        <span>{new Date(report.createdAt).toLocaleString('tr-TR')}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
+                      {report.description}
+                    </p>
+
+                    {/* Diagnostics Pill */}
+                    {report.diagnostics && (
+                      <div className="p-2.5 bg-[#0b0914] border border-[#241c38] rounded-xl text-[11px] font-mono text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+                        <div>
+                          <span className="text-slate-500">Platform: </span>
+                          {report.diagnostics.platform || 'Bilinmeyen'}
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Sürüm: </span>
+                          {report.diagnostics.appVersion || '1.0.0'}
+                        </div>
+                        {report.diagnostics.errorCode && (
+                          <div>
+                            <span className="text-rose-400">Hata Kodu: </span>
+                            {report.diagnostics.errorCode}
+                          </div>
+                        )}
+                        <div className="truncate max-w-xs">
+                          <span className="text-slate-500">Yol: </span>
+                          {report.diagnostics.currentPath || '/'}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      {report.status !== 'investigating' && report.status !== 'resolved' && (
+                        <button
+                          onClick={() => handleUpdateReportStatus(report.id, 'investigating')}
+                          className="px-3 py-1 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-800/60 rounded-xl text-xs font-semibold transition-colors"
+                        >
+                          İncelemeye Al
+                        </button>
+                      )}
+                      {report.status !== 'resolved' ? (
+                        <button
+                          onClick={() => handleUpdateReportStatus(report.id, 'resolved')}
+                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-colors"
+                        >
+                          Çözüldü Olarak İşaretle
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleUpdateReportStatus(report.id, 'open')}
+                          className="px-3 py-1 bg-[#1e1732] hover:bg-[#281f42] text-slate-300 rounded-xl text-xs font-semibold transition-colors"
+                        >
+                          Yeniden Aç
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

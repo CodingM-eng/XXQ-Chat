@@ -147,7 +147,7 @@ export async function authorizeUser(user: {
     id: existingUser?.id || user.id,
     email: normalizedEmail,
     displayName: existingUser?.displayName || user.displayName,
-    avatarUrl: user.avatarUrl || existingUser?.avatarUrl || null,
+    avatarUrl: existingUser?.avatarUrl || user.avatarUrl || null,
     isAdmin,
     isModerator,
     onboarded: existingUser ? existingUser.onboarded : (isAdmin ? true : false),

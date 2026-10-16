@@ -325,10 +325,38 @@ export class GoogleDriveService {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      return res.ok || res.status === 404;
-    } catch (err) {
-      console.error('[DRIVE] Delete file error:', err);
+      return res.ok;
+    } catch {
       return false;
     }
+  }
+
+  /**
+   * Returns current Google Drive configuration and status.
+   */
+  static getStatus(): {
+    isConfigured: boolean;
+    clientIdConfigured: boolean;
+    clientSecretConfigured: boolean;
+    redirectUri: string;
+    encryptionKeyConfigured: boolean;
+  } {
+    return {
+      isConfigured: !!(config.GOOGLE_DRIVE_CLIENT_ID && config.GOOGLE_DRIVE_CLIENT_SECRET),
+      clientIdConfigured: !!config.GOOGLE_DRIVE_CLIENT_ID,
+      clientSecretConfigured: !!config.GOOGLE_DRIVE_CLIENT_SECRET,
+      redirectUri: config.GOOGLE_DRIVE_REDIRECT_URI,
+      encryptionKeyConfigured: !!config.ENCRYPTION_KEY,
+    };
+  }
+
+  /**
+   * Syncs and updates the quota for an existing connected Google Drive account.
+   */
+  static async syncAccountQuota(account: DbDriveAccount): Promise<{ spaceUsed: number; spaceTotal: number }> {
+    const accessToken = await this.getAccessToken(account);
+    const quota = await this.fetchQuota(accessToken);
+    await dataStore.updateDriveAccountQuota(account.id, quota.spaceUsed, quota.spaceTotal);
+    return quota;
   }
 }

@@ -13,6 +13,66 @@
   }
 }
 
+/* Light Theme Overrides */
+html.light body {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+html.light * {
+  border-color: #e2e8f0;
+}
+
+html.light .bg-\[\#07050d\],
+html.light .bg-\[\#08070b\],
+html.light .bg-\[\#090710\],
+html.light .bg-\[\#0b0914\],
+html.light .bg-\[\#0c0a14\]\/90 {
+  background-color: #f8fafc !important;
+}
+
+html.light .bg-\[\#120f1e\],
+html.light .bg-\[\#0f0d15\],
+html.light .bg-\[\#110e1a\],
+html.light .bg-\[\#151124\],
+html.light .bg-\[\#151221\]\/90 {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-\[\#171520\],
+html.light .bg-\[\#181329\],
+html.light .bg-\[\#1b152d\],
+html.light .bg-\[\#1c182b\],
+html.light .bg-\[\#1d1a29\],
+html.light .bg-\[\#201836\] {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .text-slate-100,
+html.light .text-slate-200,
+html.light .text-white {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-300,
+html.light .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.light .text-slate-500 {
+  color: #64748b !important;
+}
+
+html.light .border-\[\#241c38\],
+html.light .border-\[\#261e3d\],
+html.light .border-\[\#26203b\],
+html.light .border-\[\#2a2244\],
+html.light .border-\[\#2a2538\],
+html.light .border-\[\#2a2143\],
+html.light .border-\[\#2e2648\] {
+  border-color: #e2e8f0 !important;
+}
+
 /* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -28,8 +88,16 @@
   border-radius: 9999px;
 }
 
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
 ::-webkit-scrollbar-thumb:hover {
   background: #4a3f66;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 /* Micro-animations */

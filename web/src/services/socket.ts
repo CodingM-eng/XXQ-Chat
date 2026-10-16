@@ -21,11 +21,14 @@ export function connectSocket(): Socket {
   }
 
   socket = io(socketUrl, {
-    auth: { token },
+    auth: (cb) => {
+      cb({ token: api.getToken() });
+    },
     transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: 20,
+    reconnectionAttempts: 25,
     reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
   });
 
   socket.on('connect', () => {

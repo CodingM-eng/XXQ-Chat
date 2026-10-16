@@ -8,6 +8,7 @@ export interface DbUser {
   phoneNumber?: string | null; // private, never returned to other users
   isAdmin: boolean;
   isModerator?: boolean;
+  themePreference?: 'dark' | 'light';
   onboarded: boolean;
   status: 'active' | 'pending' | 'blocked';
   createdAt: string;
@@ -44,6 +45,26 @@ export interface DbAuditLog {
   details?: string | null;
   ipAddress?: string | null;
   createdAt: string;
+}
+
+export interface DbSupportReport {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+  title: string;
+  description: string;
+  diagnostics: {
+    appVersion: string;
+    platform: string;
+    userAgent: string;
+    currentPath: string;
+    timestamp: string;
+    errorCode?: string | null;
+  };
+  status: 'open' | 'investigating' | 'resolved';
+  createdAt: string;
+  resolvedAt?: string | null;
 }
 
 export interface DbConversationSummary {
@@ -197,6 +218,7 @@ export interface DataStore {
       displayName?: string;
       avatarUrl?: string | null;
       phoneNumber?: string | null;
+      themePreference?: 'dark' | 'light';
     }
   ): Promise<DbUser | null>;
   completeOnboarding(
@@ -282,4 +304,19 @@ export interface DataStore {
   getTelegramBotById(id: string): Promise<DbTelegramBot | null>;
   updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null>;
   deleteTelegramBot(id: string): Promise<boolean>;
+
+  // Support & Problem Reports
+  createSupportReport(report: {
+    userId: string;
+    userEmail: string;
+    userDisplayName: string;
+    title: string;
+    description: string;
+    diagnostics: any;
+  }): Promise<DbSupportReport>;
+  getSupportReports(limit?: number): Promise<DbSupportReport[]>;
+  updateSupportReportStatus(id: string, status: 'open' | 'investigating' | 'resolved'): Promise<boolean>;
+
+  // Authorized Message Search
+  searchMessages(userId: string, query: string, conversationId?: string): Promise<Array<DbMessage & { conversationName?: string }>>;
 }

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
-import { X, User as UserIcon, Shield, Check, Phone, Save, Loader2, Sparkles } from 'lucide-react';
+import { X, User as UserIcon, Check, Phone, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
 
 const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -23,15 +23,54 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
   const [firstName, setFirstName] = useState(user?.firstName || '');
   const [lastName, setLastName] = useState(user?.lastName || '');
   const [displayName, setDisplayName] = useState(user?.displayName || '');
-  const [selectedAvatar, setSelectedAvatar] = useState<string>(user?.avatarUrl || PRESET_AVATARS[0]);
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || '');
+
+  // Avatar modes: 'preset' | 'file' | 'url'
+  const [avatarMode, setAvatarMode] = useState<'preset' | 'file' | 'url'>('preset');
+  const [selectedPreset, setSelectedPreset] = useState<string>(user?.avatarUrl || PRESET_AVATARS[0]);
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
-  const [useCustomUrl, setUseCustomUrl] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   if (!isOpen || !user) return null;
+
+  const currentPreview =
+    avatarMode === 'file' && filePreview
+      ? filePreview
+      : avatarMode === 'url' && customAvatarUrl.trim()
+      ? customAvatarUrl.trim()
+      : selectedPreset;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setError('Lütfen geçerli bir resim dosyası seçin (JPEG, PNG, WEBP, GIF).');
+      return;
+    }
+
+    if (file.size > 1024 * 1024) {
+      setError('Resim boyutu 1 MB değerini aşamaz. Lütfen daha küçük bir resim seçin.');
+      return;
+    }
+
+    setError(null);
+    setSelectedFile(file);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setFilePreview(event.target?.result as string);
+      setAvatarMode('file');
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,17 +79,27 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
       return;
     }
 
-    const finalAvatar = useCustomUrl && customAvatarUrl.trim() ? customAvatarUrl.trim() : selectedAvatar;
-
     try {
       setIsSubmitting(true);
       setError(null);
+
+      let finalAvatarUrl: string | undefined = undefined;
+
+      if (avatarMode === 'file' && selectedFile) {
+        // Upload file via avatar endpoint
+        const uploadRes = await api.uploadAvatar(selectedFile);
+        finalAvatarUrl = uploadRes.avatarUrl;
+      } else if (avatarMode === 'url' && customAvatarUrl.trim()) {
+        finalAvatarUrl = customAvatarUrl.trim();
+      } else if (avatarMode === 'preset') {
+        finalAvatarUrl = selectedPreset;
+      }
 
       const res = await api.updateMe({
         firstName: firstName.trim() || undefined,
         lastName: lastName.trim() || undefined,
         displayName: displayName.trim(),
-        avatarUrl: finalAvatar || undefined,
+        avatarUrl: finalAvatarUrl,
         phoneNumber: phoneNumber.trim() || undefined,
       });
 
@@ -78,7 +127,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">Profilimi Düzenle</h2>
-              <p className="text-[11px] text-slate-400">Kişisel bilgilerinizi ve avatarınızı güncelleyin</p>
+              <p className="text-[11px] text-slate-400">Kişisel bilgilerinizi ve profil fotoğrafınızı güncelleyin</p>
             </div>
           </div>
           <button
@@ -100,7 +149,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
           {success && (
             <div className="p-3 bg-emerald-950/60 border border-emerald-800/80 rounded-xl text-xs text-emerald-300 flex items-center gap-2">
               <Check className="w-4 h-4 text-emerald-400" />
-              <span>Profil başarıyla güncellendi!</span>
+              <span>Profil ve fotoğraf başarıyla güncellendi!</span>
             </div>
           )}
 
@@ -143,79 +192,115 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
             />
           </div>
 
-          {/* Avatar Selection */}
+          {/* Avatar Options */}
           <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-2">Profil Resmi</label>
-            <div className="flex items-center gap-3 mb-3">
+            <label className="block text-xs font-semibold text-slate-300 mb-2">Profil Fotoğrafı</label>
+
+            {/* Live Preview Box */}
+            <div className="flex items-center gap-3 mb-3 p-3 bg-[#0b0914] border border-[#241c38] rounded-2xl">
               <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-purple-500 bg-[#161224] flex-shrink-0 shadow-lg shadow-purple-950/40">
                 <img
-                  src={useCustomUrl && customAvatarUrl.trim() ? customAvatarUrl.trim() : selectedAvatar}
-                  alt="Avatar Önizleme"
+                  src={currentPreview}
+                  alt="Önizleme"
                   className="w-full h-full object-cover"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = PRESET_AVATARS[0];
                   }}
                 />
               </div>
-              <div className="text-xs text-slate-400">
-                <p className="font-medium text-slate-200">Mevcut Görünüm</p>
-                <p className="text-[11px] text-slate-500">Aşağıdaki hazır avatarlardan birini seçin veya özel bir bağlantı girin.</p>
-              </div>
-            </div>
-
-            {/* Presets */}
-            <div className="grid grid-cols-6 gap-2 mb-2">
-              {PRESET_AVATARS.map((url, idx) => (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-slate-200">Mevcut Önizleme</p>
+                <p className="text-[11px] text-slate-400 truncate">
+                  {avatarMode === 'file'
+                    ? selectedFile?.name || 'Yerel dosya seçildi'
+                    : avatarMode === 'url'
+                    ? 'Özel internet bağlantısı'
+                    : 'Hazır avatar seçildi'}
+                </p>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept="image/png, image/jpeg, image/webp, image/gif"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
                 <button
                   type="button"
-                  key={idx}
-                  onClick={() => {
-                    setSelectedAvatar(url);
-                    setUseCustomUrl(false);
-                  }}
-                  className={`relative w-full aspect-square rounded-xl overflow-hidden border-2 transition-all ${
-                    !useCustomUrl && selectedAvatar === url
-                      ? 'border-purple-500 ring-2 ring-purple-500/50 scale-105 shadow-md'
-                      : 'border-[#241c38] opacity-75 hover:opacity-100 hover:border-purple-700'
-                  }`}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 bg-purple-950/80 hover:bg-purple-900 border border-purple-700/60 rounded-lg text-[11px] font-semibold text-purple-200 transition-colors"
                 >
-                  <img src={url} alt={`Avatar ${idx + 1}`} className="w-full h-full object-cover" />
-                  {!useCustomUrl && selectedAvatar === url && (
-                    <div className="absolute inset-0 bg-purple-900/40 flex items-center justify-center">
-                      <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
-                    </div>
-                  )}
+                  <Upload className="w-3 h-3 text-purple-300" />
+                  <span>Fotoğraf Yükle</span>
                 </button>
-              ))}
+              </div>
             </div>
 
-            {/* Custom URL Option */}
-            <div className="mt-2">
-              <div className="flex items-center gap-2 mb-1.5">
-                <input
-                  type="checkbox"
-                  id="customUrlCheckEdit"
-                  checked={useCustomUrl}
-                  onChange={(e) => setUseCustomUrl(e.target.checked)}
-                  className="rounded border-[#241c38] bg-[#0b0914] text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
-                />
-                <label htmlFor="customUrlCheckEdit" className="text-[11px] text-slate-300 font-medium cursor-pointer">
-                  Özel resim bağlantısı (URL) kullan
-                </label>
-              </div>
-              {useCustomUrl && (
-                <input
-                  type="url"
-                  value={customAvatarUrl}
-                  onChange={(e) => setCustomAvatarUrl(e.target.value)}
-                  placeholder="https://example.com/profil-resmim.png"
-                  className="w-full px-3.5 py-2 bg-[#0b0914] border border-[#241c38] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
-                />
-              )}
+            {/* Mode selection tabs */}
+            <div className="flex items-center gap-1.5 mb-2.5">
+              <button
+                type="button"
+                onClick={() => setAvatarMode('preset')}
+                className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                  avatarMode === 'preset'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-[#181329] text-slate-400 hover:text-white'
+                }`}
+              >
+                Hazır Avatarlar
+              </button>
+              <button
+                type="button"
+                onClick={() => setAvatarMode('url')}
+                className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                  avatarMode === 'url'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-[#181329] text-slate-400 hover:text-white'
+                }`}
+              >
+                Web Bağlantısı (URL)
+              </button>
             </div>
+
+            {avatarMode === 'preset' && (
+              <div className="grid grid-cols-6 gap-2">
+                {PRESET_AVATARS.map((url, idx) => (
+                  <button
+                    type="button"
+                    key={idx}
+                    onClick={() => {
+                      setSelectedPreset(url);
+                      setSelectedFile(null);
+                      setFilePreview(null);
+                    }}
+                    className={`relative w-full aspect-square rounded-xl overflow-hidden border-2 transition-all ${
+                      selectedPreset === url
+                        ? 'border-purple-500 ring-2 ring-purple-500/50 scale-105 shadow-md'
+                        : 'border-[#241c38] opacity-75 hover:opacity-100 hover:border-purple-700'
+                    }`}
+                  >
+                    <img src={url} alt={`Avatar ${idx + 1}`} className="w-full h-full object-cover" />
+                    {selectedPreset === url && (
+                      <div className="absolute inset-0 bg-purple-900/40 flex items-center justify-center">
+                        <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {avatarMode === 'url' && (
+              <input
+                type="url"
+                value={customAvatarUrl}
+                onChange={(e) => setCustomAvatarUrl(e.target.value)}
+                placeholder="https://example.com/resmim.png"
+                className="w-full px-3.5 py-2 bg-[#0b0914] border border-[#241c38] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+              />
+            )}
           </div>
 
-          {/* Optional Phone Number with Privacy Protection Notice */}
+          {/* Optional Phone Number */}
           <div className="pt-2 border-t border-[#241c38]">
             <label className="block text-xs font-semibold text-slate-300 mb-1">
               Telefon Numarası <span className="text-[10px] text-slate-500 font-normal">(İsteğe bağlı)</span>
@@ -230,27 +315,25 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
                 className="w-full pl-9 pr-3.5 py-2.5 bg-[#0b0914] border border-[#241c38] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
               />
             </div>
-            <div className="mt-2 p-2.5 rounded-xl bg-purple-950/20 border border-purple-900/30 flex items-start gap-2 text-[11px] text-purple-300">
-              <Shield className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
-              <span>
-                <strong>Gizlilik Garantisi:</strong> Telefon numaranız gizli tutulur. Yalnızca sistem yöneticileri görebilir; diğer sohbet kullanıcılarıyla veya aramalarda asla paylaşılmaz.
-              </span>
-            </div>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Telefon numaranız yalnızca hesap güvenliği için saklanır, diğer kullanıcılara asla gösterilmez.
+            </p>
           </div>
 
-          {/* Actions */}
-          <div className="pt-3 flex items-center justify-end gap-2">
+          {/* Buttons */}
+          <div className="flex items-center justify-end gap-2.5 pt-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 bg-[#1b152d] hover:bg-[#251d3e] text-slate-300 text-xs font-semibold rounded-xl transition-colors"
+              disabled={isSubmitting}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-[#1b152d] transition-colors"
             >
-              Vazgeç
+              İptal
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !displayName.trim()}
-              className="px-5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-lg shadow-purple-950/50 flex items-center gap-1.5 transition-all"
+              disabled={isSubmitting}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-900/30 transition-all disabled:opacity-50"
             >
               {isSubmitting ? (
                 <>
@@ -259,7 +342,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
                 </>
               ) : (
                 <>
-                  <Save className="w-3.5 h-3.5" />
+                  <Check className="w-3.5 h-3.5" />
                   <span>Değişiklikleri Kaydet</span>
                 </>
               )}

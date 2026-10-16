@@ -332,6 +332,20 @@ export const AppContent: React.FC = () => {
         currentView={currentView}
         onNavigate={(view) => setCurrentView(view)}
         isConnected={isConnected}
+        onSelectConversation={(id) => {
+          setSelectedConversationId(id);
+          setCurrentView('chat');
+        }}
+        onStartDirectChat={async (email) => {
+          try {
+            const res = await api.createDirectConversation(email);
+            await loadConversations();
+            setSelectedConversationId(res.conversationId);
+            setCurrentView('chat');
+          } catch (err) {
+            console.error('Failed to start chat from search:', err);
+          }
+        }}
       />
 
       {/* Main Content Area */}

@@ -39,6 +39,18 @@ services:
         sync: false
       - key: FIREBASE_PRIVATE_KEY
         sync: false
+      # Server Base URL & Security Encryption Key
+      - key: SERVER_BASE_URL
+        value: https://xxq-chat-backend.onrender.com
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      # Google Drive OAuth Integration (configure in Google Cloud Console & Render Dashboard)
+      - key: GOOGLE_DRIVE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_DRIVE_REDIRECT_URI
+        value: https://xxq-chat-backend.onrender.com/api/drive/callback
 
   # ============================================================================
   # 2. XXQ Chat Web Frontend (Single Page Application - Render Static Site)

@@ -15,6 +15,7 @@ import {
   DbAttachment,
   DbTelegramBot,
   TelegramCommandConfig,
+  DbSupportReport,
 } from './types.js';
 
 export class FirestoreStore implements DataStore {
@@ -323,6 +324,7 @@ export class FirestoreStore implements DataStore {
       phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin: d.isAdmin === true || d.is_admin === 1,
       isModerator: d.isModerator === true || d.is_moderator === 1,
+      themePreference: d.themePreference === 'light' || d.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
       status: d.status || 'active',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -346,6 +348,7 @@ export class FirestoreStore implements DataStore {
       phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin: d.isAdmin === true || d.is_admin === 1,
       isModerator: d.isModerator === true || d.is_moderator === 1,
+      themePreference: d.themePreference === 'light' || d.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
       status: d.status || 'active',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -381,7 +384,7 @@ export class FirestoreStore implements DataStore {
         isAdmin,
         isModerator,
       };
-      if (user.avatarUrl && user.avatarUrl !== existing.avatarUrl) updates.avatarUrl = user.avatarUrl;
+      if (user.avatarUrl && !existing.avatarUrl) updates.avatarUrl = user.avatarUrl;
       if (user.displayName && user.displayName !== existing.displayName) updates.displayName = user.displayName;
       if (user.firstName !== undefined) updates.firstName = user.firstName;
       if (user.lastName !== undefined) updates.lastName = user.lastName;
@@ -407,6 +410,7 @@ export class FirestoreStore implements DataStore {
         phoneNumber: user.phoneNumber || null,
         isAdmin,
         isModerator,
+        themePreference: 'dark',
         onboarded,
         status,
         createdAt: now,
@@ -426,6 +430,7 @@ export class FirestoreStore implements DataStore {
       displayName?: string;
       avatarUrl?: string | null;
       phoneNumber?: string | null;
+      themePreference?: 'dark' | 'light';
     }
   ): Promise<DbUser | null> {
     const docRef = this.getFirestore().collection('users').doc(id);
@@ -438,6 +443,7 @@ export class FirestoreStore implements DataStore {
     if (updates.displayName !== undefined) dataToUpdate.displayName = updates.displayName;
     if (updates.avatarUrl !== undefined) dataToUpdate.avatarUrl = updates.avatarUrl;
     if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber;
+    if (updates.themePreference !== undefined) dataToUpdate.themePreference = updates.themePreference;
 
     await docRef.set(dataToUpdate, { merge: true });
     return this.getUserById(id);
@@ -1259,5 +1265,96 @@ export class FirestoreStore implements DataStore {
     if (!doc.exists) return false;
     await ref.delete();
     return true;
+  }
+
+  // Support & Problem Reports
+  async createSupportReport(report: {
+    userId: string;
+    userEmail: string;
+    userDisplayName: string;
+    title: string;
+    description: string;
+    diagnostics: any;
+  }): Promise<DbSupportReport> {
+    const id = 'rep_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const now = new Date().toISOString();
+    const docData: DbSupportReport = {
+      id,
+      userId: report.userId,
+      userEmail: report.userEmail,
+      userDisplayName: report.userDisplayName,
+      title: report.title,
+      description: report.description,
+      diagnostics: report.diagnostics || {},
+      status: 'open',
+      createdAt: now,
+      resolvedAt: null,
+    };
+    await this.getFirestore().collection('support_reports').doc(id).set(docData);
+    return docData;
+  }
+
+  async getSupportReports(limit: number = 50): Promise<DbSupportReport[]> {
+    const snap = await this.getFirestore().collection('support_reports').orderBy('createdAt', 'desc').limit(limit).get();
+    const list: DbSupportReport[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data() as DbSupportReport;
+      list.push({ ...d, id: doc.id });
+    });
+    return list;
+  }
+
+  async updateSupportReportStatus(id: string, status: 'open' | 'investigating' | 'resolved'): Promise<boolean> {
+    const ref = this.getFirestore().collection('support_reports').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return false;
+    const resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
+    await ref.set({ status, resolvedAt }, { merge: true });
+    return true;
+  }
+
+  // Authorized Message Search
+  async searchMessages(userId: string, query: string, conversationId?: string): Promise<Array<DbMessage & { conversationName?: string }>> {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return [];
+
+    let targetConvIds: string[] = [];
+    const convMap = new Map<string, string>();
+
+    if (conversationId) {
+      const isParticipant = await this.isConversationParticipant(conversationId, userId);
+      if (!isParticipant) return [];
+      targetConvIds = [conversationId];
+      const conv = await this.getConversation(conversationId, userId);
+      if (conv) {
+        convMap.set(conversationId, conv.name || (conv.type === 'direct' ? 'Direkt Mesaj' : 'Grup'));
+      }
+    } else {
+      const userConvs = await this.getUserConversations(userId);
+      targetConvIds = userConvs.map((c) => {
+        convMap.set(c.id, c.name || (c.type === 'direct' ? 'Direkt Mesaj' : 'Grup'));
+        return c.id;
+      });
+    }
+
+    if (targetConvIds.length === 0) return [];
+
+    const results: Array<DbMessage & { conversationName?: string }> = [];
+
+    // Search across user's conversations
+    for (const cId of targetConvIds) {
+      const messages = await this.getConversationMessages(cId, 100);
+      for (const msg of messages) {
+        if (msg.content && msg.content.toLowerCase().includes(trimmed)) {
+          results.push({
+            ...msg,
+            conversationName: convMap.get(cId) || 'Sohbet',
+          });
+        }
+      }
+    }
+
+    results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return results.slice(0, 50);
   }
 }

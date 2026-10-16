@@ -16,6 +16,7 @@ import {
   DbAttachment,
   DbTelegramBot,
   TelegramCommandConfig,
+  DbSupportReport,
 } from './types.js';
 
 export class SqliteStore implements DataStore {
@@ -175,12 +176,27 @@ export class SqliteStore implements DataStore {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS support_reports (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        user_email TEXT NOT NULL,
+        user_display_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        diagnostics_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        resolved_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(client_message_id);
       CREATE INDEX IF NOT EXISTS idx_participants_user ON conversation_participants(user_id);
       CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
       CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_support_reports_created ON support_reports(created_at DESC);
     `);
 
     // Safe schema migrations for existing SQLite databases
@@ -190,6 +206,7 @@ export class SqliteStore implements DataStore {
     try { sqlite.exec('ALTER TABLE users ADD COLUMN is_moderator INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE users ADD COLUMN onboarded INTEGER DEFAULT 1;'); } catch (_) {}
     try { sqlite.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active';"); } catch (_) {}
+    try { sqlite.exec("ALTER TABLE users ADD COLUMN theme_preference TEXT DEFAULT 'dark';"); } catch (_) {}
     try { sqlite.exec('ALTER TABLE whitelist ADD COLUMN is_moderator INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN avatar_url TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN creator_id TEXT;'); } catch (_) {}
@@ -427,7 +444,7 @@ export class SqliteStore implements DataStore {
   // Users
   async getUserById(id: string): Promise<DbUser | null> {
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE id = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, created_at, last_active_at FROM users WHERE id = ?')
       .get(id) as any;
     if (!row) return null;
 
@@ -441,6 +458,7 @@ export class SqliteStore implements DataStore {
       phoneNumber: row.phone_number || null,
       isAdmin: row.is_admin === 1,
       isModerator: row.is_moderator === 1,
+      themePreference: row.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: row.onboarded === 1,
       status: row.status || 'active',
       createdAt: row.created_at,
@@ -451,7 +469,7 @@ export class SqliteStore implements DataStore {
   async getUserByEmail(email: string): Promise<DbUser | null> {
     const normalized = email.toLowerCase().trim();
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
       .get(normalized) as any;
     if (!row) return null;
 
@@ -465,6 +483,7 @@ export class SqliteStore implements DataStore {
       phoneNumber: row.phone_number || null,
       isAdmin: row.is_admin === 1,
       isModerator: row.is_moderator === 1,
+      themePreference: row.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: row.onboarded === 1,
       status: row.status || 'active',
       createdAt: row.created_at,
@@ -498,7 +517,10 @@ export class SqliteStore implements DataStore {
       const updates: any[] = [];
       const params: any[] = [];
 
-      if (user.avatarUrl && user.avatarUrl !== existing.avatar_url) {
+      updates.push('is_admin = ?');
+      params.push(isAdmin ? 1 : 0);
+
+      if (user.avatarUrl && !existing.avatar_url) {
         updates.push('avatar_url = ?');
         params.push(user.avatarUrl);
       }
@@ -576,6 +598,7 @@ export class SqliteStore implements DataStore {
       displayName?: string;
       avatarUrl?: string | null;
       phoneNumber?: string | null;
+      themePreference?: 'dark' | 'light';
     }
   ): Promise<DbUser | null> {
     const updateParts: string[] = [];
@@ -600,6 +623,10 @@ export class SqliteStore implements DataStore {
     if (updates.phoneNumber !== undefined) {
       updateParts.push('phone_number = ?');
       params.push(updates.phoneNumber);
+    }
+    if (updates.themePreference !== undefined) {
+      updateParts.push('theme_preference = ?');
+      params.push(updates.themePreference);
     }
 
     if (updateParts.length > 0) {
@@ -1704,5 +1731,121 @@ export class SqliteStore implements DataStore {
       .prepare('DELETE FROM telegram_bots WHERE id = ?')
       .run(id);
     return res.changes > 0;
+  }
+
+  // Support & Problem Reports
+  async createSupportReport(report: {
+    userId: string;
+    userEmail: string;
+    userDisplayName: string;
+    title: string;
+    description: string;
+    diagnostics: any;
+  }): Promise<DbSupportReport> {
+    const id = 'rep_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const now = new Date().toISOString();
+    this.getSqlite().prepare(`
+      INSERT INTO support_reports (id, user_id, user_email, user_display_name, title, description, diagnostics_json, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+    `).run(id, report.userId, report.userEmail, report.userDisplayName, report.title, report.description, JSON.stringify(report.diagnostics || {}), now);
+
+    return {
+      id,
+      userId: report.userId,
+      userEmail: report.userEmail,
+      userDisplayName: report.userDisplayName,
+      title: report.title,
+      description: report.description,
+      diagnostics: report.diagnostics || {},
+      status: 'open',
+      createdAt: now,
+      resolvedAt: null,
+    };
+  }
+
+  async getSupportReports(limit: number = 50): Promise<DbSupportReport[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, user_id, user_email, user_display_name, title, description, diagnostics_json, status, created_at, resolved_at
+      FROM support_reports
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    return rows.map((r) => {
+      let diag: any = {};
+      try {
+        diag = JSON.parse(r.diagnostics_json || '{}');
+      } catch (_) {}
+      return {
+        id: r.id,
+        userId: r.user_id,
+        userEmail: r.user_email,
+        userDisplayName: r.user_display_name,
+        title: r.title,
+        description: r.description,
+        diagnostics: diag,
+        status: r.status as 'open' | 'investigating' | 'resolved',
+        createdAt: r.created_at,
+        resolvedAt: r.resolved_at || null,
+      };
+    });
+  }
+
+  async updateSupportReportStatus(id: string, status: 'open' | 'investigating' | 'resolved'): Promise<boolean> {
+    const resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
+    const res = this.getSqlite().prepare(`
+      UPDATE support_reports
+      SET status = ?, resolved_at = ?
+      WHERE id = ?
+    `).run(status, resolvedAt, id);
+    return res.changes > 0;
+  }
+
+  // Authorized Message Search
+  async searchMessages(userId: string, query: string, conversationId?: string): Promise<Array<DbMessage & { conversationName?: string }>> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    let sql = `
+      SELECT m.*, c.name as conversation_name, c.type as conversation_type
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      JOIN conversation_participants cp ON cp.conversation_id = m.conversation_id
+      WHERE cp.user_id = ? AND m.content LIKE ?
+    `;
+    const params: any[] = [userId, `%${trimmed}%`];
+
+    if (conversationId) {
+      sql += ' AND m.conversation_id = ?';
+      params.push(conversationId);
+    }
+
+    sql += ' ORDER BY m.created_at DESC LIMIT 50';
+
+    const rows = this.getSqlite().prepare(sql).all(...params) as any[];
+    return rows.map((row) => {
+      let replyTo: any = null;
+      let forwardedFrom: any = null;
+      let attachments: any = null;
+      try { if (row.reply_to) replyTo = JSON.parse(row.reply_to); } catch (_) {}
+      try { if (row.forwarded_from) forwardedFrom = JSON.parse(row.forwarded_from); } catch (_) {}
+      try { if (row.attachments) attachments = JSON.parse(row.attachments); } catch (_) {}
+
+      return {
+        id: row.id,
+        conversationId: row.conversation_id,
+        senderId: row.sender_id,
+        senderName: row.sender_name,
+        senderAvatar: row.sender_avatar || null,
+        clientMessageId: row.client_message_id || null,
+        content: row.content,
+        replyTo,
+        forwardedFrom,
+        attachments,
+        status: row.status,
+        createdAt: row.created_at,
+        conversationName: row.conversation_name || (row.conversation_type === 'direct' ? 'Direkt Mesaj' : 'Grup'),
+      };
+    });
   }
 }

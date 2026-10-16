@@ -7,6 +7,7 @@ import { getSocketServer } from '../sockets/index.js';
 
 import multer from 'multer';
 import { GoogleDriveService } from '../services/drive.js';
+import { formatMessage } from '../utils/format.js';
 
 const router = Router();
 const upload = multer({
@@ -15,32 +16,6 @@ const upload = multer({
 });
 
 router.use(requireAuth, enforceWhitelist);
-
-function formatMessage(m: any) {
-  return {
-    id: m.id,
-    conversationId: m.conversationId || m.conversation_id,
-    conversation_id: m.conversationId || m.conversation_id,
-    senderId: m.senderId || m.sender_id,
-    sender_id: m.senderId || m.sender_id,
-    senderName: m.senderName || m.sender_name,
-    sender_name: m.senderName || m.sender_name,
-    senderAvatar: m.senderAvatar || m.sender_avatar || null,
-    sender_avatar: m.senderAvatar || m.sender_avatar || null,
-    clientMessageId: m.clientMessageId || m.client_message_id || null,
-    client_message_id: m.clientMessageId || m.client_message_id || null,
-    content: m.content,
-    replyTo: m.replyTo || m.reply_to || null,
-    reply_to: m.replyTo || m.reply_to || null,
-    forwardedFrom: m.forwardedFrom || m.forwarded_from || null,
-    forwarded_from: m.forwardedFrom || m.forwarded_from || null,
-    attachments: m.attachments || null,
-    reactions: m.reactions || {},
-    status: m.status,
-    createdAt: m.createdAt || m.created_at,
-    created_at: m.createdAt || m.created_at,
-  };
-}
 
 // GET /api/conversations - list current user's conversations
 router.get('/', async (req, res) => {
@@ -598,6 +573,123 @@ router.post('/:id/messages/:messageId/reactions', async (req, res) => {
   }
 
   res.json({ success: true, reactions });
+});
+
+// POST /api/conversations/:id/avatar - update group logo / conversation avatar
+router.post('/:id/avatar', (req, res) => {
+  upload.single('file')(req, res, async (err: any) => {
+    if (err) {
+      res.status(400).json({ error: 'UPLOAD_ERROR', message: err.message || 'Resim yüklenirken hata oluştu.' });
+      return;
+    }
+
+    const convId = req.params.id as string;
+    const user = req.user!;
+
+    const isParticipant = await dataStore.isConversationParticipant(convId, user.id);
+    if (!isParticipant) {
+      res.status(403).json({ error: 'FORBIDDEN', message: 'Bu sohbette grup logosunu değiştirme yetkiniz yok.' });
+      return;
+    }
+
+    const conv = await dataStore.getConversation(convId, user.id);
+    if (!conv) {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'Sohbet bulunamadı.' });
+      return;
+    }
+
+    // If group, verify admin or creator or member
+    if (conv.type === 'group') {
+      const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
+      const isCreator = conv.creatorId === user.id;
+      if (!isAdmin && !isCreator && !user.isAdmin) {
+        res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup yöneticileri veya grup kurucusu logoyu değiştirebilir.' });
+        return;
+      }
+    }
+
+    let newAvatarUrl: string | null = null;
+    if (req.file) {
+      if (!req.file.mimetype.startsWith('image/')) {
+        res.status(400).json({ error: 'INVALID_FILE_TYPE', message: 'Yalnızca resim dosyası yüklenebilir.' });
+        return;
+      }
+      newAvatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    } else if (req.body && typeof req.body.avatarUrl === 'string') {
+      const url = req.body.avatarUrl.trim();
+      if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:image/')) {
+        res.status(400).json({ error: 'INVALID_URL', message: 'Geçersiz resim bağlantısı.' });
+        return;
+      }
+      newAvatarUrl = url;
+    } else {
+      res.status(400).json({ error: 'NO_IMAGE', message: 'Bir resim dosyası veya geçerli bir resim bağlantısı belirtilmelidir.' });
+      return;
+    }
+
+    await dataStore.updateConversation(convId, { avatarUrl: newAvatarUrl });
+
+    const io = getSocketServer();
+    if (io) {
+      const participantIds = await dataStore.getConversationParticipantIds(convId);
+      const targetRooms = [`conversation:${convId}`, ...participantIds.map((pId) => `user:${pId}`)];
+      io.to(targetRooms).emit('conversation:updated', {
+        conversationId: convId,
+        avatarUrl: newAvatarUrl,
+      });
+    }
+
+    res.json({
+      success: true,
+      avatarUrl: newAvatarUrl,
+      message: 'Grup logosu başarıyla güncellendi.',
+    });
+  });
+});
+
+// DELETE /api/conversations/:id/avatar - remove group logo
+router.delete('/:id/avatar', async (req, res) => {
+  const convId = req.params.id as string;
+  const user = req.user!;
+
+  const isParticipant = await dataStore.isConversationParticipant(convId, user.id);
+  if (!isParticipant) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Yetkiniz yok.' });
+    return;
+  }
+
+  const conv = await dataStore.getConversation(convId, user.id);
+  if (!conv) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Sohbet bulunamadı.' });
+    return;
+  }
+
+  if (conv.type === 'group') {
+    const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
+    const isCreator = conv.creatorId === user.id;
+    if (!isAdmin && !isCreator && !user.isAdmin) {
+      res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup yöneticileri logoyu kaldırabilir.' });
+      return;
+    }
+  }
+
+  await dataStore.updateConversation(convId, { avatarUrl: null });
+
+  const io = getSocketServer();
+  if (io) {
+    const participantIds = await dataStore.getConversationParticipantIds(convId);
+    const targetRooms = [`conversation:${convId}`, ...participantIds.map((pId) => `user:${pId}`)];
+    io.to(targetRooms).emit('conversation:updated', {
+      conversationId: convId,
+      avatarUrl: null,
+    });
+  }
+
+  res.json({
+    success: true,
+    avatarUrl: null,
+    message: 'Grup logosu başarıyla kaldırıldı.',
+  });
 });
 
 export const conversationsRouter = router;

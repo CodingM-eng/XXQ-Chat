@@ -1,0 +1,25 @@
+export function formatMessage(m: any) {
+  return {
+    id: m.id,
+    conversationId: m.conversationId || m.conversation_id,
+    conversation_id: m.conversationId || m.conversation_id,
+    senderId: m.senderId || m.sender_id,
+    sender_id: m.senderId || m.sender_id,
+    senderName: m.senderName || m.sender_name,
+    sender_name: m.senderName || m.sender_name,
+    senderAvatar: m.senderAvatar || m.sender_avatar || null,
+    sender_avatar: m.senderAvatar || m.sender_avatar || null,
+    clientMessageId: m.clientMessageId || m.client_message_id || null,
+    client_message_id: m.clientMessageId || m.client_message_id || null,
+    content: m.content || '',
+    replyTo: m.replyTo || m.reply_to || null,
+    reply_to: m.replyTo || m.reply_to || null,
+    forwardedFrom: m.forwardedFrom || m.forwarded_from || null,
+    forwarded_from: m.forwardedFrom || m.forwarded_from || null,
+    attachments: m.attachments || null,
+    reactions: m.reactions || {},
+    status: m.status || 'sent',
+    createdAt: m.createdAt || m.created_at,
+    created_at: m.createdAt || m.created_at,
+  };
+}

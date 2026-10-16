@@ -1,23 +1,35 @@
 import React, { useState } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, ShieldAlert, LogOut, Settings } from 'lucide-react';
+import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle } from 'lucide-react';
 import { ProfileEditModal } from './ProfileEditModal';
+import { SearchModal } from '../chat/SearchModal';
+import { SupportModal } from './SupportModal';
 
 interface HeaderProps {
   currentView: 'chat' | 'admin';
   onNavigate: (view: 'chat' | 'admin') => void;
   isConnected: boolean;
+  onSelectConversation?: (conversationId: string) => void;
+  onStartDirectChat?: (email: string) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate, isConnected }) => {
-  const { user, whitelist, logout } = useAuth();
+export const Header: React.FC<HeaderProps> = ({
+  currentView,
+  onNavigate,
+  isConnected,
+  onSelectConversation,
+  onStartDirectChat,
+}) => {
+  const { user, whitelist, logout, theme, toggleTheme } = useAuth();
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
 
   return (
     <>
       <header className="h-16 border-b border-[#241c38] bg-[#0c0a14]/90 backdrop-blur-md px-4 flex items-center justify-between shrink-0 select-none z-20">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           <button
             onClick={() => onNavigate('chat')}
             className="hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-purple-500 rounded-lg p-1"
@@ -64,7 +76,42 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate, isConne
           )}
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* Quick Search Button */}
+          {user && (
+            <button
+              onClick={() => setIsSearchModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-xs font-medium text-slate-300 hover:text-white transition-colors"
+              title="Arama (Mesajlar, Kişiler, Sohbetler)"
+            >
+              <Search className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden md:inline">Ara...</span>
+            </button>
+          )}
+
+          {/* Theme Toggle Button (Dark / Light) */}
+          <button
+            onClick={toggleTheme}
+            className="p-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-slate-300 hover:text-purple-300 transition-colors"
+            title={theme === 'dark' ? 'Açık Temaya Geç' : 'Koyu Temaya Geç'}
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Moon className="w-4 h-4 text-purple-400" />
+            )}
+          </button>
+
+          {/* Report Problem / Contact Button */}
+          <button
+            onClick={() => setIsSupportModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-xs font-medium text-slate-300 hover:text-white transition-colors"
+            title="Sorun Bildir & İletişim"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden lg:inline">Sorun Bildir</span>
+          </button>
+
           {/* Admin Navigation Button */}
           {user?.isAdmin && (
             <button
@@ -99,7 +146,7 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate, isConne
                   )}
                 </div>
 
-                <div className="hidden lg:flex flex-col leading-tight">
+                <div className="hidden xl:flex flex-col leading-tight">
                   <span className="text-xs font-semibold text-slate-200 flex items-center gap-1 group-hover:text-purple-300 transition-colors">
                     {user.displayName}
                     {user.isAdmin && (
@@ -130,6 +177,28 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate, isConne
       <ProfileEditModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
+      />
+
+      {/* Global Search Modal */}
+      <SearchModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        onSelectConversation={(convId) => {
+          if (onSelectConversation) {
+            onSelectConversation(convId);
+          }
+        }}
+        onStartDirectChat={(email) => {
+          if (onStartDirectChat) {
+            onStartDirectChat(email);
+          }
+        }}
+      />
+
+      {/* Problem Report Modal */}
+      <SupportModal
+        isOpen={isSupportModalOpen}
+        onClose={() => setIsSupportModalOpen(false)}
       />
     </>
   );

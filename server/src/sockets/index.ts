@@ -3,6 +3,8 @@ import { Server, Socket } from 'socket.io';
 import { verifyAuthToken, AuthUser } from '../auth/index.js';
 import { dataStore, isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
 import { config } from '../config.js';
+import { isAllowedOrigin } from '../utils/cors.js';
+import { formatMessage } from '../utils/format.js';
 
 let ioInstance: Server | null = null;
 
@@ -50,11 +52,11 @@ export async function onWhitelistModeChanged(enabled: boolean): Promise<void> {
 }
 
 export function setupSocketServer(httpServer: HttpServer): Server {
-  const allowedOrigins = config.CORS_ORIGIN === '*' ? '*' : config.CORS_ORIGIN.split(',').map((o) => o.trim());
-
   const io = new Server(httpServer, {
     cors: {
-      origin: allowedOrigins,
+      origin: (requestOrigin, callback) => {
+        callback(null, isAllowedOrigin(requestOrigin));
+      },
       credentials: true,
     },
     pingInterval: 25000,
@@ -155,7 +157,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             }
           }
 
-          const { conversationId, content, clientMessageId, replyTo, forwardedFrom, attachments } = data as any;
+          const { conversationId, content, clientMessageId, replyTo: directReplyTo, replyToMessageId, forwardedFrom, attachments } = data as any;
           if (!conversationId) {
             if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
             return;
@@ -184,8 +186,23 @@ export function setupSocketServer(httpServer: HttpServer): Server {
           if (clientMessageId) {
             const existing = await dataStore.findMessageByClientId(clientMessageId, user.id);
             if (existing) {
-              if (typeof callback === 'function') callback({ success: true, message: existing, deduplicated: true });
+              const formattedExisting = formatMessage(existing);
+              if (typeof callback === 'function') callback({ success: true, message: formattedExisting, deduplicated: true });
               return;
+            }
+          }
+
+          let replyTo = directReplyTo || null;
+          if (!replyTo && replyToMessageId) {
+            const convMessages = await dataStore.getConversationMessages(conversationId, 100);
+            const parentMsg = convMessages.find((m) => m.id === replyToMessageId);
+            if (parentMsg) {
+              replyTo = {
+                id: parentMsg.id,
+                senderId: parentMsg.senderId,
+                senderName: parentMsg.senderName,
+                content: parentMsg.content,
+              };
             }
           }
 
@@ -202,6 +219,8 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             status: 'sent',
           });
 
+          const formattedMessage = formatMessage(savedMessage);
+
           // Dynamically join all participant sockets to this conversation room
           const participantIds = await dataStore.getConversationParticipantIds(conversationId);
           await Promise.all(
@@ -210,10 +229,10 @@ export function setupSocketServer(httpServer: HttpServer): Server {
 
           // Broadcast to conversation room AND all participant user rooms deduplicated
           const targetRooms = [`conversation:${conversationId}`, ...participantIds.map((pId) => `user:${pId}`)];
-          io.to(targetRooms).emit('message:new', savedMessage);
+          io.to(targetRooms).emit('message:new', formattedMessage);
 
           if (typeof callback === 'function') {
-            callback({ success: true, message: savedMessage });
+            callback({ success: true, message: formattedMessage });
           }
         } catch (err: any) {
           console.error('Socket message:send error:', err);
@@ -337,6 +356,118 @@ export function setupSocketServer(httpServer: HttpServer): Server {
         userName: user.displayName,
         isTyping: false,
       });
+    });
+
+    // =========================================================================
+    // WebRTC Screen Sharing Signaling Handlers
+    // =========================================================================
+    socket.on('screen:start', async (data: { conversationId: string }, callback) => {
+      try {
+        const { conversationId } = data || {};
+        if (!conversationId) {
+          if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
+          return;
+        }
+
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+        if (!isParticipant) {
+          if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
+          return;
+        }
+
+        socket.to(`conversation:${conversationId}`).emit('screen:started', {
+          conversationId,
+          userId: user.id,
+          userName: user.displayName,
+          userAvatar: user.avatarUrl,
+        });
+
+        if (typeof callback === 'function') callback({ success: true });
+      } catch (err: any) {
+        if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+      }
+    });
+
+    socket.on('screen:stop', async (data: { conversationId: string }) => {
+      try {
+        const { conversationId } = data || {};
+        if (!conversationId) return;
+
+        socket.to(`conversation:${conversationId}`).emit('screen:stopped', {
+          conversationId,
+          userId: user.id,
+        });
+      } catch (err) {
+        console.error('Socket screen:stop error:', err);
+      }
+    });
+
+    socket.on('webrtc:offer', async (data: { conversationId: string; sdp: any; targetUserId?: string }) => {
+      try {
+        const { conversationId, sdp, targetUserId } = data || {};
+        if (!conversationId || !sdp) return;
+
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+        if (!isParticipant) return;
+
+        const payload = {
+          conversationId,
+          sdp,
+          senderId: user.id,
+          senderName: user.displayName,
+        };
+
+        if (targetUserId) {
+          io.to(`user:${targetUserId}`).emit('webrtc:offer', payload);
+        } else {
+          socket.to(`conversation:${conversationId}`).emit('webrtc:offer', payload);
+        }
+      } catch (err) {
+        console.error('Socket webrtc:offer error:', err);
+      }
+    });
+
+    socket.on('webrtc:answer', async (data: { conversationId: string; sdp: any; targetUserId: string }) => {
+      try {
+        const { conversationId, sdp, targetUserId } = data || {};
+        if (!conversationId || !sdp || !targetUserId) return;
+
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+        if (!isParticipant) return;
+
+        io.to(`user:${targetUserId}`).emit('webrtc:answer', {
+          conversationId,
+          sdp,
+          senderId: user.id,
+          senderName: user.displayName,
+        });
+      } catch (err) {
+        console.error('Socket webrtc:answer error:', err);
+      }
+    });
+
+    socket.on('webrtc:ice-candidate', async (data: { conversationId: string; candidate: any; targetUserId?: string }) => {
+      try {
+        const { conversationId, candidate, targetUserId } = data || {};
+        if (!conversationId || !candidate) return;
+
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+        if (!isParticipant) return;
+
+        const payload = {
+          conversationId,
+          candidate,
+          senderId: user.id,
+        };
+
+        if (targetUserId) {
+          io.to(`user:${targetUserId}`).emit('webrtc:ice-candidate', payload);
+        } else {
+          socket.to(`conversation:${conversationId}`).emit('webrtc:ice-candidate', payload);
+        }
+      } catch (err) {
+        console.error('Socket webrtc:ice-candidate error:', err);
+      }
     });
 
     // Disconnect

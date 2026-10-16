@@ -33,4 +33,9 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const config = parsed.data;
+export const config = {
+  ...parsed.data,
+  GOOGLE_DRIVE_REDIRECT_URI:
+    parsed.data.GOOGLE_DRIVE_REDIRECT_URI ||
+    `${parsed.data.SERVER_BASE_URL.replace(/\/$/, '')}/api/drive/callback`,
+};

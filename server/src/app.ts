@@ -10,6 +10,9 @@ import { usersRouter } from './routes/users.js';
 import { conversationsRouter } from './routes/conversations.js';
 import { driveRouter } from './routes/drive.js';
 import { telegramRouter } from './routes/telegram.js';
+import { searchRouter } from './routes/search.js';
+import { supportRouter } from './routes/support.js';
+import { isAllowedOrigin } from './utils/cors.js';
 
 // Asynchronously initialize database
 initDb().catch((err) => {
@@ -30,10 +33,11 @@ app.use(
 );
 
 // CORS configuration
-const allowedOrigins = config.CORS_ORIGIN === '*' ? '*' : config.CORS_ORIGIN.split(',').map((o) => o.trim());
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (requestOrigin, callback) => {
+      callback(null, isAllowedOrigin(requestOrigin));
+    },
     credentials: true,
   })
 );
@@ -106,6 +110,8 @@ app.use('/api/users', usersRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/drive', driveRouter);
 app.use('/api/telegram', telegramRouter);
+app.use('/api/search', searchRouter);
+app.use('/api/support', supportRouter);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

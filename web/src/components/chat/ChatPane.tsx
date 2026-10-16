@@ -22,7 +22,11 @@ import {
   Download,
   Loader2,
   Image as ImageIcon,
+  Monitor,
+  Camera,
 } from 'lucide-react';
+import { ScreenShareModal } from './ScreenShareModal';
+import { GroupAvatarModal } from './GroupAvatarModal';
 
 interface ChatPaneProps {
   conversation: Conversation;
@@ -53,6 +57,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   onToggleReaction,
   onBackMobile,
   typingUser,
+  onRefreshConversations,
 }) => {
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
@@ -61,6 +66,8 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [showGroupMembersModal, setShowGroupMembersModal] = useState(false);
+  const [isScreenShareOpen, setIsScreenShareOpen] = useState(false);
+  const [isGroupAvatarOpen, setIsGroupAvatarOpen] = useState(false);
 
   // File upload state
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -230,16 +237,42 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         </div>
 
         {/* Header Actions */}
-        {isGroup && (
+        <div className="flex items-center gap-2">
+          {/* Screen Share Button */}
           <button
             type="button"
-            onClick={() => setShowGroupMembersModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+            onClick={() => setIsScreenShareOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
+            title="Canlı Ekran Paylaşımı"
           >
-            <Users className="w-4 h-4 text-purple-400" />
-            <span className="hidden sm:inline">Üyeler</span>
+            <Monitor className="w-4 h-4 text-purple-400" />
+            <span className="hidden sm:inline">Ekran Paylaş</span>
           </button>
-        )}
+
+          {/* Group Logo Button for Groups */}
+          {isGroup && (
+            <button
+              type="button"
+              onClick={() => setIsGroupAvatarOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
+              title="Grup Logosunu Değiştir"
+            >
+              <Camera className="w-4 h-4 text-purple-400" />
+              <span className="hidden sm:inline">Grup Logosu</span>
+            </button>
+          )}
+
+          {isGroup && (
+            <button
+              type="button"
+              onClick={() => setShowGroupMembersModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+            >
+              <Users className="w-4 h-4 text-purple-400" />
+              <span className="hidden sm:inline">Üyeler</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Message Stream */}
@@ -613,6 +646,27 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Screen Share Modal */}
+      <ScreenShareModal
+        isOpen={isScreenShareOpen}
+        onClose={() => setIsScreenShareOpen(false)}
+        conversationId={conversation.id}
+        currentUser={currentUser}
+      />
+
+      {/* Group Avatar Modal */}
+      {isGroup && (
+        <GroupAvatarModal
+          isOpen={isGroupAvatarOpen}
+          onClose={() => setIsGroupAvatarOpen(false)}
+          conversation={conversation}
+          onAvatarUpdated={(newUrl) => {
+            conversation.avatarUrl = newUrl;
+            onRefreshConversations?.();
+          }}
+        />
       )}
     </main>
   );

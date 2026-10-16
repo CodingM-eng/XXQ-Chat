@@ -8,6 +8,7 @@ export interface User {
   phoneNumber?: string | null;
   isAdmin: boolean;
   isModerator?: boolean;
+  themePreference?: 'dark' | 'light';
   onboarded?: boolean;
   status?: 'active' | 'pending' | 'blocked';
   createdAt?: string;
@@ -163,5 +164,50 @@ export interface TelegramBot {
   customCommands: TelegramCommandConfig[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SupportReport {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+  title: string;
+  description: string;
+  diagnostics: {
+    appVersion: string;
+    platform: string;
+    userAgent: string;
+    currentPath: string;
+    timestamp: string;
+    errorCode?: string | null;
+  };
+  status: 'open' | 'investigating' | 'resolved';
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface DriveStatus {
+  isConfigured: boolean;
+  clientIdConfigured: boolean;
+  clientSecretConfigured: boolean;
+  redirectUri: string;
+  encryptionKeyConfigured: boolean;
+  accounts: DriveAccount[];
+  totalAccounts: number;
+}
+
+export interface SearchResults {
+  query: string;
+  conversations: Conversation[];
+  users: Array<{
+    id: string;
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    displayName: string;
+    avatarUrl?: string | null;
+    isAdmin?: boolean;
+  }>;
+  messages: Array<Message & { conversationName?: string }>;
 }
 

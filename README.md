@@ -9,11 +9,16 @@ The production deployment runs on a **100% genuine no-cost architecture** design
 ## 🌟 Key Features
 
 - **Turkish Language Interface**: Entire user-facing interface in Turkish across Web, Desktop, and Android (sign-in, chat, admin panel, alerts, modals).
-- **Dark Charcoal & Purple Theme**: Modern near-black/charcoal layered surfaces with elegant purple accents and accessible contrast.
+- **Dark Charcoal & Purple Theme + Light Mode**: Default near-black/charcoal layered surfaces with elegant purple accents and accessible contrast, plus a user-selectable Light Theme with state persistence to database and localStorage.
+- **WebRTC Screen Sharing**: In-browser real-time screen sharing with STUN signaling for productive meetings and collaborative problem solving.
+- **Scoped Turkish Search (Arama)**: Unified search dialog across conversations, messages, and approved users, strictly scoped to authorized conversation history.
+- **Profile Photo & Group Logo Persistence**: Local photo uploads and URL validation with instant preview; protects custom avatars from being overwritten by default OAuth pictures.
+- **Problem Reporting ("Sorun Bildir")**: In-app feedback and issue reporting system with sanitized system diagnostics (zero secrets) and administrator review panel.
+- **Google Drive Storage & Quota Sync**: OAuth configuration status indicators, automated callback receiver, and manual quota synchronization in Admin Panel.
 - **Fail-Closed Whitelist Access Control**: The backend server is the absolute source of truth. When Whitelist Mode is active, non-whitelisted users are blocked at both REST API and WebSocket handshake layers.
 - **Dual Persistence Engine (Firestore & SQLite)**:
   - **Firebase Cloud Firestore**: Used in production on Render Free. Eliminates persistent disk costs while preserving conversations, users, whitelist, and audit logs.
-  - **Embedded SQLite (`node:sqlite`)**: Used for zero-credential local development, rapid prototyping, and automated unit testing.
+  - **Embedded SQLite (`node:sqlite`)**: Used for zero-credential local development, rapid prototyping, and automated unit testing (63 tests).
 - **Responsive Web Application**: React 19 + Vite single-page application deployed as a Render static site.
 - **Windows Desktop Application**: Standalone `.exe` built with Electron, context isolation, sandboxing, and native notification bridges.
 - **Native Android Application**: Kotlin & Jetpack Compose native Android client with Material 3 theming, adaptive keyboard handling, and back navigation.
@@ -302,4 +307,28 @@ To verify end-to-end functionality across authenticated accounts:
    - Bot responds in Turkish with safe aggregated system metrics.
    - No private phone numbers, private keys, or chat contents are disclosed.
    - Duplicate webhook requests are discarded idempotently.
+
+### Test 5: Scoped Search & Privacy Verification
+1. User A sends a private message with specific keyword ("ProjeXXQ2026") in a direct chat with User B.
+2. User A opens the Search dialog (**Arama**) and searches for "ProjeXXQ2026". The message is found.
+3. Outsider User C logs in and searches for "ProjeXXQ2026".
+4. **Expected Result**: User C receives zero matching messages because search is strictly isolated to authorized conversations.
+
+### Test 6: In-App Problem Reporting ("Sorun Bildir")
+1. Any logged-in user clicks the **Sorun Bildir** button in the header.
+2. Fills in the Turkish issue title, description, and reviews the auto-collected client diagnostics.
+3. Submits the report.
+4. As Administrator, navigate to **Yönetim Paneli > Sorun Bildirimleri**.
+5. **Expected Result**: The report is listed with timestamp, user email, and diagnostics. Admin can update status to "İnceleniyor" or "Çözüldü".
+
+### Test 7: Dark / Light Theme Toggle & Persistence
+1. Click the Sun/Moon theme button in the header to switch to Light Theme.
+2. Observe all UI surfaces adapt with high contrast and readable typography.
+3. Refresh the browser page or log out and log back in.
+4. **Expected Result**: Theme preference remains preserved across page reloads and device switches.
+
+### Test 8: WebRTC Screen Sharing
+1. In an active conversation between User A and User B, User A clicks **Ekran Paylaş**.
+2. Browser prompts for window/screen selection.
+3. **Expected Result**: Live video track is transmitted through WebRTC signaling and displayed with full control in the modal.
 

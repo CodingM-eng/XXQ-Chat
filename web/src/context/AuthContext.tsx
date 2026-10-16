@@ -9,6 +9,8 @@ interface AuthContextType {
   isLoading: boolean;
   error: string | null;
   isFirebaseReady: boolean;
+  theme: 'dark' | 'light';
+  toggleTheme: () => void;
   loginWithDev: (email: string, displayName?: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   logout: () => void;
@@ -23,6 +25,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [whitelist, setWhitelist] = useState<WhitelistStatus | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('xxq_theme');
+    return saved === 'light' ? 'light' : 'dark';
+  });
+
+  // Apply theme to document element
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    }
+    localStorage.setItem('xxq_theme', theme);
+  }, [theme]);
 
   const refreshSession = useCallback(async () => {
     const token = api.getToken();
@@ -39,6 +58,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await api.getSession();
       setUser(data.user);
       setWhitelist(data.whitelist);
+
+      // If user has saved theme preference, respect it
+      if (data.user.themePreference) {
+        setTheme(data.user.themePreference);
+      }
     } catch (err: any) {
       console.warn('Session refresh failed:', err.message);
       if (err.status === 401) {
@@ -64,6 +88,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshSession();
   }, [refreshSession]);
 
+  const toggleTheme = useCallback(() => {
+    const nextTheme: 'dark' | 'light' = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    if (user) {
+      api.updateMe({ themePreference: nextTheme }).catch((err) => {
+        console.warn('Failed to save theme preference:', err);
+      });
+      setUser((prev) => (prev ? { ...prev, themePreference: nextTheme } : null));
+    }
+  }, [theme, user]);
+
   const loginWithDev = async (email: string, displayName?: string) => {
     try {
       setIsLoading(true);
@@ -71,6 +106,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await api.devLogin(email, displayName);
       setUser(data.user);
       setWhitelist(data.whitelist);
+      if (data.user.themePreference) {
+        setTheme(data.user.themePreference);
+      }
     } catch (err: any) {
       setError(err.message || 'Giriş yapılamadı.');
       throw err;
@@ -88,6 +126,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await api.loginWithGoogle(googleUser.idToken);
       setUser(data.user);
       setWhitelist(data.whitelist);
+      if (data.user.themePreference) {
+        setTheme(data.user.themePreference);
+      }
     } catch (err: any) {
       setError(err.message || 'Google ile giriş yapılamadı.');
       throw err;
@@ -105,6 +146,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUser = (updatedUser: User) => {
     setUser(updatedUser);
+    if (updatedUser.themePreference) {
+      setTheme(updatedUser.themePreference);
+    }
   };
 
   return (
@@ -115,6 +159,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         error,
         isFirebaseReady: isFirebaseConfigured,
+        theme,
+        toggleTheme,
         loginWithDev,
         loginWithGoogle,
         logout,
