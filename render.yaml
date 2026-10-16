@@ -7,7 +7,7 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: pnpm install --frozen-lockfile --trust-lockfile && pnpm --filter xxq-chat-server build
+    buildCommand: corepack enable && corepack prepare pnpm@12.11.2 --activate && pnpm install --frozen-lockfile --trust-lockfile && pnpm --filter xxq-chat-server build
     startCommand: node server/dist/index.js
     healthCheckPath: /health
     autoDeploy: true
@@ -46,7 +46,7 @@ services:
   - type: web
     name: xxq-chat-frontend
     runtime: static
-    buildCommand: pnpm install --frozen-lockfile --trust-lockfile && pnpm --filter xxq-chat-web build
+    buildCommand: corepack enable && corepack prepare pnpm@12.11.2 --activate && pnpm install --frozen-lockfile --trust-lockfile && pnpm --filter xxq-chat-web build
     staticPublishPath: ./web/dist
     routes:
       - type: rewrite
