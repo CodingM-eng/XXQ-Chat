@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { generateDevToken, requireAuth } from '../auth/index.js';
+import { generateDevToken, requireAuth, verifyFirebaseIdToken, upsertUserAndGetAuth } from '../auth/index.js';
 import { isWhitelistModeEnabled, isEmailWhitelisted, db } from '../db/index.js';
 import { config } from '../config.js';
 
@@ -22,13 +22,81 @@ router.get('/session', requireAuth, (req, res) => {
   });
 });
 
-// Development / Test sign-in endpoint
+// Production Google/Firebase Sign-In endpoint
+const googleAuthSchema = z.object({
+  idToken: z.string().min(10, 'Google ID belirteci gereklidir.'),
+});
+
+router.post(['/google', '/firebase'], async (req, res) => {
+  const parseResult = googleAuthSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', message: 'Geçersiz kimlik doğrulama verisi.', details: parseResult.error.format() });
+    return;
+  }
+
+  const { idToken } = parseResult.data;
+  const verifiedUser = await verifyFirebaseIdToken(idToken);
+
+  if (!verifiedUser) {
+    res.status(401).json({
+      error: 'INVALID_CREDENTIALS',
+      message: 'Google kimlik doğrulama belirteci doğrulanamadı veya süresi doldu.',
+    });
+    return;
+  }
+
+  // Server-side upsert with verified claims from Google
+  const user = upsertUserAndGetAuth({
+    id: verifiedUser.uid,
+    email: verifiedUser.email,
+    displayName: verifiedUser.displayName,
+    avatarUrl: verifiedUser.avatarUrl,
+  });
+
+  const token = generateDevToken({
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    isAdmin: user.isAdmin,
+  });
+
+  const whitelistMode = isWhitelistModeEnabled();
+  const whitelisted = isEmailWhitelisted(user.email);
+
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      isAdmin: user.isAdmin,
+    },
+    whitelist: {
+      modeActive: whitelistMode,
+      isApproved: user.isAdmin || whitelisted,
+      canAccessApp: !whitelistMode || user.isAdmin || whitelisted,
+    },
+  });
+});
+
+// Development / Test sign-in endpoint (strictly disabled in production)
 const devLoginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email('Geçerli bir e-posta adresi girin.'),
   displayName: z.string().min(1).max(50).optional(),
 });
 
 router.post('/dev-login', (req, res) => {
+  // Security guard: Never allow development bypass in production environments
+  if (config.NODE_ENV === 'production') {
+    res.status(403).json({
+      error: 'DEV_LOGIN_DISABLED',
+      message: 'Geliştirici girişi üretim ortamında güvenlik nedeniyle devre dışıdır. Lütfen Google ile giriş yapın.',
+    });
+    return;
+  }
+
   const parseResult = devLoginSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_INPUT', details: parseResult.error.format() });

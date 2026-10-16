@@ -76,7 +76,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
 
   const formatMessageTime = (dateStr: string) => {
     const d = new Date(dateStr);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -107,7 +107,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           <div className="flex flex-col">
             <h2 className="font-bold text-slate-100 text-sm leading-tight">{conversation.name}</h2>
             <span className="text-[11px] text-emerald-400 font-medium leading-none mt-0.5">
-              {typingUser ? `${typingUser} is typing...` : 'online'}
+              {typingUser ? `${typingUser} yazıyor...` : 'çevrimiçi'}
             </span>
           </div>
         </div>
@@ -183,7 +183,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           <button
             type="button"
             className="p-2 text-slate-400 hover:text-slate-200 transition-colors rounded-xl hover:bg-slate-700/50"
-            title="Attach Media"
+            title="Medya Ekle"
           >
             <Paperclip className="w-5 h-5" />
           </button>
@@ -192,7 +192,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             value={inputText}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Write a message... (Enter to send, Shift+Enter for newline)"
+            placeholder="Bir mesaj yazın... (Göndermek için Enter, yeni satır için Shift+Enter)"
             rows={1}
             className="flex-1 bg-transparent border-0 text-slate-100 placeholder:text-slate-500 text-sm focus:outline-none resize-none max-h-32 py-1.5 px-1 leading-relaxed"
           />
@@ -214,7 +214,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                 ? 'bg-brand-600 hover:bg-brand-500 text-white shadow-brand-500/20 active:scale-95'
                 : 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
             }`}
-            title="Send Message"
+            title="Mesajı Gönder"
           >
             <Send className="w-4 h-4" />
           </button>

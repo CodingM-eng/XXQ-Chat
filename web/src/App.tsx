@@ -127,7 +127,7 @@ export const AppContent: React.FC = () => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         // Focus search input
-        const searchInput = document.querySelector('input[placeholder*="Search chats"]') as HTMLInputElement;
+        const searchInput = document.querySelector('input[placeholder*="Sohbetlerde ara"]') as HTMLInputElement;
         searchInput?.focus();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
@@ -184,7 +184,7 @@ export const AppContent: React.FC = () => {
       <div className="min-h-screen bg-chat-bg flex flex-col items-center justify-center p-4">
         <BrandLogo size={64} showText={false} className="animate-pulse mb-4" />
         <Loader2 className="w-6 h-6 animate-spin text-brand-400 mb-2" />
-        <span className="text-xs text-slate-400 font-mono tracking-wider">INITIALIZING SECURE SESSION...</span>
+        <span className="text-xs text-slate-400 font-mono tracking-wider">GÜVENLİ OTURUM BAŞLATILIYOR...</span>
       </div>
     );
   }

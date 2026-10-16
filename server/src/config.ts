@@ -7,7 +7,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   CORS_ORIGIN: z.string().default('*'),
-  INITIAL_ADMIN_EMAIL: z.string().email().default('admin@xxqchat.com'),
+  INITIAL_ADMIN_EMAIL: z.string().email().default('codingdevelopia@gmail.com'),
   WHITELIST_MODE_DEFAULT: z
     .string()
     .transform((val) => val.toLowerCase() === 'true' || val === '1')

@@ -39,9 +39,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const isToday = date.toDateString() === now.toDateString();
 
     if (isToday) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     }
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return date.toLocaleDateString('tr-TR', { month: 'short', day: 'numeric' });
   };
 
   return (
@@ -54,7 +54,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search chats (Ctrl+K)..."
+            placeholder="Sohbetlerde ara (Ctrl+K)..."
             className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
           />
         </div>
@@ -62,7 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           onClick={onOpenNewChat}
           className="p-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl shadow-md shadow-brand-500/20 transition-all shrink-0 focus:outline-none focus:ring-2 focus:ring-brand-400"
-          title="Start New Direct Chat (Ctrl+N)"
+          title="Yeni Birebir Sohbet Başlat (Ctrl+N)"
         >
           <Plus className="w-4 h-4" />
         </button>
@@ -78,7 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
           }`}
         >
-          All
+          Tümü
         </button>
         <button
           onClick={() => setTab('direct')}
@@ -88,7 +88,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
           }`}
         >
-          Direct
+          Birebir
         </button>
         <button
           onClick={() => setTab('unread')}
@@ -98,7 +98,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
           }`}
         >
-          <span>Unread</span>
+          <span>Okunmamış</span>
           {conversations.filter((c) => c.unreadCount > 0).length > 0 && (
             <span className="bg-brand-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
               {conversations.filter((c) => c.unreadCount > 0).length}
@@ -112,9 +112,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center text-slate-400">
             <MessageCircle className="w-10 h-10 text-slate-600 mb-2 stroke-[1.5]" />
-            <p className="text-sm font-medium text-slate-300">No conversations yet</p>
+            <p className="text-sm font-medium text-slate-300">Henüz sohbet yok</p>
             <p className="text-xs text-slate-500 mt-1 max-w-[200px]">
-              Click the + button above to start your first direct conversation!
+              İlk doğrudan mesajlaşmanızı başlatmak için yukarıdaki + düğmesine tıklayın!
             </p>
           </div>
         ) : (
@@ -170,7 +170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </span>
                       )}
                       <p className="text-xs text-slate-400 truncate leading-relaxed">
-                        {conv.lastMessage ? conv.lastMessage.content : 'No messages yet'}
+                        {conv.lastMessage ? conv.lastMessage.content : 'Henüz mesaj yok'}
                       </p>
                     </div>
 

@@ -31,7 +31,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
       const res = await api.searchUsers(searchTerm);
       setUsers(res.users);
     } catch (err: any) {
-      setError(err.message || 'Failed to search contacts');
+      setError(err.message || 'Kişiler aranırken bir hata oluştu');
     } finally {
       setLoading(false);
     }
@@ -51,7 +51,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
       onSelectConversation(res.conversationId);
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to create conversation');
+      setError(err.message || 'Sohbet başlatılamadı');
     } finally {
       setCreating(false);
     }
@@ -66,7 +66,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <UserPlus className="w-5 h-5 text-brand-400" />
-            <h3 className="font-bold text-slate-100 text-lg">New Direct Chat</h3>
+            <h3 className="font-bold text-slate-100 text-lg">Yeni Birebir Sohbet</h3>
           </div>
           <button
             onClick={onClose}
@@ -84,7 +84,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
               type="text"
               value={query}
               onChange={handleSearchChange}
-              placeholder="Search by name or email..."
+              placeholder="İsim veya e-posta ile ara..."
               className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-4 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
               autoFocus
             />
@@ -102,11 +102,11 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin text-brand-400" />
-              <span className="text-xs">Finding available contacts...</span>
+              <span className="text-xs">Uygun kişiler aranıyor...</span>
             </div>
           ) : users.length === 0 ? (
             <div className="text-center py-12 text-slate-400 text-sm">
-              No contacts found matching &ldquo;{query}&rdquo;
+              &ldquo;{query}&rdquo; ile eşleşen kişi bulunamadı
             </div>
           ) : (
             <div className="space-y-1">

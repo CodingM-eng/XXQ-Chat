@@ -58,7 +58,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setWhitelist(whitelistRes.whitelist);
       setAuditLogs(logsRes.auditLogs);
     } catch (err: any) {
-      setError(err.message || 'Failed to load administration data');
+      setError(err.message || 'Yönetim verileri yüklenemedi');
     } finally {
       setLoading(false);
     }
@@ -71,10 +71,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       const res = await api.toggleWhitelist(newMode);
       setWhitelistMode(res.whitelistMode);
       setConfirmToggleModal(false);
-      setSuccessMsg(`Whitelist mode successfully ${res.whitelistMode ? 'ENABLED' : 'DISABLED'}`);
+      setSuccessMsg(`Beyaz liste modu başarıyla ${res.whitelistMode ? 'ETKİNLEŞTİRİLDİ' : 'DEVRE DIŞI BIRAKILDI'}`);
       loadAdminData();
     } catch (err: any) {
-      setError(err.message || 'Failed to toggle whitelist mode');
+      setError(err.message || 'Beyaz liste modu değiştirilemedi');
     } finally {
       setIsSubmitting(false);
     }
@@ -88,11 +88,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setIsSubmitting(true);
       setError(null);
       await api.addWhitelist(newEmail.trim());
-      setSuccessMsg(`Approved ${newEmail} for application access`);
+      setSuccessMsg(`${newEmail} uygulamaya erişim için onaylandı`);
       setNewEmail('');
       loadAdminData();
     } catch (err: any) {
-      setError(err.message || 'Failed to approve account');
+      setError(err.message || 'Hesap onaylanamadı');
     } finally {
       setIsSubmitting(false);
     }
@@ -105,11 +105,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setIsSubmitting(true);
       setError(null);
       await api.removeWhitelist(userToRevoke);
-      setSuccessMsg(`Revoked whitelist access for ${userToRevoke}`);
+      setSuccessMsg(`${userToRevoke} için beyaz liste erişimi kaldırıldı`);
       setUserToRevoke(null);
       loadAdminData();
     } catch (err: any) {
-      setError(err.message || 'Failed to revoke whitelist access');
+      setError(err.message || 'Beyaz liste erişimi kaldırılamadı');
     } finally {
       setIsSubmitting(false);
     }
@@ -128,10 +128,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
           <div>
             <div className="flex items-center gap-2">
               <Shield className="w-6 h-6 text-brand-400" />
-              <h1 className="text-2xl font-bold tracking-tight text-white">Administration & Security Panel</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-white">Yönetim & Güvenlik Paneli</h1>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Configure access control, manage approved accounts, and inspect system audit history.
+              Erişim kontrolünü yapılandırın, onaylı hesapları yönetin ve sistem denetim geçmişini inceleyin.
             </p>
           </div>
 
@@ -139,7 +139,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
             onClick={onBackToChat}
             className="self-start sm:self-auto px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors"
           >
-            ← Return to Chat
+            ← Sohbete Dön
           </button>
         </div>
 
@@ -166,7 +166,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
           {/* Whitelist Status Toggle Card */}
           <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Access Control</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Erişim Kontrolü</span>
               {whitelistMode ? (
                 <ShieldCheck className="w-5 h-5 text-blue-400" />
               ) : (
@@ -176,12 +176,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
 
             <div className="mb-4">
               <span className="text-xl font-bold text-white">
-                {whitelistMode ? 'Whitelist Mode (ON)' : 'Open Access (OFF)'}
+                {whitelistMode ? 'Beyaz Liste Modu (AÇIK)' : 'Açık Erişim (KAPALI)'}
               </span>
               <p className="text-[11px] text-slate-400 mt-1">
                 {whitelistMode
-                  ? 'Only approved accounts can access the application.'
-                  : 'All authenticated users may log in.'}
+                  ? 'Yalnızca onaylanmış hesaplar uygulamaya erişebilir.'
+                  : 'Tüm kimliği doğrulanmış kullanıcılar giriş yapabilir.'}
               </p>
             </div>
 
@@ -193,49 +193,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                   : 'bg-brand-600 hover:bg-brand-500 text-white shadow-brand-600/20'
               }`}
             >
-              {whitelistMode ? 'Switch to Open Access' : 'Enable Whitelist Mode'}
+              {whitelistMode ? 'Açık Erişime Geç' : 'Beyaz Liste Modunu Etkinleştir'}
             </button>
           </div>
 
           {/* Approved Accounts Card */}
           <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Approved Users</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Onaylı Kullanıcılar</span>
               <Users className="w-5 h-5 text-sky-400" />
             </div>
             <div>
               <span className="text-3xl font-extrabold text-white">
                 {stats?.approvedWhitelistCount ?? 0}
               </span>
-              <p className="text-[11px] text-slate-400 mt-1">Explicitly whitelisted accounts</p>
+              <p className="text-[11px] text-slate-400 mt-1">Açıkça beyaz listeye eklenmiş hesaplar</p>
             </div>
           </div>
 
           {/* Total Registered Users Card */}
           <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Registered Accounts</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Kayıtlı Hesaplar</span>
               <Users className="w-5 h-5 text-indigo-400" />
             </div>
             <div>
               <span className="text-3xl font-extrabold text-white">
                 {stats?.totalUsers ?? 0}
               </span>
-              <p className="text-[11px] text-slate-400 mt-1">Total user profiles stored</p>
+              <p className="text-[11px] text-slate-400 mt-1">Kayıtlı kullanıcı profili sayısı</p>
             </div>
           </div>
 
           {/* Total Messages Card */}
           <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Messages Delivered</span>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">İletilen Mesajlar</span>
               <MessageSquare className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
               <span className="text-3xl font-extrabold text-white">
                 {stats?.totalMessages ?? 0}
               </span>
-              <p className="text-[11px] text-slate-400 mt-1">Total chat history records</p>
+              <p className="text-[11px] text-slate-400 mt-1">Toplam sohbet geçmişi kaydı</p>
             </div>
           </div>
         </div>
@@ -244,9 +244,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold text-white">Approved Whitelist Directory</h2>
+              <h2 className="text-lg font-bold text-white">Onaylı Beyaz Liste Dizini</h2>
               <p className="text-xs text-slate-400">
-                Accounts approved to use XXQ Chat when Whitelist mode is active.
+                Beyaz liste modu etkinken XXQ Chat&apos;i kullanmasına izin verilen hesaplar.
               </p>
             </div>
 
@@ -257,7 +257,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 required
                 value={newEmail}
                 onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="Enter email to approve..."
+                placeholder="Onaylanacak e-postayı girin..."
                 className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <button
@@ -266,7 +266,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-md shrink-0"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                <span>Approve User</span>
+                <span>Kullanıcıyı Onayla</span>
               </button>
             </form>
           </div>
@@ -278,7 +278,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search approved accounts..."
+              placeholder="Onaylı hesaplarda ara..."
               className="w-full bg-slate-800/80 border border-slate-700/80 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
@@ -288,17 +288,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-800/60 text-slate-400 uppercase font-mono text-[10px]">
                 <tr>
-                  <th className="p-3">User</th>
-                  <th className="p-3">Approved By</th>
-                  <th className="p-3">Approved Date</th>
-                  <th className="p-3 text-right">Actions</th>
+                  <th className="p-3">Kullanıcı</th>
+                  <th className="p-3">Onaylayan</th>
+                  <th className="p-3">Onay Tarihi</th>
+                  <th className="p-3 text-right">İşlemler</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-medium">
                 {filteredWhitelist.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="p-6 text-center text-slate-500">
-                      No approved accounts found.
+                      Onaylı hesap bulunamadı.
                     </td>
                   </tr>
                 ) : (
@@ -309,20 +309,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                           <span className="font-semibold text-slate-200">{item.email}</span>
                           {item.is_admin === 1 && (
                             <span className="bg-sky-500/20 text-sky-400 text-[10px] px-1.5 py-0.2 rounded font-mono">
-                              ADMIN
+                              YÖNETİCİ
                             </span>
                           )}
                         </div>
                       </td>
                       <td className="p-3 text-slate-400 font-mono text-[11px]">{item.approved_by}</td>
                       <td className="p-3 text-slate-400 font-mono text-[11px]">
-                        {new Date(item.created_at).toLocaleString()}
+                        {new Date(item.created_at).toLocaleString('tr-TR')}
                       </td>
                       <td className="p-3 text-right">
                         <button
                           onClick={() => setUserToRevoke(item.email)}
                           className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition-colors"
-                          title="Revoke Whitelist Access"
+                          title="Beyaz Liste Erişimini Kaldır"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -339,36 +339,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="flex items-center gap-2">
             <History className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-lg font-bold text-white">System Security Audit Log</h2>
+            <h2 className="text-lg font-bold text-white">Sistem Güvenlik Denetim Günlüğü</h2>
           </div>
           <p className="text-xs text-slate-400">
-            Immutable chronological record of administrative actions, whitelist modifications, and bootstrap events.
+            Yönetimsel işlemlerin, beyaz liste değişikliklerinin ve başlatma olaylarının kronolojik kayıtları.
           </p>
 
           <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-96">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-800/60 text-slate-400 uppercase font-mono text-[10px] sticky top-0">
                 <tr>
-                  <th className="p-3">Timestamp</th>
-                  <th className="p-3">Action</th>
-                  <th className="p-3">Actor</th>
-                  <th className="p-3">Target</th>
-                  <th className="p-3">Details</th>
-                  <th className="p-3">IP Address</th>
+                  <th className="p-3">Zaman Damgası</th>
+                  <th className="p-3">İşlem</th>
+                  <th className="p-3">Yetkili</th>
+                  <th className="p-3">Hedef</th>
+                  <th className="p-3">Detaylar</th>
+                  <th className="p-3">IP Adresi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
                 {auditLogs.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-6 text-center text-slate-500 font-sans">
-                      No audit events recorded.
+                      Kayıtlı denetim olayı bulunamadı.
                     </td>
                   </tr>
                 ) : (
                   auditLogs.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
                       <td className="p-3 text-slate-400 whitespace-nowrap">
-                        {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {new Date(log.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td className="p-3">
                         <span
@@ -402,13 +402,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
           <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-amber-400">
               <AlertTriangle className="w-6 h-6" />
-              <h3 className="font-bold text-lg text-white">Confirm Whitelist Mode Change</h3>
+              <h3 className="font-bold text-lg text-white">Beyaz Liste Modu Değişikliğini Onayla</h3>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
               {whitelistMode
-                ? 'Are you sure you want to disable Whitelist Mode? All authenticated users will be granted access to XXQ Chat.'
-                : 'Are you sure you want to enable Whitelist Mode? All accounts not explicitly listed in the whitelist directory will be immediately blocked from connecting.'}
+                ? 'Beyaz Liste Modunu devre dışı bırakmak istediğinizden emin misiniz? Tüm kimliği doğrulanmış kullanıcılar XXQ Chat\'e erişebilecektir.'
+                : 'Beyaz Liste Modunu etkinleştirmek istediğinizden emin misiniz? Beyaz listede bulunmayan hesapların bağlantısı derhal engellenecektir.'}
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -417,7 +417,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 onClick={() => setConfirmToggleModal(false)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition-colors"
               >
-                Cancel
+                İptal
               </button>
               <button
                 type="button"
@@ -425,7 +425,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-brand-500/25 transition-all"
               >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm & Apply'}
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Onayla ve Uygula'}
               </button>
             </div>
           </div>
@@ -438,12 +438,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
           <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-rose-400">
               <AlertTriangle className="w-6 h-6" />
-              <h3 className="font-bold text-lg text-white">Revoke Account Approval</h3>
+              <h3 className="font-bold text-lg text-white">Hesap Onayını Kaldır</h3>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              Are you sure you want to revoke whitelist access for <strong className="text-white">{userToRevoke}</strong>?
-              If Whitelist mode is active, this user will no longer be able to use XXQ Chat.
+              <strong className="text-white">{userToRevoke}</strong> için beyaz liste erişimini kaldırmak istediğinizden emin misiniz?
+              Beyaz liste modu etkinken bu kullanıcı artık XXQ Chat&apos;i kullanamaz.
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -452,7 +452,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 onClick={() => setUserToRevoke(null)}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition-colors"
               >
-                Cancel
+                İptal
               </button>
               <button
                 type="button"
@@ -460,7 +460,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-rose-600/25 transition-all"
               >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Revoke Access'}
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Erişimi Kaldır'}
               </button>
             </div>
           </div>

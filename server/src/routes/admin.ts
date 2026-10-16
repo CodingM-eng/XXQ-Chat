@@ -48,7 +48,7 @@ const toggleSchema = z.object({
 router.post('/whitelist/toggle', (req, res) => {
   const parseResult = toggleSchema.safeParse(req.body);
   if (!parseResult.success) {
-    res.status(400).json({ error: 'INVALID_INPUT', message: 'Confirmation required to toggle whitelist mode' });
+    res.status(400).json({ error: 'INVALID_INPUT', message: 'Beyaz liste modunu değiştirmek için onay gereklidir.' });
     return;
   }
 
@@ -67,14 +67,14 @@ router.post('/whitelist/toggle', (req, res) => {
     user.email,
     action,
     'SYSTEM',
-    `Whitelist mode changed to ${enabled ? 'ENABLED' : 'DISABLED'}`,
+    `Beyaz liste modu ${enabled ? 'ETKİNLEŞTİRİLDİ' : 'DEVRE DIŞI BIRAKILDI'} olarak güncellendi`,
     req.ip
   );
 
   res.json({
     success: true,
     whitelistMode: enabled,
-    message: `Whitelist access control is now ${enabled ? 'ENABLED' : 'DISABLED'}.`,
+    message: `Beyaz liste erişim kontrolü ${enabled ? 'ETKİNLEŞTİRİLDİ' : 'DEVRE DIŞI BIRAKILDI'}.`,
   });
 });
 
@@ -98,7 +98,7 @@ const addWhitelistSchema = z.object({
 router.post('/whitelist/add', (req, res) => {
   const parseResult = addWhitelistSchema.safeParse(req.body);
   if (!parseResult.success) {
-    res.status(400).json({ error: 'INVALID_EMAIL', message: 'Valid email address is required' });
+    res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
     return;
   }
 
@@ -117,11 +117,11 @@ router.post('/whitelist/add', (req, res) => {
       user.email,
       'USER_WHITELIST_APPROVED',
       email,
-      `User ${email} approved for application access`,
+      `${email} kullanıcısı için uygulama erişimi onaylandı`,
       req.ip
     );
 
-    res.json({ success: true, email, message: `Account ${email} has been approved.` });
+    res.json({ success: true, email, message: `${email} hesabı başarıyla onaylandı.` });
   } catch (err: any) {
     res.status(500).json({ error: 'DB_ERROR', message: err.message });
   }
@@ -134,14 +134,14 @@ router.delete('/whitelist/:email', (req, res) => {
 
   // Prevent removing the bootstrap admin email
   if (email === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim()) {
-    res.status(400).json({ error: 'PROTECTED_ACCOUNT', message: 'Cannot remove the initial designated administrator account' });
+    res.status(400).json({ error: 'PROTECTED_ACCOUNT', message: 'Birincil sistem yöneticisi hesabı beyaz listeden kaldırılamaz.' });
     return;
   }
 
   const result = db.prepare('DELETE FROM whitelist WHERE LOWER(email) = ?').run(email);
 
   if (result.changes === 0) {
-    res.status(404).json({ error: 'NOT_FOUND', message: 'User is not in the whitelist' });
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı beyaz listede bulunamadı.' });
     return;
   }
 
@@ -150,11 +150,11 @@ router.delete('/whitelist/:email', (req, res) => {
     user.email,
     'USER_WHITELIST_REVOKED',
     email,
-    `Whitelist approval revoked for ${email}`,
+    `${email} için beyaz liste onayı kaldırıldı`,
     req.ip
   );
 
-  res.json({ success: true, email, message: `Whitelist approval for ${email} has been revoked.` });
+  res.json({ success: true, email, message: `${email} için beyaz liste onayı kaldırıldı.` });
 });
 
 // GET /api/admin/audit-logs

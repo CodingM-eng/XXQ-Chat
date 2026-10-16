@@ -69,6 +69,15 @@ class ApiService {
     return data;
   }
 
+  async loginWithGoogle(idToken: string): Promise<{ token: string; user: User; whitelist: WhitelistStatus }> {
+    const data = await this.request<{ token: string; user: User; whitelist: WhitelistStatus }>('/api/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ idToken }),
+    });
+    this.setToken(data.token);
+    return data;
+  }
+
   // Users endpoints
   async getMe(): Promise<{ user: User }> {
     return this.request('/api/users/me');

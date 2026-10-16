@@ -34,61 +34,110 @@ export function generateDevToken(user: { id: string; email: string; displayName:
   );
 }
 
-// Verify auth token (supporting Firebase ID tokens or dev tokens)
+// Verify Firebase ID Token cryptographically using Google OAuth2 tokeninfo
+export async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; email: string; displayName: string; avatarUrl?: string } | null> {
+  if (!idToken || typeof idToken !== 'string') return null;
+
+  try {
+    const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!response.ok) {
+      console.warn('[AUTH] Firebase/Google token verification rejected by Google API:', response.status);
+      return null;
+    }
+
+    const payload = (await response.json()) as any;
+
+    if (!payload || !payload.email || !payload.sub) {
+      console.warn('[AUTH] Incomplete token payload from Google API');
+      return null;
+    }
+
+    // Verify audience matches FIREBASE_PROJECT_ID if specified
+    if (config.FIREBASE_PROJECT_ID && payload.aud && payload.aud !== config.FIREBASE_PROJECT_ID) {
+      console.warn(`[AUTH] Token audience mismatch: expected ${config.FIREBASE_PROJECT_ID}, got ${payload.aud}`);
+      return null;
+    }
+
+    const email = payload.email.toLowerCase().trim();
+    const uid = payload.sub || 'usr_' + Buffer.from(email).toString('hex').slice(0, 16);
+    const displayName = payload.name || email.split('@')[0];
+    const avatarUrl = payload.picture || undefined;
+
+    return { uid, email, displayName, avatarUrl };
+  } catch (err: any) {
+    console.error('[AUTH] Failed to verify token with Google API:', err.message);
+    return null;
+  }
+}
+
+// Upsert user into SQLite and return full AuthUser with verified permissions
+export function upsertUserAndGetAuth(user: { id: string; email: string; displayName: string; avatarUrl?: string }): AuthUser {
+  const email = user.email.toLowerCase().trim();
+  const isInitialAdmin = email === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
+
+  const existing = db.prepare('SELECT id, is_admin, display_name, avatar_url FROM users WHERE LOWER(email) = ?').get(email) as any;
+
+  let isAdmin = false;
+  let effectiveId = user.id;
+
+  if (existing) {
+    isAdmin = existing.is_admin === 1 || isInitialAdmin;
+    effectiveId = existing.id;
+    // Keep avatar or name up to date if provided
+    if (user.avatarUrl && user.avatarUrl !== existing.avatar_url) {
+      db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(user.avatarUrl, effectiveId);
+    }
+  } else {
+    isAdmin = isInitialAdmin;
+    db.prepare(`
+      INSERT INTO users (id, email, display_name, avatar_url, is_admin)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(effectiveId, email, user.displayName, user.avatarUrl || null, isAdmin ? 1 : 0);
+  }
+
+  return {
+    id: effectiveId,
+    email,
+    displayName: existing?.display_name || user.displayName,
+    avatarUrl: existing?.avatar_url || user.avatarUrl,
+    isAdmin,
+  };
+}
+
+// Verify auth token (supporting server-signed session JWTs or direct Firebase ID tokens)
 export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
   if (!token) return null;
 
-  // 1. Try dev JWT verification first
+  // 1. Try server signed session JWT verification
   try {
     const decoded = jwt.verify(token, config.JWT_DEV_SECRET) as any;
     if (decoded && decoded.email) {
-      const email = decoded.email.toLowerCase().trim();
-      const id = decoded.uid || 'usr_' + Buffer.from(email).toString('hex').slice(0, 16);
-      const displayName = decoded.name || email.split('@')[0];
-      const avatarUrl = decoded.picture || '';
-
-      // Check admin status from DB or config
-      const isInitialAdmin = email === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
-      const existingUser = db.prepare('SELECT id, is_admin, display_name, avatar_url FROM users WHERE email = ?').get(email) as any;
-
-      let isAdmin = false;
-      let effectiveId = id;
-
-      if (existingUser) {
-        isAdmin = existingUser.is_admin === 1 || isInitialAdmin;
-        effectiveId = existingUser.id;
-      } else {
-        isAdmin = isInitialAdmin;
-        // Upsert user into database
-        db.prepare(`
-          INSERT INTO users (id, email, display_name, avatar_url, is_admin)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(id, email, displayName, avatarUrl, isAdmin ? 1 : 0);
-      }
-
-      return {
-        id: effectiveId,
-        email,
-        displayName: existingUser?.display_name || displayName,
-        avatarUrl: existingUser?.avatar_url || avatarUrl,
-        isAdmin,
-      };
+      return upsertUserAndGetAuth({
+        id: decoded.uid || 'usr_' + Buffer.from(decoded.email).toString('hex').slice(0, 16),
+        email: decoded.email,
+        displayName: decoded.name || decoded.email.split('@')[0],
+        avatarUrl: decoded.picture || undefined,
+      });
     }
   } catch (err) {
-    // If not valid dev token, proceed to check Firebase
+    // Session token invalid or expired, check if it's a raw Firebase ID token
   }
 
-  // 2. If Firebase credentials configured, verify with Firebase Admin
-  if (config.FIREBASE_PROJECT_ID && config.FIREBASE_CLIENT_EMAIL && config.FIREBASE_PRIVATE_KEY) {
-    try {
-      // Lazy load firebase-admin if configured
-      // In production environment with service account
-      // For now, if firebase-admin is available:
-      // const decoded = await admin.auth().verifyIdToken(token);
-    } catch (firebaseErr) {
-      console.error('Firebase token verification error:', firebaseErr);
-      return null;
-    }
+  // 2. Verify as Firebase ID token directly
+  const verifiedFirebase = await verifyFirebaseIdToken(token);
+  if (verifiedFirebase) {
+    return upsertUserAndGetAuth({
+      id: verifiedFirebase.uid,
+      email: verifiedFirebase.email,
+      displayName: verifiedFirebase.displayName,
+      avatarUrl: verifiedFirebase.avatarUrl,
+    });
   }
 
   return null;
@@ -98,7 +147,7 @@ export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Missing or malformed Authorization header' });
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Yetkilendirme başlığı eksik veya geçersiz.' });
     return;
   }
 
@@ -106,7 +155,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const user = await verifyAuthToken(token);
 
   if (!user) {
-    res.status(401).json({ error: 'INVALID_TOKEN', message: 'Invalid or expired authorization token' });
+    res.status(401).json({ error: 'INVALID_TOKEN', message: 'Oturum belirteci geçersiz veya süresi dolmuş.' });
     return;
   }
 
@@ -117,14 +166,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 // Admin-only authorization middleware
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
-    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication required' });
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Kimlik doğrulaması gereklidir.' });
     return;
   }
 
   if (!req.user.isAdmin) {
-    res.status(403).json({ error: 'FORBIDDEN', message: 'Administrator privileges required' });
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu işlem için yönetici yetkileri gereklidir.' });
     return;
   }
 
   next();
 }
+

@@ -16,6 +16,7 @@
   ],
   "win": {
     "target": ["dir"],
-    "artifactName": "XXQ-Chat-${version}-${arch}.${ext}"
+    "artifactName": "XXQ-Chat-${version}-${arch}.${ext}",
+    "signAndEditExecutable": false
   }
 }

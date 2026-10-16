@@ -16,7 +16,7 @@ export const AuthModal: React.FC = () => {
       setUiError(null);
       await loginWithDev(email, name);
     } catch (err: any) {
-      setUiError(err.message || 'Login failed');
+      setUiError(err.message || 'Giriş başarısız');
     } finally {
       setLoading(false);
     }
@@ -28,7 +28,7 @@ export const AuthModal: React.FC = () => {
       setUiError(null);
       await loginWithGoogle();
     } catch (err: any) {
-      setUiError(err.message || 'Google Sign-in failed. Please use Developer Sign-in if Firebase is unconfigured.');
+      setUiError(err.message || 'Google ile giriş başarısız oldu. Firebase yapılandırılmamışsa lütfen Test Girişini kullanın.');
     } finally {
       setLoading(false);
     }
@@ -46,10 +46,10 @@ export const AuthModal: React.FC = () => {
         <BrandLogo size={56} className="mb-4" />
 
         <h1 className="text-2xl font-bold text-white tracking-tight mb-1 text-center">
-          Sign In to XXQ Chat
+          XXQ Chat&apos;e Giriş Yap
         </h1>
         <p className="text-xs text-slate-400 mb-6 text-center">
-          Next-generation secure real-time messaging
+          Yeni nesil güvenli ve gerçek zamanlı mesajlaşma
         </p>
 
         {(uiError || error) && (
@@ -83,25 +83,25 @@ export const AuthModal: React.FC = () => {
               d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
             />
           </svg>
-          <span>Continue with Google</span>
+          <span>Google ile Devam Et</span>
         </button>
 
         {!isFirebaseReady && (
           <p className="text-[11px] text-slate-500 mb-6 text-center leading-relaxed">
-            * Firebase OAuth credentials can be configured in <code className="text-brand-300">.env</code>. You can test immediately using the verified test accounts below.
+            * Firebase OAuth kimlik bilgileri <code className="text-brand-300">.env</code> dosyasında yapılandırılabilir. Aşağıdaki onaylı test hesaplarını hemen kullanabilirsiniz.
           </p>
         )}
 
         <div className="w-full flex items-center gap-3 my-2">
           <div className="flex-1 h-px bg-slate-800" />
-          <span className="text-[11px] font-mono text-slate-500 uppercase">Test Persona Switcher</span>
+          <span className="text-[11px] font-mono text-slate-500 uppercase">Test Kimliği Seçici</span>
           <div className="flex-1 h-px bg-slate-800" />
         </div>
 
         {/* Quick Test Profiles */}
         <div className="w-full space-y-2 mt-3 mb-6">
           <button
-            onClick={() => handleDevLogin('admin@xxqchat.com', 'System Admin')}
+            onClick={() => handleDevLogin('admin@xxqchat.com', 'Sistem Yöneticisi')}
             disabled={loading}
             className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group"
           >
@@ -110,7 +110,7 @@ export const AuthModal: React.FC = () => {
                 <Shield className="w-4 h-4" />
               </div>
               <div>
-                <span className="font-semibold text-xs text-white block">System Administrator</span>
+                <span className="font-semibold text-xs text-white block">Sistem Yöneticisi</span>
                 <span className="text-[10px] text-slate-400 font-mono">admin@xxqchat.com</span>
               </div>
             </div>
@@ -118,7 +118,7 @@ export const AuthModal: React.FC = () => {
           </button>
 
           <button
-            onClick={() => handleDevLogin('alice@xxqchat.com', 'Alice (Approved)')}
+            onClick={() => handleDevLogin('alice@xxqchat.com', 'Alice (Onaylı)')}
             disabled={loading}
             className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group"
           >
@@ -127,7 +127,7 @@ export const AuthModal: React.FC = () => {
                 <Sparkles className="w-4 h-4" />
               </div>
               <div>
-                <span className="font-semibold text-xs text-white block">Alice (Whitelisted Member)</span>
+                <span className="font-semibold text-xs text-white block">Alice (Beyaz Liste Üyesi)</span>
                 <span className="text-[10px] text-slate-400 font-mono">alice@xxqchat.com</span>
               </div>
             </div>
@@ -135,7 +135,7 @@ export const AuthModal: React.FC = () => {
           </button>
 
           <button
-            onClick={() => handleDevLogin('eve@outsider.com', 'Eve (Unapproved)')}
+            onClick={() => handleDevLogin('eve@outsider.com', 'Eve (Onaysız)')}
             disabled={loading}
             className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group"
           >
@@ -144,7 +144,7 @@ export const AuthModal: React.FC = () => {
                 <User className="w-4 h-4" />
               </div>
               <div>
-                <span className="font-semibold text-xs text-white block">Eve (Unapproved Outsider)</span>
+                <span className="font-semibold text-xs text-white block">Eve (Onaysız Dış Kullanıcı)</span>
                 <span className="text-[10px] text-slate-400 font-mono">eve@outsider.com</span>
               </div>
             </div>
@@ -158,7 +158,7 @@ export const AuthModal: React.FC = () => {
             type="email"
             value={customEmail}
             onChange={(e) => setCustomEmail(e.target.value)}
-            placeholder="Or sign in with custom email..."
+            placeholder="Veya özel e-posta ile giriş yapın..."
             className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <button
@@ -166,7 +166,7 @@ export const AuthModal: React.FC = () => {
             disabled={loading || !customEmail.trim()}
             className="w-full py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors"
           >
-            Sign In with Custom Email
+            Özel E-posta ile Giriş Yap
           </button>
         </form>
       </div>

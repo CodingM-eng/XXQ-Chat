@@ -9,16 +9,16 @@ describe('XXQ Chat Web Component Suite', () => {
     const html = renderToString(<BrandLogo size={40} showText={true} />);
     expect(html).toContain('XXQ');
     expect(html).toContain('Chat');
-    expect(html).toContain('Quantum Secure');
+    expect(html).toContain('Kuantum Güvenli');
     expect(html).toContain('<svg');
   });
 
   it('renders EmptyState with welcome text and platform features', () => {
     const html = renderToString(<EmptyState onOpenNewChat={() => {}} />);
-    expect(html).toContain('Welcome to');
     expect(html).toContain('XXQ Chat');
-    expect(html).toContain('Start a New Conversation');
-    expect(html).toContain('Real-Time');
-    expect(html).toContain('Whitelist');
+    expect(html).toContain('Hoş Geldiniz');
+    expect(html).toContain('Yeni Bir Sohbet Başlat');
+    expect(html).toContain('Gerçek Zamanlı');
+    expect(html).toContain('Beyaz Liste');
   });
 });

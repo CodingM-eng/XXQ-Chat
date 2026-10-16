@@ -9,7 +9,7 @@ describe('XXQ Chat Server Verification Suite', () => {
   let whitelistedUserToken: string;
   let blockedUserToken: string;
 
-  const adminEmail = 'admin@xxqchat.com';
+  const adminEmail = 'codingdevelopia@gmail.com';
   const whitelistedEmail = 'alice@xxqchat.com';
   const blockedEmail = 'eve@outsider.com';
 
@@ -39,9 +39,18 @@ describe('XXQ Chat Server Verification Suite', () => {
     // Ensure whitelist table has alice and admin
     db.prepare(`
       INSERT OR REPLACE INTO whitelist (email, approved_by) VALUES (?, ?)
-    `).run(whitelistedEmail, 'admin@xxqchat.com');
+    `).run(whitelistedEmail, adminEmail);
+
+    db.prepare(`
+      INSERT OR REPLACE INTO whitelist (email, approved_by) VALUES (?, ?)
+    `).run(adminEmail, adminEmail);
 
     // Ensure users exist in users table
+    db.prepare(`
+      INSERT OR REPLACE INTO users (id, email, display_name, is_admin)
+      VALUES (?, ?, ?, 1)
+    `).run('usr_admin_1', adminEmail, 'System Admin');
+
     db.prepare(`
       INSERT OR REPLACE INTO users (id, email, display_name, is_admin)
       VALUES (?, ?, ?, 0)
@@ -97,7 +106,15 @@ describe('XXQ Chat Server Verification Suite', () => {
       expect(res.body.whitelist.canAccessApp).toBe(true);
     });
 
-    it('allows dev login to generate valid credentials', async () => {
+    it('rejects invalid Google ID token on /api/auth/google with 401', async () => {
+      const res = await request(app)
+        .post('/api/auth/google')
+        .send({ idToken: 'invalid_google_jwt_sample_token' });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('INVALID_CREDENTIALS');
+    });
+
+    it('allows dev login in development mode', async () => {
       const res = await request(app)
         .post('/api/auth/dev-login')
         .send({ email: 'bob@example.com', displayName: 'Bob Tester' });

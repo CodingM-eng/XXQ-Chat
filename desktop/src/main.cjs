@@ -28,7 +28,7 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#0b1120',
+    backgroundColor: '#08070b',
     title: 'XXQ Chat',
     show: false,
     autoHideMenuBar: true,

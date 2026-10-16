@@ -62,10 +62,10 @@ fun MainScreen(
       ) {
         Text("🔒", fontSize = 56.sp)
         Spacer(Modifier.height(16.dp))
-        Text("Access Restricted", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text("Erişim Kısıtlandı", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
         Spacer(Modifier.height(8.dp))
         Text(
-          "XXQ Chat is currently operating in Whitelist Mode. Your account (${currentUser?.email}) has not been approved.",
+          "XXQ Chat şu anda Beyaz Liste Modunda çalışmaktadır. Hesabınız (${currentUser?.email}) henüz onaylanmadı.",
           fontSize = 13.sp,
           color = XXQTextMuted,
           modifier = Modifier.padding(horizontal = 16.dp)
@@ -73,9 +73,9 @@ fun MainScreen(
         Spacer(Modifier.height(24.dp))
         Button(
           onClick = { showLoginDialog = true },
-          colors = ButtonDefaults.buttonColors(containerColor = XXQSapphire)
+          colors = ButtonDefaults.buttonColors(containerColor = XXQPurple)
         ) {
-          Text("Switch Account / Persona")
+          Text("Hesap / Kimlik Değiştir")
         }
       }
     }
@@ -87,7 +87,7 @@ fun MainScreen(
     Scaffold(
       topBar = {
         TopAppBar(
-          title = { Text("Security Administration", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+          title = { Text("Güvenlik Yönetimi", fontWeight = FontWeight.Bold, fontSize = 18.sp) },
           navigationIcon = {
             IconButton(onClick = { showAdminView = false }) {
               Text("←", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -118,16 +118,20 @@ fun MainScreen(
                 verticalAlignment = Alignment.CenterVertically
               ) {
                 Column {
-                  Text("Whitelist Access Control", fontWeight = FontWeight.Bold, color = Color.White)
+                  Text("Beyaz Liste Erişim Denetimi", fontWeight = FontWeight.Bold, color = Color.White)
                   Text(
-                    if (whitelistStatus.modeActive) "Mode: ON (Strict Approval)" else "Mode: OFF (Open Access)",
+                    if (whitelistStatus.modeActive) "Mod: AÇIK (Katı Onay)" else "Mod: KAPALI (Açık Erişim)",
                     fontSize = 12.sp,
-                    color = if (whitelistStatus.modeActive) XXQSky else XXQSuccess
+                    color = if (whitelistStatus.modeActive) XXQPurpleLight else XXQSuccess
                   )
                 }
                 Switch(
                   checked = whitelistStatus.modeActive,
-                  onCheckedChange = { viewModel.toggleWhitelistMode(it) }
+                  onCheckedChange = { viewModel.toggleWhitelistMode(it) },
+                  colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = XXQPurple
+                  )
                 )
               }
             }
@@ -136,7 +140,7 @@ fun MainScreen(
 
         // Whitelist Directory Section
         item {
-          Text("Approved Whitelist Directory", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+          Text("Onaylı Beyaz Liste Dizini", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
         }
 
         items(whitelistItems) { item ->
@@ -153,7 +157,7 @@ fun MainScreen(
             ) {
               Column {
                 Text(item.email, fontWeight = FontWeight.SemiBold, color = Color.White)
-                Text("Approved by: ${item.approvedBy}", fontSize = 11.sp, color = XXQTextMuted)
+                Text("Onaylayan: ${item.approvedBy}", fontSize = 11.sp, color = XXQTextMuted)
               }
               IconButton(onClick = { viewModel.removeWhitelist(item.email) }) {
                 Text("✕", color = Color(0xFFF87171), fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -165,22 +169,22 @@ fun MainScreen(
         // Audit Logs Section
         item {
           Spacer(Modifier.height(8.dp))
-          Text("Security Audit Logs", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+          Text("Sistem Güvenlik Denetim Günlükleri", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
         }
 
         items(auditLogs) { log ->
           Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF131D31)),
+            colors = CardDefaults.cardColors(containerColor = XXQSidebarBg),
             shape = RoundedCornerShape(10.dp)
           ) {
             Column(modifier = Modifier.padding(10.dp)) {
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(log.action, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = XXQSky)
+                Text(log.action, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = XXQPurpleLight)
                 Text(log.createdAt, fontSize = 11.sp, color = XXQTextMuted)
               }
-              Text("Actor: ${log.actorEmail}", fontSize = 11.sp, color = Color.White)
+              Text("Yetkili: ${log.actorEmail}", fontSize = 11.sp, color = Color.White)
               if (log.target != null) {
-                Text("Target: ${log.target}", fontSize = 11.sp, color = XXQTextMuted)
+                Text("Hedef: ${log.target}", fontSize = 11.sp, color = XXQTextMuted)
               }
             }
           }
@@ -201,8 +205,8 @@ fun MainScreen(
         TopAppBar(
           title = {
             Column {
-              Text(activeConv?.name ?: "Chat", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-              Text("online", fontSize = 11.sp, color = XXQSuccess)
+              Text(activeConv?.name ?: "Sohbet", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+              Text("çevrimiçi", fontSize = 11.sp, color = XXQSuccess)
             }
           },
           navigationIcon = {
@@ -229,7 +233,7 @@ fun MainScreen(
             TextField(
               value = inputText,
               onValueChange = { inputText = it },
-              placeholder = { Text("Write a message...", color = XXQTextMuted, fontSize = 14.sp) },
+              placeholder = { Text("Bir mesaj yazın...", color = XXQTextMuted, fontSize = 14.sp) },
               modifier = Modifier
                 .weight(1f)
                 .background(XXQCardBg, RoundedCornerShape(24.dp)),
@@ -253,7 +257,7 @@ fun MainScreen(
               },
               modifier = Modifier
                 .size(48.dp)
-                .background(XXQSapphire, CircleShape)
+                .background(XXQPurple, CircleShape)
             ) {
               Text("➤", color = Color.White, fontSize = 16.sp)
             }
@@ -292,17 +296,17 @@ fun MainScreen(
                 .padding(12.dp)
             ) {
               if (!isMe) {
-                Text(msg.senderName, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = XXQSky)
+                Text(msg.senderName, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = XXQPurpleLight)
               }
               Text(msg.content, color = Color.White, fontSize = 14.sp)
               Row(
                 modifier = Modifier.align(Alignment.End),
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                Text(msg.createdAt, fontSize = 10.sp, color = if (isMe) Color(0xFFBFDBFE) else XXQTextMuted)
+                Text(msg.createdAt, fontSize = 10.sp, color = if (isMe) Color(0xFFDDD6FE) else XXQTextMuted)
                 if (isMe) {
                   Spacer(Modifier.width(4.dp))
-                  Text(if (msg.status == "read") "✓✓" else "✓", fontSize = 10.sp, color = if (msg.status == "read") XXQSky else Color(0xFFBFDBFE))
+                  Text(if (msg.status == "read") "✓✓" else "✓", fontSize = 10.sp, color = if (msg.status == "read") XXQPurpleLight else Color(0xFFDDD6FE))
                 }
               }
             }
@@ -323,7 +327,7 @@ fun MainScreen(
               modifier = Modifier
                 .size(32.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(XXQSapphire),
+                .background(XXQPurple),
               contentAlignment = Alignment.Center
             ) {
               Text("Q", fontWeight = FontWeight.ExtraBold, color = Color.White, fontSize = 18.sp)
@@ -331,7 +335,7 @@ fun MainScreen(
             Spacer(Modifier.width(10.dp))
             Column {
               Text("XXQ Chat", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-              Text("Live Gateway", fontSize = 10.sp, color = XXQSuccess)
+              Text("Canlı Ağ Geçidi", fontSize = 10.sp, color = XXQSuccess)
             }
           }
         },
@@ -351,7 +355,7 @@ fun MainScreen(
     floatingActionButton = {
       FloatingActionButton(
         onClick = { showNewChatDialog = true },
-        containerColor = XXQSapphire,
+        containerColor = XXQPurple,
         contentColor = Color.White
       ) {
         Text("+", fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -376,7 +380,7 @@ fun MainScreen(
             modifier = Modifier
               .size(48.dp)
               .clip(CircleShape)
-              .background(XXQSapphire),
+              .background(XXQPurple),
             contentAlignment = Alignment.Center
           ) {
             Text(conv.name.take(2).uppercase(), fontWeight = FontWeight.Bold, color = Color.White)
@@ -392,7 +396,7 @@ fun MainScreen(
             Spacer(Modifier.height(2.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
               Text(
-                conv.lastMessage?.content ?: "No messages yet",
+                conv.lastMessage?.content ?: "Henüz mesaj yok",
                 fontSize = 13.sp,
                 color = XXQTextMuted,
                 maxLines = 1
@@ -401,7 +405,7 @@ fun MainScreen(
                 Box(
                   modifier = Modifier
                     .clip(CircleShape)
-                    .background(XXQSapphire)
+                    .background(XXQPurple)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                   Text(conv.unreadCount.toString(), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
@@ -419,44 +423,44 @@ fun MainScreen(
   if (showLoginDialog) {
     AlertDialog(
       onDismissRequest = { showLoginDialog = false },
-      title = { Text("Switch Persona / Account", fontWeight = FontWeight.Bold) },
+      title = { Text("Kimlik / Hesap Değiştir", fontWeight = FontWeight.Bold) },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Button(
             onClick = {
-              viewModel.login("admin@xxqchat.com", "System Admin", true)
+              viewModel.login("admin@xxqchat.com", "Sistem Yöneticisi", true)
               showLoginDialog = false
             },
             colors = ButtonDefaults.buttonColors(containerColor = XXQCardBg),
             modifier = Modifier.fillMaxWidth()
           ) {
-            Text("Admin (admin@xxqchat.com)", color = XXQSky)
+            Text("Yönetici (admin@xxqchat.com)", color = XXQPurpleLight)
           }
           Button(
             onClick = {
-              viewModel.login("alice@xxqchat.com", "Alice Approved", false)
+              viewModel.login("alice@xxqchat.com", "Alice (Onaylı)", false)
               showLoginDialog = false
             },
             colors = ButtonDefaults.buttonColors(containerColor = XXQCardBg),
             modifier = Modifier.fillMaxWidth()
           ) {
-            Text("Alice (Whitelisted Member)", color = XXQSuccess)
+            Text("Alice (Onaylı Üye)", color = XXQSuccess)
           }
           Button(
             onClick = {
-              viewModel.login("eve@outsider.com", "Eve Blocked", false)
+              viewModel.login("eve@outsider.com", "Havva (Onaysız)", false)
               showLoginDialog = false
             },
             colors = ButtonDefaults.buttonColors(containerColor = XXQCardBg),
             modifier = Modifier.fillMaxWidth()
           ) {
-            Text("Eve (Unapproved Outsider)", color = Color(0xFFF87171))
+            Text("Havva (Onaysız Dış Kullanıcı)", color = Color(0xFFF87171))
           }
         }
       },
       confirmButton = {},
       dismissButton = {
-        TextButton(onClick = { showLoginDialog = false }) { Text("Cancel") }
+        TextButton(onClick = { showLoginDialog = false }) { Text("İptal") }
       },
       containerColor = XXQDarkBg,
       titleContentColor = Color.White
@@ -467,9 +471,9 @@ fun MainScreen(
   if (showNewChatDialog) {
     AlertDialog(
       onDismissRequest = { showNewChatDialog = false },
-      title = { Text("Start Direct Chat", fontWeight = FontWeight.Bold) },
+      title = { Text("Birebir Sohbet Başlat", fontWeight = FontWeight.Bold) },
       text = {
-        Text("Select a contact to open a real-time direct conversation.")
+        Text("Gerçek zamanlı bir doğrudan mesajlaşma açmak için bir kişi seçin.")
       },
       confirmButton = {
         Button(
@@ -477,13 +481,13 @@ fun MainScreen(
             selectedConvId = "conv_admin"
             showNewChatDialog = false
           },
-          colors = ButtonDefaults.buttonColors(containerColor = XXQSapphire)
+          colors = ButtonDefaults.buttonColors(containerColor = XXQPurple)
         ) {
-          Text("Chat with Admin")
+          Text("Yönetici ile Sohbet Et")
         }
       },
       dismissButton = {
-        TextButton(onClick = { showNewChatDialog = false }) { Text("Cancel") }
+        TextButton(onClick = { showNewChatDialog = false }) { Text("İptal") }
       },
       containerColor = XXQDarkBg,
       titleContentColor = Color.White

@@ -28,7 +28,7 @@ class DefaultDataRepository : DataRepository {
     User(
       id = "usr_alice",
       email = "alice@xxqchat.com",
-      displayName = "Alice Approved",
+      displayName = "Alice (Onaylı)",
       isAdmin = false
     )
   )
@@ -44,40 +44,40 @@ class DefaultDataRepository : DataRepository {
       Conversation(
         id = "conv_admin",
         type = "direct",
-        name = "System Admin",
+        name = "Sistem Yöneticisi",
         peer = User(
           id = "usr_admin",
           email = "admin@xxqchat.com",
-          displayName = "System Admin",
+          displayName = "Sistem Yöneticisi",
           isAdmin = true
         ),
         lastMessage = Message(
           id = "msg_1",
           conversationId = "conv_admin",
           senderId = "usr_admin",
-          senderName = "System Admin",
-          content = "Welcome to XXQ Chat on Android! Whitelist security is active.",
+          senderName = "Sistem Yöneticisi",
+          content = "XXQ Chat Android uygulamasına hoş geldiniz! Beyaz liste güvenliği devrede.",
           status = "read",
-          createdAt = "10:30 AM"
+          createdAt = "10:30"
         ),
         unreadCount = 0,
-        updatedAt = "10:30 AM"
+        updatedAt = "10:30"
       ),
       Conversation(
         id = "conv_general",
         type = "group",
-        name = "XXQ Core Team",
+        name = "XXQ Çekirdek Ekibi",
         lastMessage = Message(
           id = "msg_2",
           conversationId = "conv_general",
           senderId = "usr_bob",
           senderName = "Bob",
-          content = "Android native Jetpack Compose build verified.",
+          content = "Android yerel Jetpack Compose derlemesi doğrulandı.",
           status = "delivered",
-          createdAt = "Yesterday"
+          createdAt = "Dün"
         ),
         unreadCount = 2,
-        updatedAt = "Yesterday"
+        updatedAt = "Dün"
       )
     )
   )
@@ -90,28 +90,28 @@ class DefaultDataRepository : DataRepository {
           id = "m1",
           conversationId = "conv_admin",
           senderId = "usr_admin",
-          senderName = "System Admin",
-          content = "Hello! Your account has been verified and whitelisted.",
+          senderName = "Sistem Yöneticisi",
+          content = "Merhaba! Hesabınız doğrulandı ve beyaz listeye eklendi.",
           status = "read",
-          createdAt = "10:28 AM"
+          createdAt = "10:28"
         ),
         Message(
           id = "m2",
           conversationId = "conv_admin",
           senderId = "usr_alice",
-          senderName = "Alice Approved",
-          content = "Thank you! Real-time messaging is super fast.",
+          senderName = "Alice (Onaylı)",
+          content = "Teşekkürler! Gerçek zamanlı mesajlaşma son derece hızlı.",
           status = "read",
-          createdAt = "10:29 AM"
+          createdAt = "10:29"
         ),
         Message(
           id = "m3",
           conversationId = "conv_admin",
           senderId = "usr_admin",
-          senderName = "System Admin",
-          content = "Welcome to XXQ Chat on Android! Whitelist security is active.",
+          senderName = "Sistem Yöneticisi",
+          content = "XXQ Chat Android uygulamasına hoş geldiniz! Beyaz liste güvenliği devrede.",
           status = "read",
-          createdAt = "10:30 AM"
+          createdAt = "10:30"
         )
       )
     )
@@ -128,8 +128,8 @@ class DefaultDataRepository : DataRepository {
 
   private val _auditLogs = MutableStateFlow<List<AuditLog>>(
     listOf(
-      AuditLog("a1", "admin@xxqchat.com", "WHITELIST_ENABLED", "SYSTEM", "Whitelist access control enabled", "10:00:00"),
-      AuditLog("a2", "admin@xxqchat.com", "USER_WHITELIST_APPROVED", "alice@xxqchat.com", "Account approved", "10:15:20")
+      AuditLog("a1", "admin@xxqchat.com", "WHITELIST_ENABLED", "SYSTEM", "Beyaz liste erişim denetimi etkinleştirildi", "10:00:00"),
+      AuditLog("a2", "admin@xxqchat.com", "USER_WHITELIST_APPROVED", "alice@xxqchat.com", "Hesap onaylandı", "10:15:20")
     )
   )
   override val auditLogs = _auditLogs.asStateFlow()
@@ -166,7 +166,7 @@ class DefaultDataRepository : DataRepository {
         actorEmail = actor,
         action = if (enabled) "WHITELIST_ENABLED" else "WHITELIST_DISABLED",
         target = "SYSTEM",
-        details = "Whitelist mode toggled via mobile admin",
+        details = "Beyaz liste modu mobil yönetici tarafından değiştirildi",
         createdAt = time
       )
     ) + _auditLogs.value
@@ -182,7 +182,7 @@ class DefaultDataRepository : DataRepository {
         actorEmail = actor,
         action = "USER_WHITELIST_APPROVED",
         target = email,
-        details = "Account approved via mobile admin",
+        details = "Hesap mobil yönetici tarafından onaylandı",
         createdAt = time
       )
     ) + _auditLogs.value
@@ -198,7 +198,7 @@ class DefaultDataRepository : DataRepository {
         actorEmail = actor,
         action = "USER_WHITELIST_REVOKED",
         target = email,
-        details = "Account removed via mobile admin",
+        details = "Hesap mobil yönetici tarafından kaldırıldı",
         createdAt = time
       )
     ) + _auditLogs.value
@@ -206,7 +206,7 @@ class DefaultDataRepository : DataRepository {
 
   override fun sendMessage(conversationId: String, content: String) {
     val user = _currentUser.value ?: return
-    val time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+    val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
     val newMsg = Message(
       id = "msg_" + System.currentTimeMillis(),
       conversationId = conversationId,

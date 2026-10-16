@@ -28,7 +28,7 @@ export function enforceWhitelist(req: Request, res: Response, next: NextFunction
   if (!approved) {
     res.status(403).json({
       error: 'ACCESS_DENIED_NOT_WHITELISTED',
-      message: 'XXQ Chat is currently in restricted whitelist mode. Your account has not been approved by an administrator.',
+      message: 'XXQ Chat şu anda kısıtlı beyaz liste modunda çalışmaktadır. Hesabınız henüz bir yönetici tarafından onaylanmamıştır.',
       email: user.email,
       whitelistActive: true,
     });

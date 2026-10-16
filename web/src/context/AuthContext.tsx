@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           canAccessApp: false,
         });
       } else {
-        setError(err.message || 'Failed to authenticate');
+        setError(err.message || 'Kimlik doğrulanamadı.');
       }
     } finally {
       setIsLoading(false);
@@ -71,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
       setWhitelist(data.whitelist);
     } catch (err: any) {
-      setError(err.message || 'Login failed');
+      setError(err.message || 'Giriş yapılamadı.');
       throw err;
     } finally {
       setIsLoading(false);
@@ -83,12 +83,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       setError(null);
       const googleUser = await signInWithGoogle();
-      // Exchange Google user with server
-      const data = await api.devLogin(googleUser.email, googleUser.displayName);
+      // Exchange cryptographically verified Google ID token with server
+      const data = await api.loginWithGoogle(googleUser.idToken);
       setUser(data.user);
       setWhitelist(data.whitelist);
     } catch (err: any) {
-      setError(err.message || 'Google sign-in failed');
+      setError(err.message || 'Google ile giriş yapılamadı.');
       throw err;
     } finally {
       setIsLoading(false);
