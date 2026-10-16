@@ -3,14 +3,16 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { config } from './config.js';
-import { initDb, isWhitelistModeEnabled, db } from './db/index.js';
+import { initDb, isWhitelistModeEnabled, dataStore } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { usersRouter } from './routes/users.js';
 import { conversationsRouter } from './routes/conversations.js';
 
-// Initialize SQLite database
-initDb();
+// Asynchronously initialize database
+initDb().catch((err) => {
+  console.error('Database initialization error on startup:', err);
+});
 
 export const app = express();
 
@@ -71,11 +73,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // Health check endpoints for Render and monitoring
-app.get(['/health', '/healthz'], (req: Request, res: Response) => {
+app.get(['/health', '/healthz'], async (req: Request, res: Response) => {
   try {
-    // Quick DB check
-    const dbCheck = db.prepare('SELECT 1 as alive').get() as { alive: number };
-    const whitelistActive = isWhitelistModeEnabled();
+    const isHealthy = await dataStore.checkHealth();
+    const whitelistActive = await isWhitelistModeEnabled();
 
     res.json({
       status: 'ok',
@@ -83,7 +84,8 @@ app.get(['/health', '/healthz'], (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       environment: config.NODE_ENV,
-      database: dbCheck?.alive === 1 ? 'connected' : 'error',
+      database: isHealthy ? 'connected' : 'error',
+      storageDriver: dataStore.driverName,
       whitelistActive,
     });
   } catch (err: any) {

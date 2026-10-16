@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { app } from '../app.js';
-import { db } from '../db/index.js';
+import { dataStore } from '../db/index.js';
 import { generateDevToken } from '../auth/index.js';
 
 describe('XXQ Chat Server Verification Suite', () => {
@@ -13,7 +13,7 @@ describe('XXQ Chat Server Verification Suite', () => {
   const whitelistedEmail = 'alice@xxqchat.com';
   const blockedEmail = 'eve@outsider.com';
 
-  beforeAll(() => {
+  beforeAll(async () => {
     // Generate test tokens
     adminToken = generateDevToken({
       id: 'usr_admin_1',
@@ -36,38 +36,23 @@ describe('XXQ Chat Server Verification Suite', () => {
       isAdmin: false,
     });
 
-    // Ensure whitelist table has alice and admin
-    db.prepare(`
-      INSERT OR REPLACE INTO whitelist (email, approved_by) VALUES (?, ?)
-    `).run(whitelistedEmail, adminEmail);
+    // Initialize database
+    await dataStore.init();
 
-    db.prepare(`
-      INSERT OR REPLACE INTO whitelist (email, approved_by) VALUES (?, ?)
-    `).run(adminEmail, adminEmail);
+    // Ensure whitelist has alice and admin
+    await dataStore.addToWhitelist(whitelistedEmail, adminEmail);
+    await dataStore.addToWhitelist(adminEmail, adminEmail);
 
     // Ensure users exist in users table
-    db.prepare(`
-      INSERT OR REPLACE INTO users (id, email, display_name, is_admin)
-      VALUES (?, ?, ?, 1)
-    `).run('usr_admin_1', adminEmail, 'System Admin');
-
-    db.prepare(`
-      INSERT OR REPLACE INTO users (id, email, display_name, is_admin)
-      VALUES (?, ?, ?, 0)
-    `).run('usr_alice_1', whitelistedEmail, 'Alice Approved');
-
-    db.prepare(`
-      INSERT OR REPLACE INTO users (id, email, display_name, is_admin)
-      VALUES (?, ?, ?, 0)
-    `).run('usr_eve_1', blockedEmail, 'Eve Blocked');
+    await dataStore.upsertUser({ id: 'usr_admin_1', email: adminEmail, displayName: 'System Admin', isAdmin: true });
+    await dataStore.upsertUser({ id: 'usr_alice_1', email: whitelistedEmail, displayName: 'Alice Approved', isAdmin: false });
+    await dataStore.upsertUser({ id: 'usr_eve_1', email: blockedEmail, displayName: 'Eve Blocked', isAdmin: false });
 
     // Ensure eve is NOT in whitelist
-    db.prepare('DELETE FROM whitelist WHERE email = ?').run(blockedEmail);
+    await dataStore.removeFromWhitelist(blockedEmail);
 
     // Turn whitelist mode ON for testing
-    db.prepare(`
-      INSERT OR REPLACE INTO system_settings (key, value) VALUES ('whitelist_mode', 'true')
-    `).run();
+    await dataStore.setWhitelistMode(true);
   });
 
   describe('Health and System Status', () => {
@@ -77,6 +62,7 @@ describe('XXQ Chat Server Verification Suite', () => {
       expect(res.body.status).toBe('ok');
       expect(res.body.service).toBe('xxq-chat-server');
       expect(res.body.database).toBe('connected');
+      expect(res.body.storageDriver).toBeDefined();
       expect(res.body.whitelistActive).toBe(true);
     });
   });

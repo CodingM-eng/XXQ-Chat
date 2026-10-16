@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { getApps } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { config } from '../config.js';
-import { db } from '../db/index.js';
+import { dataStore } from '../db/index.js';
 
 export interface AuthUser {
   id: string;
@@ -34,10 +36,28 @@ export function generateDevToken(user: { id: string; email: string; displayName:
   );
 }
 
-// Verify Firebase ID Token cryptographically using Google OAuth2 tokeninfo
+// Verify Firebase ID Token cryptographically using Firebase Admin or Google OAuth2 tokeninfo fallback
 export async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; email: string; displayName: string; avatarUrl?: string } | null> {
   if (!idToken || typeof idToken !== 'string') return null;
 
+  // 1. Try Firebase Admin SDK verification if available
+  try {
+    if (getApps().length > 0) {
+      const decoded = await getAuth().verifyIdToken(idToken);
+      if (decoded && decoded.email) {
+        return {
+          uid: decoded.uid,
+          email: decoded.email.toLowerCase().trim(),
+          displayName: decoded.name || decoded.email.split('@')[0],
+          avatarUrl: decoded.picture || undefined,
+        };
+      }
+    }
+  } catch (err: any) {
+    // If admin SDK verification fails or is unconfigured, fallback to tokeninfo
+  }
+
+  // 2. Fallback to Google OAuth2 tokeninfo verification
   try {
     const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
     const response = await fetch(url, {
@@ -76,37 +96,21 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: str
   }
 }
 
-// Upsert user into SQLite and return full AuthUser with verified permissions
-export function upsertUserAndGetAuth(user: { id: string; email: string; displayName: string; avatarUrl?: string }): AuthUser {
-  const email = user.email.toLowerCase().trim();
-  const isInitialAdmin = email === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
-
-  const existing = db.prepare('SELECT id, is_admin, display_name, avatar_url FROM users WHERE LOWER(email) = ?').get(email) as any;
-
-  let isAdmin = false;
-  let effectiveId = user.id;
-
-  if (existing) {
-    isAdmin = existing.is_admin === 1 || isInitialAdmin;
-    effectiveId = existing.id;
-    // Keep avatar or name up to date if provided
-    if (user.avatarUrl && user.avatarUrl !== existing.avatar_url) {
-      db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(user.avatarUrl, effectiveId);
-    }
-  } else {
-    isAdmin = isInitialAdmin;
-    db.prepare(`
-      INSERT INTO users (id, email, display_name, avatar_url, is_admin)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(effectiveId, email, user.displayName, user.avatarUrl || null, isAdmin ? 1 : 0);
-  }
+// Upsert user into database and return full AuthUser with verified permissions
+export async function upsertUserAndGetAuth(user: { id: string; email: string; displayName: string; avatarUrl?: string }): Promise<AuthUser> {
+  const dbUser = await dataStore.upsertUser({
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+  });
 
   return {
-    id: effectiveId,
-    email,
-    displayName: existing?.display_name || user.displayName,
-    avatarUrl: existing?.avatar_url || user.avatarUrl,
-    isAdmin,
+    id: dbUser.id,
+    email: dbUser.email,
+    displayName: dbUser.displayName,
+    avatarUrl: dbUser.avatarUrl || undefined,
+    isAdmin: dbUser.isAdmin,
   };
 }
 
@@ -118,7 +122,7 @@ export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
   try {
     const decoded = jwt.verify(token, config.JWT_DEV_SECRET) as any;
     if (decoded && decoded.email) {
-      return upsertUserAndGetAuth({
+      return await upsertUserAndGetAuth({
         id: decoded.uid || 'usr_' + Buffer.from(decoded.email).toString('hex').slice(0, 16),
         email: decoded.email,
         displayName: decoded.name || decoded.email.split('@')[0],
@@ -132,7 +136,7 @@ export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
   // 2. Verify as Firebase ID token directly
   const verifiedFirebase = await verifyFirebaseIdToken(token);
   if (verifiedFirebase) {
-    return upsertUserAndGetAuth({
+    return await upsertUserAndGetAuth({
       id: verifiedFirebase.uid,
       email: verifiedFirebase.email,
       displayName: verifiedFirebase.displayName,
@@ -177,4 +181,3 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 
   next();
 }
-

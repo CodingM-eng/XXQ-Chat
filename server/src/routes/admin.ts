@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../auth/index.js';
-import { db, isWhitelistModeEnabled } from '../db/index.js';
+import { dataStore, isWhitelistModeEnabled } from '../db/index.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -9,32 +9,14 @@ const router = Router();
 // Apply auth and admin checks to all admin endpoints
 router.use(requireAuth, requireAdmin);
 
-// Helper to log audit records
-function recordAudit(actorId: string, actorEmail: string, action: string, target: string | null, details: string, ip: string | undefined) {
-  const id = 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-  db.prepare(`
-    INSERT INTO audit_logs (id, actor_id, actor_email, action, target, details, ip_address)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, actorId, actorEmail, action, target, details, ip || 'unknown');
-}
-
 // GET /api/admin/status
-router.get('/status', (req, res) => {
-  const whitelistMode = isWhitelistModeEnabled();
-
-  const totalUsers = (db.prepare('SELECT COUNT(*) as count FROM users').get() as any).count;
-  const approvedWhitelistCount = (db.prepare('SELECT COUNT(*) as count FROM whitelist').get() as any).count;
-  const adminCount = (db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 1').get() as any).count;
-  const totalMessages = (db.prepare('SELECT COUNT(*) as count FROM messages').get() as any).count;
+router.get('/status', async (req, res) => {
+  const whitelistMode = await isWhitelistModeEnabled();
+  const stats = await dataStore.getStats();
 
   res.json({
     whitelistMode,
-    stats: {
-      totalUsers,
-      approvedWhitelistCount,
-      adminCount,
-      totalMessages,
-    },
+    stats,
     initialAdminEmail: config.INITIAL_ADMIN_EMAIL,
   });
 });
@@ -45,7 +27,7 @@ const toggleSchema = z.object({
   confirmation: z.literal(true), // Explicit confirmation required
 });
 
-router.post('/whitelist/toggle', (req, res) => {
+router.post('/whitelist/toggle', async (req, res) => {
   const parseResult = toggleSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_INPUT', message: 'Beyaz liste modunu değiştirmek için onay gereklidir.' });
@@ -55,21 +37,17 @@ router.post('/whitelist/toggle', (req, res) => {
   const { enabled } = parseResult.data;
   const user = req.user!;
 
-  db.prepare(`
-    INSERT INTO system_settings (key, value, updated_at)
-    VALUES ('whitelist_mode', ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `).run(enabled ? 'true' : 'false');
+  await dataStore.setWhitelistMode(enabled);
 
   const action = enabled ? 'WHITELIST_ENABLED' : 'WHITELIST_DISABLED';
-  recordAudit(
-    user.id,
-    user.email,
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
     action,
-    'SYSTEM',
-    `Beyaz liste modu ${enabled ? 'ETKİNLEŞTİRİLDİ' : 'DEVRE DIŞI BIRAKILDI'} olarak güncellendi`,
-    req.ip
-  );
+    target: 'SYSTEM',
+    details: `Beyaz liste modu ${enabled ? 'ETKİNLEŞTİRİLDİ' : 'DEVRE DIŞI BIRAKILDI'} olarak güncellendi`,
+    ipAddress: req.ip,
+  });
 
   res.json({
     success: true,
@@ -79,14 +57,8 @@ router.post('/whitelist/toggle', (req, res) => {
 });
 
 // GET /api/admin/whitelist
-router.get('/whitelist', (req, res) => {
-  const items = db.prepare(`
-    SELECT w.email, w.approved_by, w.created_at, u.display_name, u.avatar_url, u.is_admin
-    FROM whitelist w
-    LEFT JOIN users u ON LOWER(u.email) = LOWER(w.email)
-    ORDER BY w.created_at DESC
-  `).all();
-
+router.get('/whitelist', async (req, res) => {
+  const items = await dataStore.getWhitelist();
   res.json({ whitelist: items });
 });
 
@@ -95,7 +67,7 @@ const addWhitelistSchema = z.object({
   email: z.string().email(),
 });
 
-router.post('/whitelist/add', (req, res) => {
+router.post('/whitelist/add', async (req, res) => {
   const parseResult = addWhitelistSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
@@ -106,20 +78,16 @@ router.post('/whitelist/add', (req, res) => {
   const user = req.user!;
 
   try {
-    db.prepare(`
-      INSERT INTO whitelist (email, approved_by, created_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(email) DO UPDATE SET approved_by = excluded.approved_by
-    `).run(email, user.email);
+    await dataStore.addToWhitelist(email, user.email);
 
-    recordAudit(
-      user.id,
-      user.email,
-      'USER_WHITELIST_APPROVED',
-      email,
-      `${email} kullanıcısı için uygulama erişimi onaylandı`,
-      req.ip
-    );
+    await dataStore.recordAuditLog({
+      actorId: user.id,
+      actorEmail: user.email,
+      action: 'USER_WHITELIST_APPROVED',
+      target: email,
+      details: `${email} kullanıcısı için uygulama erişimi onaylandı`,
+      ipAddress: req.ip,
+    });
 
     res.json({ success: true, email, message: `${email} hesabı başarıyla onaylandı.` });
   } catch (err: any) {
@@ -128,7 +96,7 @@ router.post('/whitelist/add', (req, res) => {
 });
 
 // DELETE /api/admin/whitelist/:email
-router.delete('/whitelist/:email', (req, res) => {
+router.delete('/whitelist/:email', async (req, res) => {
   const email = req.params.email.toLowerCase().trim();
   const user = req.user!;
 
@@ -138,46 +106,50 @@ router.delete('/whitelist/:email', (req, res) => {
     return;
   }
 
-  const result = db.prepare('DELETE FROM whitelist WHERE LOWER(email) = ?').run(email);
+  const removed = await dataStore.removeFromWhitelist(email);
 
-  if (result.changes === 0) {
+  if (!removed) {
     res.status(404).json({ error: 'NOT_FOUND', message: 'Kullanıcı beyaz listede bulunamadı.' });
     return;
   }
 
-  recordAudit(
-    user.id,
-    user.email,
-    'USER_WHITELIST_REVOKED',
-    email,
-    `${email} için beyaz liste onayı kaldırıldı`,
-    req.ip
-  );
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'USER_WHITELIST_REVOKED',
+    target: email,
+    details: `${email} için beyaz liste onayı kaldırıldı`,
+    ipAddress: req.ip,
+  });
 
   res.json({ success: true, email, message: `${email} için beyaz liste onayı kaldırıldı.` });
 });
 
 // GET /api/admin/audit-logs
-router.get('/audit-logs', (req, res) => {
+router.get('/audit-logs', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const logs = db.prepare(`
-    SELECT id, actor_id, actor_email, action, target, details, ip_address, created_at
-    FROM audit_logs
-    ORDER BY created_at DESC, rowid DESC
-    LIMIT ?
-  `).all(limit);
-
-  res.json({ auditLogs: logs });
+  const logs = await dataStore.getAuditLogs(limit);
+  res.json({
+    auditLogs: logs.map((l) => ({
+      id: l.id,
+      actor_id: l.actorId,
+      actorId: l.actorId,
+      actor_email: l.actorEmail,
+      actorEmail: l.actorEmail,
+      action: l.action,
+      target: l.target,
+      details: l.details,
+      ip_address: l.ipAddress,
+      ipAddress: l.ipAddress,
+      created_at: l.createdAt,
+      createdAt: l.createdAt,
+    })),
+  });
 });
 
 // GET /api/admin/users
-router.get('/users', (req, res) => {
-  const users = db.prepare(`
-    SELECT id, email, display_name, avatar_url, is_admin, created_at, last_active_at
-    FROM users
-    ORDER BY created_at DESC
-  `).all();
-
+router.get('/users', async (req, res) => {
+  const users = await dataStore.getAllUsers();
   res.json({ users });
 });
 

@@ -1,7 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { verifyAuthToken, AuthUser } from '../auth/index.js';
-import { db, isWhitelistModeEnabled, isEmailWhitelisted, runTransaction } from '../db/index.js';
+import { dataStore, isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
 import { config } from '../config.js';
 
 let ioInstance: Server | null = null;
@@ -42,9 +42,9 @@ export function setupSocketServer(httpServer: HttpServer): Server {
       }
 
       // Check whitelist access control
-      const whitelistActive = isWhitelistModeEnabled();
+      const whitelistActive = await isWhitelistModeEnabled();
       if (whitelistActive && !user.isAdmin) {
-        const approved = isEmailWhitelisted(user.email);
+        const approved = await isEmailWhitelisted(user.email);
         if (!approved) {
           return next(new Error('ACCESS_DENIED_NOT_WHITELISTED'));
         }
@@ -58,7 +58,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     }
   });
 
-  io.on('connection', (socket: Socket) => {
+  io.on('connection', async (socket: Socket) => {
     const user: AuthUser = socket.data.user;
 
     // Track active socket
@@ -71,29 +71,36 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     socket.join(`user:${user.id}`);
 
     // Join all conversations the user is a participant of
-    const userConvs = db.prepare(`
-      SELECT conversation_id FROM conversation_participants WHERE user_id = ?
-    `).all(user.id) as { conversation_id: string }[];
-
-    userConvs.forEach((c) => {
-      socket.join(`conversation:${c.conversation_id}`);
-      // Notify other participants that user is online
-      socket.to(`conversation:${c.conversation_id}`).emit('presence:online', {
-        userId: user.id,
-        email: user.email,
-        lastActiveAt: new Date().toISOString(),
+    let userConvs: { id: string }[] = [];
+    try {
+      const conversations = await dataStore.getUserConversations(user.id);
+      userConvs = conversations.map((c) => ({ id: c.id }));
+      userConvs.forEach((c) => {
+        socket.join(`conversation:${c.id}`);
+        // Notify other participants that user is online
+        socket.to(`conversation:${c.id}`).emit('presence:online', {
+          userId: user.id,
+          email: user.email,
+          lastActiveAt: new Date().toISOString(),
+        });
       });
-    });
+    } catch (err) {
+      console.error('Failed to join user conversations on socket connect:', err);
+    }
 
     // Handle sending a message
-    socket.on('message:send', (data: { conversationId: string; content: string; clientMessageId?: string }, callback) => {
+    socket.on('message:send', async (data: { conversationId: string; content: string; clientMessageId?: string }, callback) => {
       try {
         // Enforce whitelist on every real-time message event: fail closed
-        if (isWhitelistModeEnabled() && !user.isAdmin && !isEmailWhitelisted(user.email)) {
-          if (typeof callback === 'function') {
-            callback({ error: 'ACCESS_DENIED_NOT_WHITELISTED' });
+        const whitelistActive = await isWhitelistModeEnabled();
+        if (whitelistActive && !user.isAdmin) {
+          const approved = await isEmailWhitelisted(user.email);
+          if (!approved) {
+            if (typeof callback === 'function') {
+              callback({ error: 'ACCESS_DENIED_NOT_WHITELISTED' });
+            }
+            return;
           }
-          return;
         }
 
         const { conversationId, content, clientMessageId } = data;
@@ -109,10 +116,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
         }
 
         // Verify participant
-        const isParticipant = db.prepare(`
-          SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?
-        `).get(conversationId, user.id);
-
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
         if (!isParticipant) {
           if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
           return;
@@ -120,39 +124,22 @@ export function setupSocketServer(httpServer: HttpServer): Server {
 
         // Deduplication check
         if (clientMessageId) {
-          const existing = db.prepare(`
-            SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, status, created_at
-            FROM messages
-            WHERE client_message_id = ? AND sender_id = ?
-          `).get(clientMessageId, user.id) as any;
-
+          const existing = await dataStore.findMessageByClientId(clientMessageId, user.id);
           if (existing) {
             if (typeof callback === 'function') callback({ success: true, message: existing, deduplicated: true });
             return;
           }
         }
 
-        const msgId = 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
-
-        runTransaction(() => {
-          db.prepare(`
-            INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')
-          `).run(msgId, conversationId, user.id, user.displayName, user.avatarUrl || null, clientMessageId || null, trimmedContent);
-
-          db.prepare(`
-            UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?
-          `).run(conversationId);
-
-          db.prepare(`
-            UPDATE conversation_participants SET last_read_message_id = ? WHERE conversation_id = ? AND user_id = ?
-          `).run(msgId, conversationId, user.id);
+        const savedMessage = await dataStore.saveMessage({
+          conversationId,
+          senderId: user.id,
+          senderName: user.displayName,
+          senderAvatar: user.avatarUrl || null,
+          clientMessageId: clientMessageId || null,
+          content: trimmedContent,
+          status: 'sent',
         });
-
-        const savedMessage = db.prepare(`
-          SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, status, created_at
-          FROM messages WHERE id = ?
-        `).get(msgId) as any;
 
         // Broadcast to conversation room (including sender)
         io.to(`conversation:${conversationId}`).emit('message:new', savedMessage);
@@ -169,23 +156,12 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     });
 
     // Handle read receipt
-    socket.on('message:read', (data: { conversationId: string; messageId: string }) => {
+    socket.on('message:read', async (data: { conversationId: string; messageId: string }) => {
       try {
         const { conversationId, messageId } = data;
         if (!conversationId || !messageId) return;
 
-        db.prepare(`
-          UPDATE conversation_participants
-          SET last_read_message_id = ?
-          WHERE conversation_id = ? AND user_id = ?
-        `).run(messageId, conversationId, user.id);
-
-        // Update message status to read for messages sent by others
-        db.prepare(`
-          UPDATE messages
-          SET status = 'read'
-          WHERE conversation_id = ? AND sender_id != ? AND id = ?
-        `).run(conversationId, user.id, messageId);
+        await dataStore.markConversationRead(conversationId, user.id, messageId);
 
         // Notify conversation room
         socket.to(`conversation:${conversationId}`).emit('message:read_receipt', {
@@ -220,7 +196,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     });
 
     // Disconnect
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       const userSockets = activeUsers.get(user.id);
       if (userSockets) {
         userSockets.delete(socket.id);
@@ -228,11 +204,11 @@ export function setupSocketServer(httpServer: HttpServer): Server {
           activeUsers.delete(user.id);
 
           // Update last_active_at in DB
-          db.prepare('UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+          await dataStore.updateUserLastActive(user.id);
 
           // Notify rooms that user went offline
           userConvs.forEach((c) => {
-            socket.to(`conversation:${c.conversation_id}`).emit('presence:offline', {
+            socket.to(`conversation:${c.id}`).emit('presence:offline', {
               userId: user.id,
               lastActiveAt: new Date().toISOString(),
             });

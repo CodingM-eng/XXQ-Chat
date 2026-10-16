@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
 
-export function enforceWhitelist(req: Request, res: Response, next: NextFunction): void {
+export async function enforceWhitelist(req: Request, res: Response, next: NextFunction): Promise<void> {
   const user = req.user;
 
   if (!user) {
@@ -15,7 +15,7 @@ export function enforceWhitelist(req: Request, res: Response, next: NextFunction
   }
 
   // Check if whitelist mode is currently enabled
-  const whitelistEnabled = isWhitelistModeEnabled();
+  const whitelistEnabled = await isWhitelistModeEnabled();
 
   if (!whitelistEnabled) {
     // Whitelist is OFF, all authenticated users are permitted
@@ -23,7 +23,7 @@ export function enforceWhitelist(req: Request, res: Response, next: NextFunction
   }
 
   // Whitelist is ON: verify if user's email is explicitly approved
-  const approved = isEmailWhitelisted(user.email);
+  const approved = await isEmailWhitelisted(user.email);
 
   if (!approved) {
     res.status(403).json({

@@ -1,17 +1,11 @@
 services:
   # ============================================================================
-  # 1. XXQ Chat Backend API & WebSocket Gateway Service
+  # 1. XXQ Chat Backend API & WebSocket Gateway Service (100% No-Cost Setup)
   # ============================================================================
   - type: web
     name: xxq-chat-backend
     runtime: node
-    # IMPORTANT COST & PLAN NOTICE:
-    # Persistent disks (for SQLite at /var/data) require Render's 'starter' plan.
-    # Cost: $7/month for Starter Web Service + $0.25/month for 1 GB persistent disk ($7.25/mo total).
-    # Render's 'free' plan does NOT allow persistent disks. If you prefer a 100% free setup,
-    # you can switch 'plan: free' and remove the 'disk' block below, using an external free
-    # cloud database (e.g. Supabase, Neon, or Turso).
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: pnpm install --frozen-lockfile --trust-lockfile && pnpm --filter xxq-chat-server build
     startCommand: node server/dist/index.js
@@ -22,32 +16,32 @@ services:
         value: production
       - key: PORT
         value: 10000
-      # CORS Origin: Restrict to your frontend domain in production
+      # CORS Origin: Restrict to your frontend domain in production.
+      # By default, Render assigns https://xxq-chat-frontend.onrender.com to the static site below.
+      # If your Render dashboard assigns a suffixed subdomain, update this value to match.
       - key: CORS_ORIGIN
         value: https://xxq-chat-frontend.onrender.com
       # Designated Initial System Administrator
       - key: INITIAL_ADMIN_EMAIL
         value: codingdevelopia@gmail.com
+      # Whitelist Access Control (enabled by default)
       - key: WHITELIST_MODE_DEFAULT
         value: 'true'
-      - key: DB_PATH
-        value: /var/data/xxq-chat.db
+      # Production Persistence: Firebase Cloud Firestore (No-cost Spark Tier)
+      - key: DB_DRIVER
+        value: firestore
       - key: JWT_DEV_SECRET
         generateValue: true
-      # Firebase Admin Production Credentials (configure in Render Dashboard)
+      # Firebase Admin Production Credentials (configure in Render Dashboard - NEVER commit)
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_CLIENT_EMAIL
         sync: false
       - key: FIREBASE_PRIVATE_KEY
         sync: false
-    disk:
-      name: xxq-chat-data
-      mountPath: /var/data
-      sizeGB: 1
 
   # ============================================================================
-  # 2. XXQ Chat Web Frontend (Single Page Application)
+  # 2. XXQ Chat Web Frontend (Single Page Application - Render Static Site)
   # ============================================================================
   - type: web
     name: xxq-chat-frontend
@@ -62,7 +56,7 @@ services:
       # Connects frontend to the backend service above
       - key: VITE_API_URL
         value: https://xxq-chat-backend.onrender.com
-      # Optional client Firebase credentials (can be added via Render dashboard)
+      # Client Firebase credentials for Google Sign-In (configure in Render dashboard)
       - key: VITE_FIREBASE_API_KEY
         sync: false
       - key: VITE_FIREBASE_AUTH_DOMAIN

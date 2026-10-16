@@ -12,6 +12,7 @@ const envSchema = z.object({
     .string()
     .transform((val) => val.toLowerCase() === 'true' || val === '1')
     .default('true'),
+  DB_DRIVER: z.enum(['sqlite', 'firestore', 'auto']).default('auto'),
   DB_PATH: z.string().default('./data/xxq-chat.db'),
   JWT_DEV_SECRET: z.string().min(16).default('dev-xxq-chat-secret-key-change-in-production-min-32-chars'),
   FIREBASE_PROJECT_ID: z.string().optional(),

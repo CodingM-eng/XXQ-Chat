@@ -1,18 +1,23 @@
-# XXQ Chat — Production Messaging Platform
+# XXQ Chat — Production Messaging Platform (100% No-Cost Architecture)
 
-**XXQ Chat** is a high-performance, multi-platform messaging platform engineered with original branding, a Telegram-inspired ergonomic interaction model, server-enforced whitelist access control, and native clients for Web, Windows Desktop, and Android.
+**XXQ Chat** is a high-performance, multi-platform messaging platform engineered with original branding, a Telegram-inspired ergonomic interaction model, dark charcoal/purple visual design, full Turkish localization, server-enforced whitelist access control, and native clients for Web, Windows Desktop, and Android.
+
+The production deployment runs on a **100% genuine no-cost architecture** designed for small teams (10–12 users) using Render Free services and Firebase Cloud Firestore (Spark Tier).
 
 ---
 
 ## 🌟 Key Features
 
-- **Responsive Web Application**: Sleek dark-mode interface with instant Socket.IO real-time delivery, message state tracking, unread counters, and typing indicators.
-- **Secure Admin Web Panel**: Dedicated administrative portal to toggle Whitelist Mode (ON/OFF), approve or revoke user access with confirmation modals, and inspect immutable system audit history.
-- **Fail-Closed Whitelist Access Control**: The backend server is the absolute source of truth. When Whitelist Mode is active, non-whitelisted users are blocked at both the REST API and WebSocket handshake layers.
-- **Windows Desktop Application**: Packaged standalone Windows `.exe` built on Electron with secure sandboxed renderers, context isolation, single-instance locking, native notification bridges, and window state persistence.
-- **Native Android Application**: Kotlin & Jetpack Compose native Android client with edge-to-edge Material 3 theming, adaptive keyboard handling, and back navigation.
-- **Backend on Node 24**: Built using native `node:sqlite` (zero node-gyp or C++ compilation issues), Socket.IO, Helmet, rate limiting, and structured logging.
-- **CI/CD Pipeline**: GitHub Actions workflows for automated testing, matrix builds, and release packaging for Windows and Android.
+- **Turkish Language Interface**: Entire user-facing interface in Turkish across Web, Desktop, and Android (sign-in, chat, admin panel, alerts, modals).
+- **Dark Charcoal & Purple Theme**: Modern near-black/charcoal layered surfaces with elegant purple accents and accessible contrast.
+- **Fail-Closed Whitelist Access Control**: The backend server is the absolute source of truth. When Whitelist Mode is active, non-whitelisted users are blocked at both REST API and WebSocket handshake layers.
+- **Dual Persistence Engine (Firestore & SQLite)**:
+  - **Firebase Cloud Firestore**: Used in production on Render Free. Eliminates persistent disk costs while preserving conversations, users, whitelist, and audit logs.
+  - **Embedded SQLite (`node:sqlite`)**: Used for zero-credential local development, rapid prototyping, and automated unit testing.
+- **Responsive Web Application**: React 19 + Vite single-page application deployed as a Render static site.
+- **Windows Desktop Application**: Standalone `.exe` built with Electron, context isolation, sandboxing, and native notification bridges.
+- **Native Android Application**: Kotlin & Jetpack Compose native Android client with Material 3 theming, adaptive keyboard handling, and back navigation.
+- **Automated CI/CD**: Repeatable GitHub Actions build and test pipelines for backend, web, Windows desktop, and Android APK.
 
 ---
 
@@ -32,12 +37,12 @@
      HTTPS / WSS (CORS Filtered, Rate-Limited, Token Authenticated)
 ┌────────────────────────────────────────────────────────────────────────┐
 │                              SERVER TIER                               │
-│                                                                        │
+│                  (Render Web Service - Plan: Free)                     │
 │   ┌────────────────────────────────────────────────────────────────┐   │
 │   │             Node.js 24 + Express + Socket.IO Server            │   │
 │   ├───────────────────────────────┬────────────────────────────────┤   │
 │   │   Authentication Middleware   │   Whitelist Enforcement Engine │   │
-│   │  (Firebase Admin / Dev JWT)   │       (Fail-Closed Policy)     │   │
+│   │ (Firebase Token Verification) │       (Fail-Closed Policy)     │   │
 │   ├───────────────────────────────┴────────────────────────────────┤   │
 │   │           Audit Logger & Admin Authorization Guard             │   │
 │   └───────────────────────────────┬────────────────────────────────┘   │
@@ -48,162 +53,180 @@
 │                            PERSISTENCE TIER                            │
 │                                                                        │
 │   ┌────────────────────────────────────────────────────────────────┐   │
-│   │           Embedded SQLite Database (PRAGMA WAL Mode)           │   │
-│   │  - System Settings (whitelist_mode)    - Whitelist Directory   │   │
-│   │  - User Profiles                       - Audit Logs            │   │
-│   │  - Conversations & Participants        - Messages              │   │
+│   │  PRODUCTION: Firebase Cloud Firestore (No-Cost Spark Plan)    │   │
+│   │  - system_settings (whitelist_mode with 30s cache)             │   │
+│   │  - users (profiles & verified admin flags)                     │   │
+│   │  - whitelist (approved emails directory)                       │   │
+│   │  - conversations & messages (direct chats, history, receipts)  │   │
+│   │  - audit_logs (immutable administrative action records)        │   │
+│   ├────────────────────────────────────────────────────────────────┤   │
+│   │  LOCAL DEV & TESTS: Embedded SQLite (`node:sqlite`)            │   │
 │   └────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Security Decisions
+---
 
-1. **Server-Side Whitelist Enforcement**: A hidden UI is not security. Whitelist mode and membership are verified on every single REST call and WebSocket handshake. If whitelist mode is ON and the user's email is not in the whitelist, the connection is terminated with `403 ACCESS_DENIED_NOT_WHITELISTED`.
-2. **Fail-Closed Design**: If the database query or whitelist setting cannot be read, the server defaults to blocking unapproved traffic.
-3. **Admin Privilege Isolation**: Only users flagged with `is_admin = 1` in the database can access `/api/admin/*`. Admin actions require confirmation and generate an immutable audit log record.
-4. **Initial Administrator Bootstrap**: Designated securely via the `INITIAL_ADMIN_EMAIL` server environment variable on first start. The initial admin account cannot be deleted or revoked via API calls.
-5. **Safe Message Rendering**: All message strings are safely escaped and rendered as text/markdown primitives—never evaluated as executable HTML (`dangerouslySetInnerHTML` is prohibited).
-6. **Electron Sandbox**: Desktop application runs with `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`.
+## 💰 100% Free-Tier Operating Model (10–12 Users)
+
+This deployment uses strictly zero-cost tiers:
+
+| Component | Platform & Tier | Quota & Limits | Cost |
+| :--- | :--- | :--- | :--- |
+| **Backend API & Sockets** | **Render Web Service** (`plan: free`) | 512 MB RAM, 0.1 CPU, spun down after 15m idle | **$0.00 / month** |
+| **Database** | **Firebase Cloud Firestore** (Spark Plan) | 50,000 reads/day, 20,000 writes/day, 1 GB storage | **$0.00 / month** |
+| **Web Frontend** | **Render Static Site** | 100 GB bandwidth/month, global CDN | **$0.00 / month** |
+| **Authentication** | **Firebase Authentication** (Spark Plan) | Unlimited Google Sign-In, 50,000 MAU | **$0.00 / month** |
+| **Total Monthly Cost** | | | **$0.00 / month** |
+
+### Free-Tier Behavior & Quota Monitoring
+
+1. **Firestore Spark Quota Protection**:
+   - Firestore Spark free tier provides **50,000 document reads** and **20,000 document writes** per day.
+   - For a team of 10–12 users, daily message activity easily fits within this limit (thousands of messages daily).
+   - **In-Memory Caching**: Whitelist state and system settings are cached in server memory with a 30-second TTL (and invalidated on admin updates), preventing thousands of redundant reads per hour.
+   - **Quota Exhaustion Safeguard**: If daily free quota is exceeded, Firestore returns `RESOURCE_EXHAUSTED` until the daily reset (00:00 US Pacific Time / 08:00 UTC). Do **NOT** enable Blaze billing to avoid accidental charges.
+2. **Render Free Sleep & Cold-Start Latency**:
+   - Render spins down free Web Services after 15 minutes of inactivity.
+   - The first request to a sleeping server takes **~50 seconds** to wake up.
+   - The web, desktop, and Android applications handle this gracefully: Socket.IO clients automatically reconnect with exponential backoff and resume chat delivery once the instance awakens.
 
 ---
 
-## 🚀 Local Development & Quick Start
+## ⚙️ Initial Configuration & Deployment
+
+### Step 1: Firebase Project Setup (Spark Plan)
+
+1. Navigate to the [Firebase Console](https://console.firebase.google.com/) and create a project (e.g., `xxq-chat-prod`).
+2. **Stay on the Spark Plan** (do not attach a credit card or upgrade to Blaze).
+3. **Enable Authentication**:
+   - Go to **Build > Authentication > Sign-in method**.
+   - Enable **Google** sign-in provider.
+   - Under **Authorized domains**, add `localhost` and your Render domains (`xxq-chat-frontend.onrender.com`, `xxq-chat-backend.onrender.com`).
+4. **Enable Firestore**:
+   - Go to **Build > Firestore Database**.
+   - Click **Create Database**.
+   - Select **Production mode** (or Native mode) and select your preferred region (e.g. `nam5` or `eur3`).
+5. **Generate Backend Service Account**:
+   - Go to **Project Settings (gear icon) > Service accounts**.
+   - Click **Generate new private key** and download the JSON file securely.
+   - Extract `project_id`, `client_email`, and `private_key` (keep these secret; do not commit).
+6. **Register Web App**:
+   - Go to **Project Settings > General > Your apps > Add app (Web)**.
+   - Copy `apiKey`, `authDomain`, and `projectId`.
+
+---
+
+### Step 2: Deploy to Render via Blueprint
+
+1. Fork or push this repository to your GitHub account (`CodingM-eng/XXQ-Chat`).
+2. Log in to [Render.com](https://render.com).
+3. Click **New > Blueprint**.
+4. Select the `XXQ-Chat` repository.
+5. Render detects `render.yaml` with two free services:
+   - `xxq-chat-backend`: Node Web Service (`plan: free`)
+   - `xxq-chat-frontend`: Static Site
+6. Under `xxq-chat-backend` environment variables in the Render dashboard, enter:
+   - `FIREBASE_PROJECT_ID`: Your Firebase Project ID
+   - `FIREBASE_CLIENT_EMAIL`: Your service account client email
+   - `FIREBASE_PRIVATE_KEY`: Your service account private key (including `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----`)
+   - `INITIAL_ADMIN_EMAIL`: `codingdevelopia@gmail.com`
+7. Under `xxq-chat-frontend` environment variables, enter:
+   - `VITE_FIREBASE_API_KEY`: Firebase web API key
+   - `VITE_FIREBASE_AUTH_DOMAIN`: `<project-id>.firebaseapp.com`
+   - `VITE_FIREBASE_PROJECT_ID`: Firebase project ID
+8. Click **Apply**.
+9. Once deployed, verify backend health:
+   ```bash
+   curl https://xxq-chat-backend.onrender.com/health
+   ```
+   Expected response:
+   ```json
+   {
+     "status": "ok",
+     "service": "xxq-chat-server",
+     "database": "connected",
+     "storageDriver": "firestore",
+     "whitelistActive": true
+   }
+   ```
+
+---
+
+## 💻 Local Development
+
+Local development requires **zero credentials** and runs out-of-the-box using the embedded SQLite engine.
 
 ### Prerequisites
 
-- **Node.js**: Version 22+ or 24+
+- **Node.js**: v22+ or v24+
 - **pnpm**: `corepack enable && corepack prepare pnpm@latest --activate`
-- **Java**: JDK 17+ or 21+ (for Android builds)
 
-### 1. Clone & Install Dependencies
+### 1. Install & Configure
 
 ```bash
-git clone https://github.com/<your-username>/XXQ-Chat.git
+git clone https://github.com/CodingM-eng/XXQ-Chat.git
 cd XXQ-Chat
 pnpm install
 ```
 
-### 2. Configure Server Environment
-
-Copy `server/.env.example` to `server/.env`:
-
-```env
-PORT=4000
-NODE_ENV=development
-CORS_ORIGIN=http://localhost:5173,http://localhost:4000
-INITIAL_ADMIN_EMAIL=admin@xxqchat.com
-WHITELIST_MODE_DEFAULT=true
-DB_PATH=./data/xxq-chat.db
-JWT_DEV_SECRET=your-secure-development-secret-key-32-chars
+Copy example configs:
+```bash
+cp server/.env.example server/.env
+cp web/.env.example web/.env
 ```
 
-### 3. Run Development Servers
+### 2. Run Development Servers
 
 ```bash
-# Start backend server (listening on http://localhost:4000)
+# Start backend (port 4000)
 pnpm dev:server
 
-# In a second terminal, start the responsive web app (http://localhost:5173)
+# Start web frontend (port 5173)
 pnpm dev:web
 
-# Optional: Run desktop app pointing to local dev server
+# Run Windows desktop app locally
 pnpm dev:desktop
 ```
 
-### 4. Running Automated Tests
+### 3. Run Automated Tests
 
 ```bash
-# Run backend verification suite (16 tests covering auth, whitelist, admin, messages)
+# Backend unit & integration tests (23 tests: SQLite, Firestore, Auth, Whitelist, Messaging)
 pnpm test:server
 
-# Run web component test suite
+# Frontend web component tests
 pnpm test:web
 
-# Run Android unit test suite
+# Android unit tests
 cd android && ./gradlew testDebugUnitTest
 ```
 
 ---
 
-## 📦 Building Platform Artifacts
+## 📦 Building Platform Release Artifacts
 
-### 1. Windows Desktop Application (`.exe`)
+### 1. Windows Standalone Executable (`.exe`)
 
 ```bash
-# 1. Build web production bundle
 pnpm --filter xxq-chat-web build
-
-# 2. Package desktop executable
 pnpm --filter xxq-chat-desktop build
 ```
-- Standalone Executable: `desktop/release/win-unpacked/XXQ Chat.exe`
-- Distribution Archive: `release/XXQ-Chat-Windows-x64.zip`
+- Output directory: `desktop/release/win-unpacked/XXQ Chat.exe`
 
-### 2. Android Application (`.apk`)
+### 2. Android Standalone APK (`.apk`)
 
 ```bash
 cd android
 ./gradlew assembleDebug
 ```
-- Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`
-- Ready-to-install artifact: `release/XXQ-Chat-debug.apk`
+- Output APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 
 ---
 
-## 🔥 Firebase Setup Guide
+## 🔒 Security Architecture
 
-XXQ Chat supports Firebase Authentication with Google Sign-In out of the box.
-
-### Web Setup
-
-1. Open the [Firebase Console](https://console.firebase.google.com/) and create a project.
-2. In **Authentication > Sign-in method**, enable the **Google** provider.
-3. In **Authorized domains**, add your web application domain (e.g., `localhost` for dev, your Render or custom domain for production).
-4. Register a Web app in project settings and copy the config to `web/.env`:
-   ```env
-   VITE_FIREBASE_API_KEY=AIzaSy...
-   VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-   VITE_FIREBASE_PROJECT_ID=your-project-id
-   VITE_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
-   VITE_FIREBASE_MESSAGING_SENDER_ID=1234567890
-   VITE_FIREBASE_APP_ID=1:1234567890:web:abcdef
-   ```
-
-### Backend Setup (Firebase Admin Token Verification)
-
-To verify Google ID tokens directly against Google servers:
-1. In Firebase Console, go to **Project Settings > Service accounts**.
-2. Click **Generate new private key** (save securely outside the repository).
-3. Set the following environment variables in `server/.env` or Render Dashboard:
-   ```env
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_CLIENT_EMAIL=firebase-adminsdk@your-project.iam.gserviceaccount.com
-   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-   ```
-
----
-
-## ☁️ Deploying to Render.com
-
-The repository includes a production-ready `render.yaml` Blueprint.
-
-### Step-by-Step Deployment:
-
-1. Push your code to GitHub.
-2. Log in to [Render.com](https://render.com).
-3. Click **New > Blueprint**.
-4. Select your `XXQ-Chat` repository.
-5. Render will automatically parse `render.yaml`, set up the Web Service, and attach the persistent disk `/var/data` for SQLite.
-6. Verify the service health endpoint: `https://<your-service-name>.onrender.com/health`.
-
----
-
-## 🛠️ Built-in Testing Personas
-
-When running without live Firebase OAuth keys configured, use the built-in Persona Switcher to test access control instantly:
-
-| Persona | Email | Role | Expected Whitelist Behavior |
-| :--- | :--- | :--- | :--- |
-| **System Admin** | `admin@xxqchat.com` | Administrator | Full access to chat and Admin Panel |
-| **Alice** | `alice@xxqchat.com` | Whitelisted Member | Allowed into chat when Whitelist is ON |
-| **Eve** | `eve@outsider.com` | Unapproved User | **Blocked** with Access Restricted screen when Whitelist is ON; Allowed when Whitelist is OFF |
+1. **Server-Enforced Whitelist**: Client-supplied roles or identity claims are never trusted. All access is verified server-side against Firebase Auth and Firestore/SQLite whitelist records.
+2. **Initial Administrator**: `codingdevelopia@gmail.com` is bootstrapped securely on first startup as the primary system administrator and cannot be removed via API calls.
+3. **Structured Audit Logs**: Every administrative change (whitelist toggle, approval, revocation) creates an immutable audit log with actor ID, email, timestamp, and IP address.
+4. **Input Sanitization & Safe Rendering**: All messages are sanitized against XSS and rendered using React text primitives.

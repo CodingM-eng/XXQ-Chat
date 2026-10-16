@@ -2,27 +2,36 @@ import http from 'http';
 import { app } from './app.js';
 import { config } from './config.js';
 import { setupSocketServer } from './sockets/index.js';
-import { db } from './db/index.js';
+import { dataStore, initDb, closeDb } from './db/index.js';
 
 const server = http.createServer(app);
 
 // Attach Socket.IO
 setupSocketServer(server);
 
-server.listen(config.PORT, () => {
-  console.log(`[XXQ Chat Server] Listening on port ${config.PORT} (${config.NODE_ENV})`);
-  console.log(`[XXQ Chat Server] Initial Admin: ${config.INITIAL_ADMIN_EMAIL}`);
-  console.log(`[XXQ Chat Server] Whitelist Access Control: ${config.WHITELIST_MODE_DEFAULT ? 'ENABLED' : 'DISABLED'}`);
-});
+// Ensure database is initialized before accepting traffic
+initDb()
+  .then(() => {
+    server.listen(config.PORT, () => {
+      console.log(`[XXQ Chat Server] Listening on port ${config.PORT} (${config.NODE_ENV})`);
+      console.log(`[XXQ Chat Server] Storage Driver: ${dataStore.driverName}`);
+      console.log(`[XXQ Chat Server] Initial Admin: ${config.INITIAL_ADMIN_EMAIL}`);
+      console.log(`[XXQ Chat Server] Whitelist Access Control: ${config.WHITELIST_MODE_DEFAULT ? 'ENABLED' : 'DISABLED'}`);
+    });
+  })
+  .catch((err) => {
+    console.error('[XXQ Chat Server] Fatal DB initialization error:', err);
+    process.exit(1);
+  });
 
 // Graceful shutdown
 function gracefulShutdown(signal: string) {
   console.log(`[XXQ Chat Server] Received ${signal}. Shutting down gracefully...`);
-  server.close(() => {
+  server.close(async () => {
     console.log('[XXQ Chat Server] Closed HTTP and Socket connections.');
     try {
-      db.close();
-      console.log('[XXQ Chat Server] SQLite database connection closed.');
+      await closeDb();
+      console.log('[XXQ Chat Server] Database connection closed.');
     } catch (e) {
       console.error('[XXQ Chat Server] Error closing database:', e);
     }
