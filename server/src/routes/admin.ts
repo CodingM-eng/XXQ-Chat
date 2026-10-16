@@ -197,4 +197,69 @@ router.get('/users', async (req, res) => {
   res.json({ users });
 });
 
+// GET /api/admin/moderators
+router.get('/moderators', async (req, res) => {
+  const moderators = await dataStore.getModerators();
+  res.json({ moderators });
+});
+
+// POST /api/admin/moderators/:userId
+router.post('/moderators/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const adminUser = req.user!;
+
+  const targetUser = await dataStore.getUserById(userId);
+  if (!targetUser) {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  const updatedUser = await dataStore.setModerator(userId, true);
+
+  await dataStore.recordAuditLog({
+    actorId: adminUser.id,
+    actorEmail: adminUser.email,
+    action: 'MODERATOR_GRANTED',
+    target: targetUser.email,
+    details: `${targetUser.displayName || targetUser.email} kullanıcısına moderatör yetkisi verildi`,
+    ipAddress: req.ip,
+  });
+
+  res.json({
+    success: true,
+    user: updatedUser,
+    message: `${targetUser.displayName || targetUser.email} artık bir moderatör.`,
+  });
+});
+
+// DELETE /api/admin/moderators/:userId
+router.delete('/moderators/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const adminUser = req.user!;
+
+  const targetUser = await dataStore.getUserById(userId);
+  if (!targetUser) {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  const updatedUser = await dataStore.setModerator(userId, false);
+
+  await dataStore.recordAuditLog({
+    actorId: adminUser.id,
+    actorEmail: adminUser.email,
+    action: 'MODERATOR_REVOKED',
+    target: targetUser.email,
+    details: `${targetUser.displayName || targetUser.email} kullanıcısının moderatör yetkisi kaldırıldı`,
+    ipAddress: req.ip,
+  });
+
+  res.json({
+    success: true,
+    user: updatedUser,
+    message: `${targetUser.displayName || targetUser.email} kullanıcısının moderatör yetkisi kaldırıldı.`,
+  });
+});
+
 export const adminRouter = router;
+

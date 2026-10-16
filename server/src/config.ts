@@ -18,6 +18,11 @@ const envSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().optional(),
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
+  GOOGLE_DRIVE_CLIENT_ID: z.string().optional(),
+  GOOGLE_DRIVE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_DRIVE_REDIRECT_URI: z.string().optional(),
+  ENCRYPTION_KEY: z.string().optional(),
+  SERVER_BASE_URL: z.string().default('http://localhost:4000'),
 });
 
 const parsed = envSchema.safeParse(process.env);

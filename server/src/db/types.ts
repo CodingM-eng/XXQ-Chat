@@ -7,6 +7,7 @@ export interface DbUser {
   avatarUrl?: string | null;
   phoneNumber?: string | null; // private, never returned to other users
   isAdmin: boolean;
+  isModerator?: boolean;
   onboarded: boolean;
   status: 'active' | 'pending' | 'blocked';
   createdAt: string;
@@ -31,6 +32,7 @@ export interface DbWhitelistEntry {
   displayName?: string;
   avatarUrl?: string | null;
   isAdmin?: boolean;
+  isModerator?: boolean;
 }
 
 export interface DbAuditLog {
@@ -89,6 +91,20 @@ export interface DbMessageForward {
   senderName: string;
 }
 
+export interface DbAttachment {
+  id: string;
+  conversationId: string;
+  messageId?: string | null;
+  uploaderId: string;
+  driveAccountId: string;
+  driveAccountEmail?: string;
+  driveFileId: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  createdAt: string;
+}
+
 export interface DbMessage {
   id: string;
   conversationId: string;
@@ -99,9 +115,40 @@ export interface DbMessage {
   content: string;
   replyTo?: DbMessageReply | null;
   forwardedFrom?: DbMessageForward | null;
+  attachments?: DbAttachment[] | null;
   reactions?: Record<string, string[]>; // { "👍": ["userId1", "userId2"] }
   status: 'pending' | 'sent' | 'delivered' | 'read';
   createdAt: string;
+}
+
+export interface DbDriveAccount {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  encryptedRefreshToken: string;
+  folderId?: string | null;
+  spaceUsed?: number | null; // bytes
+  spaceTotal?: number | null; // bytes
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TelegramCommandConfig {
+  command: string; // e.g. 'yardim'
+  response: string; // text reply
+  description?: string;
+}
+
+export interface DbTelegramBot {
+  id: string;
+  botName: string;
+  username: string; // without leading @
+  encryptedToken: string;
+  webhookSecretToken: string;
+  isEnabled: boolean;
+  customCommands: TelegramCommandConfig[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DataStore {
@@ -138,6 +185,7 @@ export interface DataStore {
     avatarUrl?: string | null;
     phoneNumber?: string | null;
     isAdmin?: boolean;
+    isModerator?: boolean;
     onboarded?: boolean;
     status?: 'active' | 'pending' | 'blocked';
   }): Promise<DbUser>;
@@ -164,6 +212,10 @@ export interface DataStore {
   updateUserLastActive(id: string): Promise<void>;
   getAllUsers(): Promise<DbUser[]>;
   searchUsers(excludeUserId: string, query?: string): Promise<DbUser[]>;
+
+  // Moderators
+  setModerator(userId: string, isModerator: boolean): Promise<DbUser | null>;
+  getModerators(): Promise<DbUser[]>;
 
   // Audit Logs
   recordAuditLog(log: {
@@ -204,8 +256,30 @@ export interface DataStore {
     content: string;
     replyTo?: DbMessageReply | null;
     forwardedFrom?: DbMessageForward | null;
+    attachments?: DbAttachment[] | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
   }): Promise<DbMessage>;
   markConversationRead(conversationId: string, userId: string, messageId: string): Promise<void>;
   toggleMessageReaction(conversationId: string, messageId: string, userId: string, emoji: string): Promise<Record<string, string[]>>;
+  deleteMessage(conversationId: string, messageId: string): Promise<boolean>;
+
+  // Google Drive Storage Accounts & Attachments
+  addDriveAccount(account: Omit<DbDriveAccount, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbDriveAccount>;
+  getDriveAccounts(): Promise<DbDriveAccount[]>;
+  getDriveAccountById(id: string): Promise<DbDriveAccount | null>;
+  removeDriveAccount(id: string): Promise<boolean>;
+  updateDriveAccountFolder(id: string, folderId: string): Promise<void>;
+  updateDriveAccountQuota(id: string, spaceUsed: number, spaceTotal: number): Promise<void>;
+
+  saveAttachment(attachment: Omit<DbAttachment, 'id' | 'createdAt'> & { id?: string }): Promise<DbAttachment>;
+  getAttachmentById(id: string): Promise<DbAttachment | null>;
+  getAttachmentsForConversation(conversationId: string): Promise<DbAttachment[]>;
+  deleteAttachment(id: string): Promise<boolean>;
+
+  // Telegram Bots
+  addTelegramBot(bot: Omit<DbTelegramBot, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbTelegramBot>;
+  getTelegramBots(): Promise<DbTelegramBot[]>;
+  getTelegramBotById(id: string): Promise<DbTelegramBot | null>;
+  updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null>;
+  deleteTelegramBot(id: string): Promise<boolean>;
 }

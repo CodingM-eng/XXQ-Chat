@@ -239,9 +239,67 @@ cd android
 
 ---
 
-## 🔒 Security Architecture
+---
 
-1. **Server-Enforced Whitelist**: Client-supplied roles or identity claims are never trusted. All access is verified server-side against Firebase Auth and Firestore/SQLite whitelist records.
+## 🔒 Security Architecture & Access Control
+
+1. **Server-Enforced Whitelist (Fail-Closed)**: Client-supplied roles or identity claims are never trusted. All access is verified server-side against Firebase Auth and Firestore/SQLite whitelist records. Unapproved users are blocked before active user profiles are created.
 2. **Initial Administrator**: `codingdevelopia@gmail.com` is bootstrapped securely on first startup as the primary system administrator and cannot be removed via API calls.
-3. **Structured Audit Logs**: Every administrative change (whitelist toggle, approval, revocation) creates an immutable audit log with actor ID, email, timestamp, and IP address.
-4. **Input Sanitization & Safe Rendering**: All messages are sanitized against XSS and rendered using React text primitives.
+3. **Least-Privilege Google Drive Storage**:
+   - Scope is restricted to `https://www.googleapis.com/auth/drive.file`. The app can ONLY access and read files that it created itself; it has zero access to any other files or folders in the administrator's Google Drive.
+   - All OAuth refresh tokens are encrypted at rest using AES-256-GCM (`encryptSecret`).
+   - File downloads are proxied through authenticated server routes (`GET /api/conversations/:id/attachments/:attachmentId`) verifying conversation membership. No public links are generated.
+4. **Telegram Bot Integration & Webhook Security**:
+   - Bot tokens are verified with Telegram's `getMe` API and stored encrypted with AES-256-GCM.
+   - Webhooks are protected with `X-Telegram-Bot-Api-Secret-Token` verification.
+   - Built-in `/stat` command returns strictly safe aggregated metrics (total users, message count, server uptime) and explicitly forbids disclosing phone numbers, tokens, or chat logs.
+5. **Role-Based Access Control (RBAC)**:
+   - **Administrators**: Can toggle whitelist mode, manage whitelist entries, manage Google Drive connections, add/remove Telegram bots, and assign/revoke moderators.
+   - **Moderators**: Can moderate (delete) messages in conversations, but CANNOT toggle whitelist mode, manage Drive tokens, or manage Telegram bots.
+   - Actions generate structured, immutable audit logs (`USER_WHITELIST_APPROVED`, `USER_WHITELIST_REVOKED`, `MODERATOR_GRANTED`, `MODERATOR_REVOKED`, `DRIVE_ACCOUNT_CONNECTED`, `TELEGRAM_BOT_ADDED`, etc.).
+
+---
+
+## 🧪 Comprehensive Two-User & Multi-User Verification Guide
+
+To verify end-to-end functionality across authenticated accounts:
+
+### Test 1: Real-Time Messaging & Deduplication (User A & User B)
+1. Open two separate browser profiles (or an Incognito window).
+2. Log in as **User A** (e.g. `codingdevelopia@gmail.com` or any whitelisted user) and **User B** (another whitelisted user).
+3. Start a direct conversation between User A and User B.
+4. User A types a message and sends it.
+5. **Expected Result**:
+   - Message appears immediately on User A's screen (optimistic UI).
+   - Message appears on User B's screen in real time without refreshing.
+   - Delivery checkmark updates when delivered and read receipts update upon view.
+   - Sending duplicate `clientMessageId` returns deduplicated message without double-posting.
+
+### Test 2: Google Drive Attachment Upload & Streaming (User A, User B & Outsider C)
+1. As Admin, navigate to **Yönetim Paneli > Google Drive** and connect a Drive account via OAuth authorization code flow.
+2. Verify dedicated folder `XXQ Chat` is located/created.
+3. In a conversation between User A and User B, click the attachment paperclip icon.
+4. Select an image or document (< 25 MB).
+5. Send the message with attachment.
+6. **Expected Result**:
+   - User A and User B can view the thumbnail preview and download the file.
+   - Streaming endpoint `GET /api/conversations/:id/attachments/:attachmentId` verifies conversation membership.
+   - Outsider User C attempting to fetch the attachment URL receives `403 FORBIDDEN`.
+
+### Test 3: Moderator Role Assignment & Message Moderation
+1. As Admin in **Yönetim Paneli > Moderatörler**, assign User B as a Moderator.
+2. Audit log records `MODERATOR_GRANTED` targeting User B.
+3. In a shared group chat, User A sends a message.
+4. User B (as Moderator) hovers over User A's message and clicks the delete trash icon.
+5. **Expected Result**:
+   - Message is removed for all participants via real-time WebSocket broadcast (`message:deleted`).
+   - User B attempts to access `POST /api/admin/whitelist/toggle` and receives `403 FORBIDDEN` (moderators cannot alter whitelist).
+
+### Test 4: Telegram Bot Integration & Safe `/stat`
+1. As Admin in **Yönetim Paneli > Telegram Botları**, add a Telegram bot token created via `@BotFather`.
+2. Open Telegram and send `/start`, `/yardim`, and `/stat` to the bot.
+3. **Expected Result**:
+   - Bot responds in Turkish with safe aggregated system metrics.
+   - No private phone numbers, private keys, or chat contents are disclosed.
+   - Duplicate webhook requests are discarded idempotently.
+

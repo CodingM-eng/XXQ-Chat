@@ -8,6 +8,8 @@ import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { usersRouter } from './routes/users.js';
 import { conversationsRouter } from './routes/conversations.js';
+import { driveRouter } from './routes/drive.js';
+import { telegramRouter } from './routes/telegram.js';
 
 // Asynchronously initialize database
 initDb().catch((err) => {
@@ -102,6 +104,8 @@ app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/conversations', conversationsRouter);
+app.use('/api/drive', driveRouter);
+app.use('/api/telegram', telegramRouter);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

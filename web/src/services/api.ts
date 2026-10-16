@@ -7,6 +7,10 @@ import {
   AdminStats,
   WhitelistStatus,
   PendingRequest,
+  Attachment,
+  DriveAccount,
+  TelegramBot,
+  TelegramCommandConfig,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -178,12 +182,78 @@ class ApiService {
     content: string,
     clientMessageId?: string,
     replyToMessageId?: string,
-    forwardedFrom?: { senderName: string }
+    forwardedFrom?: { senderName: string },
+    attachments?: Attachment[]
   ): Promise<{ message: Message }> {
     return this.request(`/api/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, clientMessageId, replyToMessageId, forwardedFrom }),
+      body: JSON.stringify({ content, clientMessageId, replyToMessageId, forwardedFrom, attachments }),
     });
+  }
+
+  async deleteMessage(conversationId: string, messageId: string): Promise<{ success: boolean; messageId: string }> {
+    return this.request(`/api/conversations/${conversationId}/messages/${messageId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async uploadAttachment(conversationId: string, file: File): Promise<{ attachment: Attachment }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/attachments`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errorBody: any;
+      try {
+        errorBody = await response.json();
+      } catch {
+        errorBody = { message: 'Dosya yükleme başarısız oldu' };
+      }
+      throw new Error(errorBody.message || 'Dosya yüklenemedi.');
+    }
+
+    return response.json();
+  }
+
+  getAttachmentUrl(conversationId: string, attachmentId: string): string {
+    return `${API_BASE}/api/conversations/${conversationId}/attachments/${attachmentId}`;
+  }
+
+  async downloadAttachment(conversationId: string, attachmentId: string, fileName: string): Promise<void> {
+    const token = this.getToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/attachments/${attachmentId}`, {
+      headers,
+    });
+
+    if (!res.ok) {
+      throw new Error('Dosya indirilemedi.');
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
   }
 
   async toggleReaction(
@@ -194,6 +264,83 @@ class ApiService {
     return this.request(`/api/conversations/${conversationId}/messages/${messageId}/reactions`, {
       method: 'POST',
       body: JSON.stringify({ emoji }),
+    });
+  }
+
+  // Moderator endpoints
+  async getModerators(): Promise<{ moderators: User[] }> {
+    return this.request('/api/admin/moderators');
+  }
+
+  async addModerator(userId: string): Promise<{ success: boolean; user: User; message: string }> {
+    return this.request(`/api/admin/moderators/${userId}`, {
+      method: 'POST',
+    });
+  }
+
+  async removeModerator(userId: string): Promise<{ success: boolean; user: User; message: string }> {
+    return this.request(`/api/admin/moderators/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Google Drive endpoints
+  async getDriveAuthUrl(): Promise<{ authUrl: string }> {
+    return this.request('/api/drive/auth-url');
+  }
+
+  async connectDrive(code: string): Promise<{ success: boolean; account: DriveAccount; message: string }> {
+    return this.request('/api/drive/connect', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
+  async getDriveAccounts(): Promise<{ accounts: DriveAccount[] }> {
+    return this.request('/api/drive/accounts');
+  }
+
+  async removeDriveAccount(id: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/drive/accounts/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Telegram bot endpoints
+  async getTelegramBots(): Promise<{ bots: TelegramBot[] }> {
+    return this.request('/api/telegram/bots');
+  }
+
+  async addTelegramBot(
+    token: string,
+    customCommands?: TelegramCommandConfig[]
+  ): Promise<{ success: boolean; bot: TelegramBot; message: string }> {
+    return this.request('/api/telegram/bots', {
+      method: 'POST',
+      body: JSON.stringify({ token, customCommands }),
+    });
+  }
+
+  async toggleTelegramBot(id: string, isEnabled: boolean): Promise<{ success: boolean; isEnabled: boolean }> {
+    return this.request(`/api/telegram/bots/${id}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ isEnabled }),
+    });
+  }
+
+  async updateTelegramBotCommands(
+    id: string,
+    customCommands: TelegramCommandConfig[]
+  ): Promise<{ success: boolean; customCommands: TelegramCommandConfig[] }> {
+    return this.request(`/api/telegram/bots/${id}/commands`, {
+      method: 'PATCH',
+      body: JSON.stringify({ customCommands }),
+    });
+  }
+
+  async deleteTelegramBot(id: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/telegram/bots/${id}`, {
+      method: 'DELETE',
     });
   }
 

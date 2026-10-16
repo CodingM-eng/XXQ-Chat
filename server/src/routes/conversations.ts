@@ -5,7 +5,14 @@ import { enforceWhitelist } from '../middleware/whitelist.js';
 import { dataStore } from '../db/index.js';
 import { getSocketServer } from '../sockets/index.js';
 
+import multer from 'multer';
+import { GoogleDriveService } from '../services/drive.js';
+
 const router = Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB max limit
+});
 
 router.use(requireAuth, enforceWhitelist);
 
@@ -27,6 +34,7 @@ function formatMessage(m: any) {
     reply_to: m.replyTo || m.reply_to || null,
     forwardedFrom: m.forwardedFrom || m.forwarded_from || null,
     forwarded_from: m.forwardedFrom || m.forwarded_from || null,
+    attachments: m.attachments || null,
     reactions: m.reactions || {},
     status: m.status,
     createdAt: m.createdAt || m.created_at,
@@ -315,16 +323,129 @@ router.get('/:id/messages', async (req, res) => {
   });
 });
 
-// POST /api/conversations/:id/messages - send a message (supporting reply & forward)
-const sendMessageSchema = z.object({
-  content: z.string().min(1).max(5000),
-  clientMessageId: z.string().max(100).optional(),
-  replyToMessageId: z.string().optional(),
-  forwardedFrom: z.object({ senderName: z.string() }).optional(),
+// POST /api/conversations/:id/attachments - upload an attachment to connected Google Drive
+router.post('/:id/attachments', upload.single('file'), async (req, res) => {
+  const convId = req.params.id as string;
+  const user = req.user!;
+
+  const isParticipant = await dataStore.isConversationParticipant(convId, user.id);
+  if (!isParticipant) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu sohbete dosya yükleme yetkiniz yok.' });
+    return;
+  }
+
+  if (!req.file) {
+    res.status(400).json({ error: 'NO_FILE', message: 'Yüklenecek bir dosya seçilmedi.' });
+    return;
+  }
+
+  const accounts = await dataStore.getDriveAccounts();
+  if (!accounts || accounts.length === 0) {
+    res.status(400).json({
+      error: 'NO_DRIVE_ACCOUNT',
+      message: 'Dosya yüklemek için önce bir Google Drive hesabı bağlanmalıdır. Lütfen yönetici ile iletişime geçin.',
+    });
+    return;
+  }
+
+  // Use the primary or first active drive account
+  const driveAccount = accounts[0];
+
+  try {
+    const uploaded = await GoogleDriveService.uploadFile(driveAccount, {
+      buffer: req.file.buffer,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+    });
+
+    const attachment = await dataStore.saveAttachment({
+      conversationId: convId,
+      uploaderId: user.id,
+      driveAccountId: driveAccount.id,
+      driveAccountEmail: driveAccount.email,
+      driveFileId: uploaded.driveFileId,
+      fileName: req.file.originalname,
+      fileSize: uploaded.size,
+      mimeType: req.file.mimetype || 'application/octet-stream',
+    });
+
+    res.status(201).json({ attachment });
+  } catch (err: any) {
+    console.error('[ATTACHMENT UPLOAD ERROR]', err);
+    res.status(500).json({ error: 'UPLOAD_FAILED', message: err.message || 'Dosya yüklenirken bir hata oluştu.' });
+  }
 });
 
+// GET /api/conversations/:id/attachments/:attachmentId - stream file securely to conversation participant
+router.get('/:id/attachments/:attachmentId', async (req, res) => {
+  const convId = req.params.id as string;
+  const attachmentId = req.params.attachmentId as string;
+  const user = req.user!;
+
+  const isParticipant = await dataStore.isConversationParticipant(convId, user.id);
+  if (!isParticipant) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu dosyaya erişim yetkiniz yok.' });
+    return;
+  }
+
+  try {
+    const attachment = await dataStore.getAttachmentById(attachmentId);
+    if (!attachment || attachment.conversationId !== convId) {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'Ek dosya bulunamadı.' });
+      return;
+    }
+
+    const driveAccount = await dataStore.getDriveAccountById(attachment.driveAccountId);
+    if (!driveAccount) {
+      res.status(500).json({ error: 'DRIVE_ACCOUNT_MISSING', message: 'Bağlı Drive hesabı bulunamadı.' });
+      return;
+    }
+
+    const fileData = await GoogleDriveService.getFileStream(driveAccount, attachment.driveFileId);
+
+    res.setHeader('Content-Type', fileData.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileData.fileName)}`);
+    if (fileData.size) {
+      res.setHeader('Content-Length', fileData.size);
+    }
+
+    fileData.stream.pipe(res);
+  } catch (err: any) {
+    console.error('[ATTACHMENT STREAM ERROR]', err);
+    res.status(500).json({ error: 'STREAM_FAILED', message: 'Dosya indirilemedi.' });
+  }
+});
+
+// POST /api/conversations/:id/messages - send a message (supporting reply, forward & attachments)
+const sendMessageSchema = z
+  .object({
+    content: z.string().max(5000).default(''),
+    clientMessageId: z.string().max(100).optional(),
+    replyToMessageId: z.string().optional(),
+    forwardedFrom: z.object({ senderName: z.string() }).optional(),
+    attachments: z
+      .array(
+        z.object({
+          id: z.string(),
+          conversationId: z.string(),
+          uploaderId: z.string(),
+          driveAccountId: z.string(),
+          driveAccountEmail: z.string().optional(),
+          driveFileId: z.string(),
+          fileName: z.string(),
+          fileSize: z.number(),
+          mimeType: z.string(),
+          createdAt: z.string(),
+        })
+      )
+      .optional(),
+  })
+  .refine((data) => data.content.trim().length > 0 || (data.attachments && data.attachments.length > 0), {
+    message: 'Mesaj içeriği veya dosya eki zorunludur.',
+  });
+
 router.post('/:id/messages', async (req, res) => {
-  const convId = req.params.id;
+  const convId = req.params.id as string;
   const user = req.user!;
 
   const parseResult = sendMessageSchema.safeParse(req.body);
@@ -341,7 +462,7 @@ router.post('/:id/messages', async (req, res) => {
     return;
   }
 
-  const { content, clientMessageId, replyToMessageId, forwardedFrom } = parseResult.data;
+  const { content, clientMessageId, replyToMessageId, forwardedFrom, attachments } = parseResult.data;
 
   // Deduplication check
   if (clientMessageId) {
@@ -372,9 +493,10 @@ router.post('/:id/messages', async (req, res) => {
     senderName: user.displayName,
     senderAvatar: user.avatarUrl || null,
     clientMessageId: clientMessageId || null,
-    content,
+    content: content || '',
     replyTo,
     forwardedFrom: forwardedFrom || null,
+    attachments: attachments || null,
     status: 'sent',
   });
 
@@ -394,14 +516,59 @@ router.post('/:id/messages', async (req, res) => {
   res.status(201).json({ message: formatted });
 });
 
+// DELETE /api/conversations/:id/messages/:messageId - delete a message (Author, Admin, or Moderator)
+router.delete('/:id/messages/:messageId', async (req, res) => {
+  const convId = req.params.id as string;
+  const messageId = req.params.messageId as string;
+  const user = req.user!;
+
+  const isParticipant = await dataStore.isConversationParticipant(convId, user.id);
+  if (!isParticipant) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu sohbete erişim yetkiniz yok.' });
+    return;
+  }
+
+  const messages = await dataStore.getConversationMessages(convId, 100);
+  const targetMsg = messages.find((m) => m.id === messageId);
+
+  if (!targetMsg) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Mesaj bulunamadı.' });
+    return;
+  }
+
+  const isAuthor = targetMsg.senderId === user.id;
+  const isModeratorOrAdmin = user.isAdmin || user.isModerator;
+
+  if (!isAuthor && !isModeratorOrAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu mesajı silme yetkiniz yok.' });
+    return;
+  }
+
+  const deleted = await dataStore.deleteMessage(convId, messageId);
+
+  if (deleted) {
+    const io = getSocketServer();
+    if (io) {
+      const participantIds = await dataStore.getConversationParticipantIds(convId);
+      const targetRooms = [`conversation:${convId}`, ...participantIds.map((pId) => `user:${pId}`)];
+      io.to(targetRooms).emit('message:deleted', {
+        conversationId: convId,
+        messageId,
+      });
+    }
+  }
+
+  res.json({ success: true, messageId });
+});
+
 // POST /api/conversations/:id/messages/:messageId/reactions - toggle emoji reaction
 const reactionSchema = z.object({
   emoji: z.string().min(1).max(10),
 });
 
 router.post('/:id/messages/:messageId/reactions', async (req, res) => {
-  const convId = req.params.id;
-  const messageId = req.params.messageId;
+  const convId = req.params.id as string;
+  const messageId = req.params.messageId as string;
   const user = req.user!;
 
   const isParticipant = await dataStore.isConversationParticipant(convId, user.id);
@@ -434,3 +601,4 @@ router.post('/:id/messages/:messageId/reactions', async (req, res) => {
 });
 
 export const conversationsRouter = router;
+

@@ -155,14 +155,20 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             }
           }
 
-          const { conversationId, content, clientMessageId, replyTo, forwardedFrom } = data;
-          if (!conversationId || !content || typeof content !== 'string') {
+          const { conversationId, content, clientMessageId, replyTo, forwardedFrom, attachments } = data as any;
+          if (!conversationId) {
             if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
             return;
           }
 
-          const trimmedContent = content.trim();
-          if (!trimmedContent || trimmedContent.length > 5000) {
+          const trimmedContent = typeof content === 'string' ? content.trim() : '';
+          const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+          if (!trimmedContent && !hasAttachments) {
+            if (typeof callback === 'function') callback({ error: 'EMPTY_MESSAGE' });
+            return;
+          }
+
+          if (trimmedContent.length > 5000) {
             if (typeof callback === 'function') callback({ error: 'INVALID_LENGTH' });
             return;
           }
@@ -192,6 +198,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             content: trimmedContent,
             replyTo: replyTo || null,
             forwardedFrom: forwardedFrom || null,
+            attachments: attachments || null,
             status: 'sent',
           });
 
@@ -216,6 +223,47 @@ export function setupSocketServer(httpServer: HttpServer): Server {
         }
       }
     );
+
+    // Handle message deletion (Author, Admin, or Moderator)
+    socket.on('message:delete', async (data: { conversationId: string; messageId: string }, callback) => {
+      try {
+        const { conversationId, messageId } = data;
+        if (!conversationId || !messageId) {
+          if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
+          return;
+        }
+
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+        if (!isParticipant) {
+          if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
+          return;
+        }
+
+        const messages = await dataStore.getConversationMessages(conversationId, 100);
+        const targetMsg = messages.find((m) => m.id === messageId);
+        if (!targetMsg) {
+          if (typeof callback === 'function') callback({ error: 'NOT_FOUND' });
+          return;
+        }
+
+        const isAuthor = targetMsg.senderId === user.id;
+        const isModOrAdmin = user.isAdmin || user.isModerator;
+        if (!isAuthor && !isModOrAdmin) {
+          if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
+          return;
+        }
+
+        await dataStore.deleteMessage(conversationId, messageId);
+
+        const participantIds = await dataStore.getConversationParticipantIds(conversationId);
+        const targetRooms = [`conversation:${conversationId}`, ...participantIds.map((pId) => `user:${pId}`)];
+        io.to(targetRooms).emit('message:deleted', { conversationId, messageId });
+
+        if (typeof callback === 'function') callback({ success: true, messageId });
+      } catch (err: any) {
+        if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+      }
+    });
 
     // Handle emoji reaction
     socket.on('message:reaction', async (data: { conversationId: string; messageId: string; emoji: string }, callback) => {

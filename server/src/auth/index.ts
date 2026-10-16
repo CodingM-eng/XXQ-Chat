@@ -13,6 +13,7 @@ export interface AuthUser {
   displayName: string;
   avatarUrl?: string;
   isAdmin: boolean;
+  isModerator?: boolean;
   onboarded: boolean;
   status: 'active' | 'pending' | 'blocked';
 }
@@ -141,12 +142,14 @@ export async function authorizeUser(user: {
   }
 
   // Account is authorized (whitelist is OFF, or user is whitelisted / admin):
+  const isModerator = existingUser?.isModerator || false;
   const dbUser = await dataStore.upsertUser({
     id: existingUser?.id || user.id,
     email: normalizedEmail,
     displayName: existingUser?.displayName || user.displayName,
     avatarUrl: user.avatarUrl || existingUser?.avatarUrl || null,
     isAdmin,
+    isModerator,
     onboarded: existingUser ? existingUser.onboarded : (isAdmin ? true : false),
     status: 'active',
   });
@@ -159,6 +162,7 @@ export async function authorizeUser(user: {
     displayName: dbUser.displayName,
     avatarUrl: dbUser.avatarUrl || undefined,
     isAdmin: dbUser.isAdmin,
+    isModerator: dbUser.isModerator,
     onboarded: dbUser.onboarded,
     status: dbUser.status,
   };
@@ -240,3 +244,19 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 
   next();
 }
+
+// Admin or Moderator middleware
+export function requireModerator(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Giriş yapmanız gerekmektedir.' });
+    return;
+  }
+
+  if (!req.user.isAdmin && !req.user.isModerator) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Bu işlem için moderatör veya yönetici yetkisi gereklidir.' });
+    return;
+  }
+
+  next();
+}
+

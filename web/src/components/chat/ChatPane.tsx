@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Conversation, Message, User } from '../../types';
+import { Conversation, Message, User, Attachment } from '../../types';
+import { api } from '../../services/api';
 import { getSocket } from '../../services/socket';
 import { EmojiPicker, QuickReactionsBar } from './EmojiPicker';
 import { ForwardModal } from './ForwardModal';
@@ -15,10 +16,12 @@ import {
   Forward,
   X,
   Users,
-  User as UserIcon,
   Shield,
-  UserPlus,
-  Settings,
+  Trash2,
+  FileText,
+  Download,
+  Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface ChatPaneProps {
@@ -30,8 +33,10 @@ interface ChatPaneProps {
     content: string,
     clientMessageId?: string,
     replyToMessageId?: string,
-    forwardedFrom?: { senderName: string }
+    forwardedFrom?: { senderName: string },
+    attachments?: Attachment[]
   ) => Promise<void>;
+  onDeleteMessage?: (messageId: string) => Promise<void>;
   onToggleReaction: (messageId: string, emoji: string) => Promise<void>;
   onBackMobile: () => void;
   typingUser: string | null;
@@ -44,6 +49,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   currentUser,
   conversations,
   onSendMessage,
+  onDeleteMessage,
   onToggleReaction,
   onBackMobile,
   typingUser,
@@ -55,6 +61,12 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [showGroupMembersModal, setShowGroupMembersModal] = useState(false);
+
+  // File upload state
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<any>(null);
@@ -79,19 +91,50 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
     }
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    // 25 MB max size check
+    if (file.size > 25 * 1024 * 1024) {
+      setUploadError('Dosya boyutu 25 MB limitini aşamaz.');
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadError(null);
+      const res = await api.uploadAttachment(conversation.id, file);
+      setPendingAttachments((prev) => [...prev, res.attachment]);
+    } catch (err: any) {
+      setUploadError(err.message || 'Dosya yükleme başarısız oldu.');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const removePendingAttachment = (id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
   const handleSend = async () => {
     const trimmed = inputText.trim();
-    if (!trimmed || sending) return;
+    const hasAttachments = pendingAttachments.length > 0;
+    if ((!trimmed && !hasAttachments) || sending) return;
 
     try {
       setSending(true);
       setInputText('');
+      const attachmentsToSend = [...pendingAttachments];
+      setPendingAttachments([]);
 
       const clientMsgId = 'client_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
       const replyId = replyTarget?.id;
       setReplyTarget(null);
 
-      await onSendMessage(trimmed, clientMsgId, replyId);
+      await onSendMessage(trimmed, clientMsgId, replyId, undefined, attachmentsToSend);
 
       const socket = getSocket();
       if (socket) {
@@ -116,10 +159,26 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
     return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   };
 
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
   const isGroup = conversation.type === 'group';
 
   return (
     <main className="flex-1 flex flex-col h-full bg-[#0c0a13] relative overflow-hidden">
+      {/* Hidden file input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
       {/* Chat Header */}
       <div className="h-16 border-b border-[#26203b] bg-[#151221]/90 backdrop-blur-md px-4 flex items-center justify-between shrink-0 select-none z-10">
         <div className="flex items-center gap-3 min-w-0">
@@ -188,6 +247,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         {messages.map((msg, idx) => {
           const isMe = msg.senderId === currentUser?.id;
           const isHovered = hoveredMessageId === msg.id;
+          const canDelete = isMe || currentUser?.isAdmin || currentUser?.isModerator;
 
           return (
             <div
@@ -222,6 +282,16 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                     >
                       <Forward className="w-3.5 h-3.5" />
                     </button>
+                    {canDelete && onDeleteMessage && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteMessage(msg.id)}
+                        className="p-1 hover:bg-rose-950/80 rounded-full text-slate-400 hover:text-rose-400 transition-colors"
+                        title="Mesajı Sil"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -258,8 +328,60 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                     </div>
                   )}
 
+                  {/* Attachments Section */}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="space-y-2 mb-2">
+                      {msg.attachments.map((att) => {
+                        const isImg = att.mimeType?.startsWith('image/');
+                        return (
+                          <div key={att.id} className="rounded-xl overflow-hidden bg-black/20 border border-white/10">
+                            {isImg ? (
+                              <div className="relative group/att">
+                                <img
+                                  src={api.getAttachmentUrl(conversation.id, att.id)}
+                                  alt={att.fileName}
+                                  loading="lazy"
+                                  className="max-h-60 w-auto rounded-lg object-contain cursor-pointer"
+                                  onClick={() => window.open(api.getAttachmentUrl(conversation.id, att.id), '_blank')}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
+                                  className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 text-white rounded-lg opacity-0 group-hover/att:opacity-100 transition-opacity"
+                                  title="Görseli İndir"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="p-2.5 flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-8 h-8 rounded-lg bg-purple-950 flex items-center justify-center text-purple-300 shrink-0">
+                                    <FileText className="w-4 h-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold truncate text-white">{att.fileName}</p>
+                                    <p className="text-[10px] text-slate-300">{formatBytes(att.fileSize)}</p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
+                                  className="p-1.5 hover:bg-white/10 rounded-lg text-slate-200 hover:text-white transition-colors"
+                                  title="Dosyayı İndir"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {/* Message Content */}
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  {msg.content && <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>}
 
                   {/* Timestamp & Status */}
                   <div
@@ -348,6 +470,36 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         </div>
       )}
 
+      {/* Upload Error Banner */}
+      {uploadError && (
+        <div className="px-4 py-2 bg-rose-950/80 border-t border-rose-800 flex items-center justify-between text-xs text-rose-200">
+          <span>{uploadError}</span>
+          <button type="button" onClick={() => setUploadError(null)}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Pending Attachments Strip */}
+      {pendingAttachments.length > 0 && (
+        <div className="px-4 py-2 bg-[#141021] border-t border-[#26203b] flex items-center gap-2 overflow-x-auto">
+          {pendingAttachments.map((att) => (
+            <div key={att.id} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#1f1833] border border-purple-800/40 text-xs text-white">
+              <Paperclip className="w-3.5 h-3.5 text-purple-400" />
+              <span className="max-w-[150px] truncate">{att.fileName}</span>
+              <span className="text-[10px] text-slate-400 font-mono">({formatBytes(att.fileSize)})</span>
+              <button
+                type="button"
+                onClick={() => removePendingAttachment(att.id)}
+                className="hover:text-rose-400 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Message Input Bar */}
       <div className="p-3 border-t border-[#26203b] bg-[#151221]/95 backdrop-blur-md shrink-0 relative">
         {/* Emoji Picker Popover */}
@@ -361,6 +513,17 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         )}
 
         <div className="max-w-4xl mx-auto flex items-end gap-2 bg-[#1b172a] border border-[#2b2444] rounded-2xl p-2 focus-within:ring-2 focus-within:ring-purple-500 focus-within:border-transparent transition-all">
+          {/* File Attachment Button */}
+          <button
+            type="button"
+            disabled={isUploading}
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2 text-slate-400 hover:text-slate-200 hover:bg-[#26203b] rounded-xl transition-colors shrink-0"
+            title="Dosya veya Görsel Ekle (Google Drive)"
+          >
+            {isUploading ? <Loader2 className="w-5 h-5 animate-spin text-purple-400" /> : <Paperclip className="w-5 h-5" />}
+          </button>
+
           <textarea
             value={inputText}
             onChange={handleInputChange}
@@ -384,9 +547,9 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           <button
             type="button"
             onClick={handleSend}
-            disabled={!inputText.trim() || sending}
+            disabled={(!inputText.trim() && pendingAttachments.length === 0) || sending || isUploading}
             className={`p-2.5 rounded-xl transition-all shadow-md shrink-0 ${
-              inputText.trim() && !sending
+              (inputText.trim() || pendingAttachments.length > 0) && !sending && !isUploading
                 ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30 active:scale-95'
                 : 'bg-slate-800 text-slate-600 cursor-not-allowed'
             }`}

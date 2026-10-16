@@ -7,6 +7,7 @@ export interface User {
   avatarUrl?: string | null;
   phoneNumber?: string | null;
   isAdmin: boolean;
+  isModerator?: boolean;
   onboarded?: boolean;
   status?: 'active' | 'pending' | 'blocked';
   createdAt?: string;
@@ -30,6 +31,20 @@ export interface MessageForward {
   senderName: string;
 }
 
+export interface Attachment {
+  id: string;
+  conversationId: string;
+  messageId?: string | null;
+  uploaderId: string;
+  driveAccountId: string;
+  driveAccountEmail?: string;
+  driveFileId: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  createdAt: string;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -40,6 +55,7 @@ export interface Message {
   content: string;
   replyTo?: MessageReply | null;
   forwardedFrom?: MessageForward | null;
+  attachments?: Attachment[] | null;
   reactions?: Record<string, string[]>; // { "👍": ["userId1", "userId2"] }
   status: 'pending' | 'sent' | 'delivered' | 'read';
   createdAt: string;
@@ -99,6 +115,9 @@ export interface WhitelistItem {
   display_name?: string | null;
   avatar_url?: string | null;
   is_admin?: number;
+  is_moderator?: number;
+  isAdmin?: boolean;
+  isModerator?: boolean;
 }
 
 export interface AuditLog {
@@ -118,3 +137,31 @@ export interface AdminStats {
   adminCount: number;
   totalMessages: number;
 }
+
+export interface DriveAccount {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  folderId?: string | null;
+  spaceUsed?: number | null;
+  spaceTotal?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TelegramCommandConfig {
+  command: string;
+  response: string;
+  description?: string;
+}
+
+export interface TelegramBot {
+  id: string;
+  botName: string;
+  username: string;
+  isEnabled: boolean;
+  customCommands: TelegramCommandConfig[];
+  createdAt: string;
+  updatedAt: string;
+}
+

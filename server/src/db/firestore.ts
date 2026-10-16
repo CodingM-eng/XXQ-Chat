@@ -11,6 +11,10 @@ import {
   DbPendingAccessRequest,
   DbMessageReply,
   DbMessageForward,
+  DbDriveAccount,
+  DbAttachment,
+  DbTelegramBot,
+  TelegramCommandConfig,
 } from './types.js';
 
 export class FirestoreStore implements DataStore {
@@ -216,6 +220,7 @@ export class FirestoreStore implements DataStore {
         displayName: user?.displayName || user?.display_name,
         avatarUrl: user?.avatarUrl || user?.avatar_url || null,
         isAdmin: user?.isAdmin || user?.is_admin === 1,
+        isModerator: user?.isModerator === true,
       });
     });
 
@@ -317,6 +322,7 @@ export class FirestoreStore implements DataStore {
       avatarUrl: d.avatarUrl || d.avatar_url || null,
       phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin: d.isAdmin === true || d.is_admin === 1,
+      isModerator: d.isModerator === true || d.is_moderator === 1,
       onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
       status: d.status || 'active',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -339,6 +345,7 @@ export class FirestoreStore implements DataStore {
       avatarUrl: d.avatarUrl || d.avatar_url || null,
       phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin: d.isAdmin === true || d.is_admin === 1,
+      isModerator: d.isModerator === true || d.is_moderator === 1,
       onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
       status: d.status || 'active',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -355,6 +362,7 @@ export class FirestoreStore implements DataStore {
     avatarUrl?: string | null;
     phoneNumber?: string | null;
     isAdmin?: boolean;
+    isModerator?: boolean;
     onboarded?: boolean;
     status?: 'active' | 'pending' | 'blocked';
   }): Promise<DbUser> {
@@ -366,10 +374,12 @@ export class FirestoreStore implements DataStore {
 
     if (existing) {
       const isAdmin = existing.isAdmin || isInitialAdmin || !!user.isAdmin;
+      const isModerator = user.isModerator !== undefined ? user.isModerator : (existing.isModerator || false);
       const effectiveId = existing.id;
       const updates: any = {
         lastActiveAt: now,
         isAdmin,
+        isModerator,
       };
       if (user.avatarUrl && user.avatarUrl !== existing.avatarUrl) updates.avatarUrl = user.avatarUrl;
       if (user.displayName && user.displayName !== existing.displayName) updates.displayName = user.displayName;
@@ -383,6 +393,7 @@ export class FirestoreStore implements DataStore {
       return (await this.getUserById(effectiveId))!;
     } else {
       const isAdmin = isInitialAdmin || !!user.isAdmin;
+      const isModerator = !!user.isModerator;
       const onboarded = user.onboarded !== undefined ? user.onboarded : isAdmin;
       const status = user.status || 'active';
 
@@ -395,6 +406,7 @@ export class FirestoreStore implements DataStore {
         avatarUrl: user.avatarUrl || null,
         phoneNumber: user.phoneNumber || null,
         isAdmin,
+        isModerator,
         onboarded,
         status,
         createdAt: now,
@@ -488,6 +500,7 @@ export class FirestoreStore implements DataStore {
           displayName: d.displayName || d.display_name,
           avatarUrl: d.avatarUrl || d.avatar_url || null,
           isAdmin: d.isAdmin === true || d.is_admin === 1,
+          isModerator: d.isModerator === true || d.is_moderator === 1,
           onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
           status: 'active',
           createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -823,6 +836,7 @@ export class FirestoreStore implements DataStore {
         content: d.content,
         replyTo: d.replyTo || null,
         forwardedFrom: d.forwardedFrom || null,
+        attachments: d.attachments || null,
         reactions: d.reactions || {},
         status: d.status || 'sent',
         createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -853,6 +867,7 @@ export class FirestoreStore implements DataStore {
       content: d.content,
       replyTo: d.replyTo || null,
       forwardedFrom: d.forwardedFrom || null,
+      attachments: d.attachments || null,
       reactions: d.reactions || {},
       status: d.status || 'sent',
       createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -869,6 +884,7 @@ export class FirestoreStore implements DataStore {
     content: string;
     replyTo?: DbMessageReply | null;
     forwardedFrom?: DbMessageForward | null;
+    attachments?: DbAttachment[] | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
   }): Promise<DbMessage> {
     const msgId = message.id || 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
@@ -885,6 +901,7 @@ export class FirestoreStore implements DataStore {
       content: message.content,
       replyTo: message.replyTo || null,
       forwardedFrom: message.forwardedFrom || null,
+      attachments: message.attachments || null,
       reactions: {},
       status,
       createdAt: now,
@@ -892,6 +909,16 @@ export class FirestoreStore implements DataStore {
 
     const convRef = this.getFirestore().collection('conversations').doc(message.conversationId);
     await convRef.collection('messages').doc(msgId).set(msgData);
+
+    // If attachments were included, associate them with this message in attachments collection
+    if (message.attachments && message.attachments.length > 0) {
+      for (const att of message.attachments) {
+        await this.getFirestore().collection('attachments').doc(att.id).set(
+          { messageId: msgId },
+          { merge: true }
+        );
+      }
+    }
 
     // Update conversation metadata
     const convDoc = await convRef.get();
@@ -956,5 +983,281 @@ export class FirestoreStore implements DataStore {
 
     await msgRef.update({ reactions });
     return reactions;
+  }
+
+  async deleteMessage(conversationId: string, messageId: string): Promise<boolean> {
+    const msgRef = this.getFirestore()
+      .collection('conversations')
+      .doc(conversationId)
+      .collection('messages')
+      .doc(messageId);
+    const doc = await msgRef.get();
+    if (!doc.exists) return false;
+    await msgRef.delete();
+    return true;
+  }
+
+  // Moderators
+  async setModerator(userId: string, isModerator: boolean): Promise<DbUser | null> {
+    const userRef = this.getFirestore().collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) return null;
+
+    await userRef.set({ isModerator }, { merge: true });
+    const user = await this.getUserById(userId);
+
+    if (user) {
+      const email = user.email.toLowerCase().trim();
+      const wlRef = this.getFirestore().collection('whitelist').doc(email);
+      const wlDoc = await wlRef.get();
+      if (wlDoc.exists) {
+        await wlRef.set({ isModerator }, { merge: true });
+      }
+    }
+    return user;
+  }
+
+  async getModerators(): Promise<DbUser[]> {
+    const all = await this.getAllUsers();
+    return all.filter((u) => u.isAdmin || u.isModerator);
+  }
+
+  // Google Drive Accounts
+  async addDriveAccount(account: Omit<DbDriveAccount, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbDriveAccount> {
+    const id = account.id || 'drive_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+    const email = account.email.toLowerCase().trim();
+
+    const data: DbDriveAccount = {
+      id,
+      email,
+      displayName: account.displayName || null,
+      encryptedRefreshToken: account.encryptedRefreshToken,
+      folderId: account.folderId || null,
+      spaceUsed: account.spaceUsed || 0,
+      spaceTotal: account.spaceTotal || 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.getFirestore().collection('drive_accounts').doc(id).set(data);
+    return data;
+  }
+
+  async getDriveAccounts(): Promise<DbDriveAccount[]> {
+    const snap = await this.getFirestore().collection('drive_accounts').get();
+    const accounts: DbDriveAccount[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data();
+      accounts.push({
+        id: d.id || doc.id,
+        email: d.email,
+        displayName: d.displayName || null,
+        encryptedRefreshToken: d.encryptedRefreshToken,
+        folderId: d.folderId || null,
+        spaceUsed: d.spaceUsed || 0,
+        spaceTotal: d.spaceTotal || 0,
+        createdAt: d.createdAt || new Date().toISOString(),
+        updatedAt: d.updatedAt || new Date().toISOString(),
+      });
+    });
+    return accounts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getDriveAccountById(id: string): Promise<DbDriveAccount | null> {
+    const doc = await this.getFirestore().collection('drive_accounts').doc(id).get();
+    if (!doc.exists) return null;
+    const d = doc.data()!;
+    return {
+      id: d.id || doc.id,
+      email: d.email,
+      displayName: d.displayName || null,
+      encryptedRefreshToken: d.encryptedRefreshToken,
+      folderId: d.folderId || null,
+      spaceUsed: d.spaceUsed || 0,
+      spaceTotal: d.spaceTotal || 0,
+      createdAt: d.createdAt || new Date().toISOString(),
+      updatedAt: d.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  async removeDriveAccount(id: string): Promise<boolean> {
+    const ref = this.getFirestore().collection('drive_accounts').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return false;
+    await ref.delete();
+    return true;
+  }
+
+  async updateDriveAccountFolder(id: string, folderId: string): Promise<void> {
+    await this.getFirestore().collection('drive_accounts').doc(id).set(
+      { folderId, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  }
+
+  async updateDriveAccountQuota(id: string, spaceUsed: number, spaceTotal: number): Promise<void> {
+    await this.getFirestore().collection('drive_accounts').doc(id).set(
+      { spaceUsed, spaceTotal, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  }
+
+  // Attachments
+  async saveAttachment(attachment: Omit<DbAttachment, 'id' | 'createdAt'> & { id?: string }): Promise<DbAttachment> {
+    const id = attachment.id || 'att_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+    const now = new Date().toISOString();
+
+    const data: DbAttachment = {
+      id,
+      conversationId: attachment.conversationId,
+      messageId: attachment.messageId || null,
+      uploaderId: attachment.uploaderId,
+      driveAccountId: attachment.driveAccountId,
+      driveAccountEmail: attachment.driveAccountEmail,
+      driveFileId: attachment.driveFileId,
+      fileName: attachment.fileName,
+      fileSize: attachment.fileSize,
+      mimeType: attachment.mimeType,
+      createdAt: now,
+    };
+
+    await this.getFirestore().collection('attachments').doc(id).set(data);
+    return data;
+  }
+
+  async getAttachmentById(id: string): Promise<DbAttachment | null> {
+    const doc = await this.getFirestore().collection('attachments').doc(id).get();
+    if (!doc.exists) return null;
+    const d = doc.data()!;
+    return {
+      id: d.id || doc.id,
+      conversationId: d.conversationId,
+      messageId: d.messageId || null,
+      uploaderId: d.uploaderId,
+      driveAccountId: d.driveAccountId,
+      driveAccountEmail: d.driveAccountEmail,
+      driveFileId: d.driveFileId,
+      fileName: d.fileName,
+      fileSize: d.fileSize,
+      mimeType: d.mimeType,
+      createdAt: d.createdAt || new Date().toISOString(),
+    };
+  }
+
+  async getAttachmentsForConversation(conversationId: string): Promise<DbAttachment[]> {
+    const snap = await this.getFirestore()
+      .collection('attachments')
+      .where('conversationId', '==', conversationId)
+      .get();
+
+    const list: DbAttachment[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data();
+      list.push({
+        id: d.id || doc.id,
+        conversationId: d.conversationId,
+        messageId: d.messageId || null,
+        uploaderId: d.uploaderId,
+        driveAccountId: d.driveAccountId,
+        driveAccountEmail: d.driveAccountEmail,
+        driveFileId: d.driveFileId,
+        fileName: d.fileName,
+        fileSize: d.fileSize,
+        mimeType: d.mimeType,
+        createdAt: d.createdAt || new Date().toISOString(),
+      });
+    });
+
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    const ref = this.getFirestore().collection('attachments').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return false;
+    await ref.delete();
+    return true;
+  }
+
+  // Telegram Bots
+  async addTelegramBot(bot: Omit<DbTelegramBot, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbTelegramBot> {
+    const id = bot.id || 'bot_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    const data: DbTelegramBot = {
+      id,
+      botName: bot.botName,
+      username: bot.username.replace(/^@/, ''),
+      encryptedToken: bot.encryptedToken,
+      webhookSecretToken: bot.webhookSecretToken,
+      isEnabled: bot.isEnabled,
+      customCommands: bot.customCommands || [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.getFirestore().collection('telegram_bots').doc(id).set(data);
+    return data;
+  }
+
+  async getTelegramBots(): Promise<DbTelegramBot[]> {
+    const snap = await this.getFirestore().collection('telegram_bots').get();
+    const list: DbTelegramBot[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data();
+      list.push({
+        id: d.id || doc.id,
+        botName: d.botName,
+        username: d.username,
+        encryptedToken: d.encryptedToken,
+        webhookSecretToken: d.webhookSecretToken,
+        isEnabled: d.isEnabled !== false,
+        customCommands: d.customCommands || [],
+        createdAt: d.createdAt || new Date().toISOString(),
+        updatedAt: d.updatedAt || new Date().toISOString(),
+      });
+    });
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getTelegramBotById(id: string): Promise<DbTelegramBot | null> {
+    const doc = await this.getFirestore().collection('telegram_bots').doc(id).get();
+    if (!doc.exists) return null;
+    const d = doc.data()!;
+    return {
+      id: d.id || doc.id,
+      botName: d.botName,
+      username: d.username,
+      encryptedToken: d.encryptedToken,
+      webhookSecretToken: d.webhookSecretToken,
+      isEnabled: d.isEnabled !== false,
+      customCommands: d.customCommands || [],
+      createdAt: d.createdAt || new Date().toISOString(),
+      updatedAt: d.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  async updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null> {
+    const ref = this.getFirestore().collection('telegram_bots').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return null;
+
+    const toUpdate: any = { updatedAt: new Date().toISOString() };
+    if (updates.isEnabled !== undefined) toUpdate.isEnabled = updates.isEnabled;
+    if (updates.customCommands !== undefined) toUpdate.customCommands = updates.customCommands;
+    if (updates.encryptedToken !== undefined) toUpdate.encryptedToken = updates.encryptedToken;
+    if (updates.webhookSecretToken !== undefined) toUpdate.webhookSecretToken = updates.webhookSecretToken;
+
+    await ref.set(toUpdate, { merge: true });
+    return this.getTelegramBotById(id);
+  }
+
+  async deleteTelegramBot(id: string): Promise<boolean> {
+    const ref = this.getFirestore().collection('telegram_bots').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return false;
+    await ref.delete();
+    return true;
   }
 }

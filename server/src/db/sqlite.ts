@@ -12,6 +12,10 @@ import {
   DbPendingAccessRequest,
   DbMessageReply,
   DbMessageForward,
+  DbDriveAccount,
+  DbAttachment,
+  DbTelegramBot,
+  TelegramCommandConfig,
 } from './types.js';
 
 export class SqliteStore implements DataStore {
@@ -131,24 +135,68 @@ export class SqliteStore implements DataStore {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS drive_accounts (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        display_name TEXT,
+        encrypted_refresh_token TEXT NOT NULL,
+        folder_id TEXT,
+        space_used INTEGER DEFAULT 0,
+        space_total INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        message_id TEXT,
+        uploader_id TEXT NOT NULL,
+        drive_account_id TEXT NOT NULL,
+        drive_account_email TEXT,
+        drive_file_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        mime_type TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        FOREIGN KEY (uploader_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS telegram_bots (
+        id TEXT PRIMARY KEY,
+        bot_name TEXT NOT NULL,
+        username TEXT NOT NULL,
+        encrypted_token TEXT NOT NULL,
+        webhook_secret_token TEXT NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        custom_commands_json TEXT NOT NULL DEFAULT '[]',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(client_message_id);
       CREATE INDEX IF NOT EXISTS idx_participants_user ON conversation_participants(user_id);
       CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
       CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id, created_at DESC);
     `);
 
     // Safe schema migrations for existing SQLite databases
     try { sqlite.exec('ALTER TABLE users ADD COLUMN first_name TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE users ADD COLUMN last_name TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE users ADD COLUMN phone_number TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE users ADD COLUMN is_moderator INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE users ADD COLUMN onboarded INTEGER DEFAULT 1;'); } catch (_) {}
     try { sqlite.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active';"); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE whitelist ADD COLUMN is_moderator INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN avatar_url TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN creator_id TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversation_participants ADD COLUMN is_admin INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN reply_to TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN forwarded_from TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE messages ADD COLUMN attachments TEXT;'); } catch (_) {}
 
     // Whitelist mode setting initialization
     const existingSetting = sqlite
@@ -279,7 +327,7 @@ export class SqliteStore implements DataStore {
   async getWhitelist(): Promise<DbWhitelistEntry[]> {
     const items = this.getSqlite()
       .prepare(`
-        SELECT w.email, w.approved_by, w.created_at, u.display_name, u.avatar_url, u.is_admin
+        SELECT w.email, w.approved_by, w.created_at, u.display_name, u.avatar_url, u.is_admin, u.is_moderator
         FROM whitelist w
         LEFT JOIN users u ON LOWER(u.email) = LOWER(w.email)
         ORDER BY w.created_at DESC
@@ -293,6 +341,7 @@ export class SqliteStore implements DataStore {
       displayName: row.display_name || undefined,
       avatarUrl: row.avatar_url || null,
       isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
     }));
   }
 
@@ -378,7 +427,7 @@ export class SqliteStore implements DataStore {
   // Users
   async getUserById(id: string): Promise<DbUser | null> {
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, onboarded, status, created_at, last_active_at FROM users WHERE id = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE id = ?')
       .get(id) as any;
     if (!row) return null;
 
@@ -391,6 +440,7 @@ export class SqliteStore implements DataStore {
       avatarUrl: row.avatar_url || null,
       phoneNumber: row.phone_number || null,
       isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
       onboarded: row.onboarded === 1,
       status: row.status || 'active',
       createdAt: row.created_at,
@@ -401,7 +451,7 @@ export class SqliteStore implements DataStore {
   async getUserByEmail(email: string): Promise<DbUser | null> {
     const normalized = email.toLowerCase().trim();
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, onboarded, status, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
       .get(normalized) as any;
     if (!row) return null;
 
@@ -414,6 +464,7 @@ export class SqliteStore implements DataStore {
       avatarUrl: row.avatar_url || null,
       phoneNumber: row.phone_number || null,
       isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
       onboarded: row.onboarded === 1,
       status: row.status || 'active',
       createdAt: row.created_at,
@@ -430,6 +481,7 @@ export class SqliteStore implements DataStore {
     avatarUrl?: string | null;
     phoneNumber?: string | null;
     isAdmin?: boolean;
+    isModerator?: boolean;
     onboarded?: boolean;
     status?: 'active' | 'pending' | 'blocked';
   }): Promise<DbUser> {
@@ -437,7 +489,7 @@ export class SqliteStore implements DataStore {
     const isInitialAdmin = email === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim();
 
     const existing = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, onboarded, status, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
       .get(email) as any;
 
     if (existing) {
@@ -470,6 +522,10 @@ export class SqliteStore implements DataStore {
         updates.push('onboarded = ?');
         params.push(user.onboarded ? 1 : 0);
       }
+      if (user.isModerator !== undefined) {
+        updates.push('is_moderator = ?');
+        params.push(user.isModerator ? 1 : 0);
+      }
       if (user.status !== undefined) {
         updates.push('status = ?');
         params.push(user.status);
@@ -485,13 +541,14 @@ export class SqliteStore implements DataStore {
       return (await this.getUserById(effectiveId))!;
     } else {
       const isAdmin = isInitialAdmin || !!user.isAdmin;
+      const isModerator = user.isModerator ? 1 : 0;
       const onboarded = user.onboarded !== undefined ? (user.onboarded ? 1 : 0) : (isAdmin ? 1 : 0);
       const status = user.status || 'active';
 
       this.getSqlite()
         .prepare(`
-          INSERT INTO users (id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, onboarded, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO users (id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           user.id,
@@ -502,6 +559,7 @@ export class SqliteStore implements DataStore {
           user.avatarUrl || null,
           user.phoneNumber || null,
           isAdmin ? 1 : 0,
+          isModerator,
           onboarded,
           status
         );
@@ -605,7 +663,7 @@ export class SqliteStore implements DataStore {
   async getAllUsers(): Promise<DbUser[]> {
     const rows = this.getSqlite()
       .prepare(`
-        SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, onboarded, status, created_at, last_active_at
+        SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, is_moderator, onboarded, status, created_at, last_active_at
         FROM users
         WHERE status = 'active'
         ORDER BY created_at DESC
@@ -620,6 +678,7 @@ export class SqliteStore implements DataStore {
       displayName: r.display_name,
       avatarUrl: r.avatar_url || null,
       isAdmin: r.is_admin === 1,
+      isModerator: r.is_moderator === 1,
       onboarded: r.onboarded === 1,
       status: r.status,
       createdAt: r.created_at,
@@ -634,7 +693,7 @@ export class SqliteStore implements DataStore {
     if (q) {
       rows = this.getSqlite()
         .prepare(`
-          SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, onboarded, status, created_at, last_active_at
+          SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, is_moderator, onboarded, status, created_at, last_active_at
           FROM users
           WHERE id != ? AND status = 'active' AND (LOWER(display_name) LIKE ? OR LOWER(email) LIKE ?)
           ORDER BY display_name ASC
@@ -644,7 +703,7 @@ export class SqliteStore implements DataStore {
     } else {
       rows = this.getSqlite()
         .prepare(`
-          SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, onboarded, status, created_at, last_active_at
+          SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, is_moderator, onboarded, status, created_at, last_active_at
           FROM users
           WHERE id != ? AND status = 'active'
           ORDER BY last_active_at DESC
@@ -661,6 +720,7 @@ export class SqliteStore implements DataStore {
       displayName: r.display_name,
       avatarUrl: r.avatar_url || null,
       isAdmin: r.is_admin === 1,
+      isModerator: r.is_moderator === 1,
       onboarded: r.onboarded === 1,
       status: r.status,
       createdAt: r.created_at,
@@ -1029,7 +1089,7 @@ export class SqliteStore implements DataStore {
     const boundedLimit = Math.min(Math.max(limit, 1), 100);
     const rows = this.getSqlite()
       .prepare(`
-        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, status, created_at
+        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
         FROM messages
         WHERE conversation_id = ?
         ORDER BY created_at ASC
@@ -1073,6 +1133,13 @@ export class SqliteStore implements DataStore {
         } catch (_) {}
       }
 
+      let attachments: DbAttachment[] | null = null;
+      if (m.attachments) {
+        try {
+          attachments = JSON.parse(m.attachments);
+        } catch (_) {}
+      }
+
       return {
         id: m.id,
         conversationId: m.conversation_id,
@@ -1083,6 +1150,7 @@ export class SqliteStore implements DataStore {
         content: m.content,
         replyTo,
         forwardedFrom,
+        attachments,
         reactions: reactionsMap.get(m.id) || undefined,
         status: m.status,
         createdAt: m.created_at,
@@ -1093,7 +1161,7 @@ export class SqliteStore implements DataStore {
   async findMessageByClientId(clientMessageId: string, senderId: string): Promise<DbMessage | null> {
     const row = this.getSqlite()
       .prepare(`
-        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, status, created_at
+        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
         FROM messages
         WHERE client_message_id = ? AND sender_id = ?
       `)
@@ -1115,6 +1183,13 @@ export class SqliteStore implements DataStore {
       } catch (_) {}
     }
 
+    let attachments: DbAttachment[] | null = null;
+    if (row.attachments) {
+      try {
+        attachments = JSON.parse(row.attachments);
+      } catch (_) {}
+    }
+
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -1125,6 +1200,7 @@ export class SqliteStore implements DataStore {
       content: row.content,
       replyTo,
       forwardedFrom,
+      attachments,
       status: row.status,
       createdAt: row.created_at,
     };
@@ -1140,6 +1216,7 @@ export class SqliteStore implements DataStore {
     content: string;
     replyTo?: DbMessageReply | null;
     forwardedFrom?: DbMessageForward | null;
+    attachments?: DbAttachment[] | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
   }): Promise<DbMessage> {
     const msgId = message.id || 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
@@ -1147,14 +1224,15 @@ export class SqliteStore implements DataStore {
 
     const replyToJson = message.replyTo ? JSON.stringify(message.replyTo) : null;
     const forwardedFromJson = message.forwardedFrom ? JSON.stringify(message.forwardedFrom) : null;
+    const attachmentsJson = message.attachments && message.attachments.length > 0 ? JSON.stringify(message.attachments) : null;
 
     const sqlite = this.getSqlite();
     sqlite.exec('BEGIN IMMEDIATE');
     try {
       sqlite
         .prepare(`
-          INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           msgId,
@@ -1166,8 +1244,18 @@ export class SqliteStore implements DataStore {
           message.content,
           replyToJson,
           forwardedFromJson,
+          attachmentsJson,
           status
         );
+
+      // If attachments exist, associate them with this messageId in attachments table
+      if (message.attachments && message.attachments.length > 0) {
+        for (const att of message.attachments) {
+          sqlite
+            .prepare('UPDATE attachments SET message_id = ? WHERE id = ?')
+            .run(msgId, att.id);
+        }
+      }
 
       sqlite
         .prepare('UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?')
@@ -1185,10 +1273,17 @@ export class SqliteStore implements DataStore {
 
     const saved = this.getSqlite()
       .prepare(`
-        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, status, created_at
+        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
         FROM messages WHERE id = ?
       `)
       .get(msgId) as any;
+
+    let savedAttachments: DbAttachment[] | null = null;
+    if (saved.attachments) {
+      try {
+        savedAttachments = JSON.parse(saved.attachments);
+      } catch (_) {}
+    }
 
     return {
       id: saved.id,
@@ -1200,6 +1295,7 @@ export class SqliteStore implements DataStore {
       content: saved.content,
       replyTo: message.replyTo || null,
       forwardedFrom: message.forwardedFrom || null,
+      attachments: savedAttachments || message.attachments || null,
       reactions: {},
       status: saved.status,
       createdAt: saved.created_at,
@@ -1254,5 +1350,359 @@ export class SqliteStore implements DataStore {
     }
 
     return reactions;
+  }
+
+  async deleteMessage(conversationId: string, messageId: string): Promise<boolean> {
+    const sqlite = this.getSqlite();
+    const res = sqlite
+      .prepare('DELETE FROM messages WHERE id = ? AND conversation_id = ?')
+      .run(messageId, conversationId);
+    return res.changes > 0;
+  }
+
+  // Moderators
+  async setModerator(userId: string, isModerator: boolean): Promise<DbUser | null> {
+    const sqlite = this.getSqlite();
+    sqlite
+      .prepare('UPDATE users SET is_moderator = ? WHERE id = ?')
+      .run(isModerator ? 1 : 0, userId);
+
+    const user = await this.getUserById(userId);
+    if (user) {
+      sqlite
+        .prepare('UPDATE whitelist SET is_moderator = ? WHERE LOWER(email) = ?')
+        .run(isModerator ? 1 : 0, user.email.toLowerCase().trim());
+    }
+    return user;
+  }
+
+  async getModerators(): Promise<DbUser[]> {
+    const rows = this.getSqlite()
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE is_moderator = 1 OR is_admin = 1 ORDER BY display_name ASC')
+      .all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      firstName: r.first_name || null,
+      lastName: r.last_name || null,
+      displayName: r.display_name,
+      avatarUrl: r.avatar_url || null,
+      phoneNumber: r.phone_number || null,
+      isAdmin: r.is_admin === 1,
+      isModerator: r.is_moderator === 1,
+      onboarded: r.onboarded === 1,
+      status: r.status || 'active',
+      createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+    }));
+  }
+
+  // Google Drive Storage Accounts
+  async addDriveAccount(account: Omit<DbDriveAccount, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbDriveAccount> {
+    const sqlite = this.getSqlite();
+    const id = account.id || 'drive_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    sqlite
+      .prepare(`
+        INSERT INTO drive_accounts (id, email, display_name, encrypted_refresh_token, folder_id, space_used, space_total, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(email) DO UPDATE SET
+          display_name = excluded.display_name,
+          encrypted_refresh_token = excluded.encrypted_refresh_token,
+          folder_id = excluded.folder_id,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        id,
+        account.email.toLowerCase().trim(),
+        account.displayName || null,
+        account.encryptedRefreshToken,
+        account.folderId || null,
+        account.spaceUsed || 0,
+        account.spaceTotal || 0,
+        now,
+        now
+      );
+
+    return (await this.getDriveAccountById(id)) || {
+      id,
+      email: account.email.toLowerCase().trim(),
+      displayName: account.displayName || null,
+      encryptedRefreshToken: account.encryptedRefreshToken,
+      folderId: account.folderId || null,
+      spaceUsed: account.spaceUsed || 0,
+      spaceTotal: account.spaceTotal || 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async getDriveAccounts(): Promise<DbDriveAccount[]> {
+    const rows = this.getSqlite()
+      .prepare('SELECT id, email, display_name, encrypted_refresh_token, folder_id, space_used, space_total, created_at, updated_at FROM drive_accounts ORDER BY created_at DESC')
+      .all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      displayName: r.display_name || null,
+      encryptedRefreshToken: r.encrypted_refresh_token,
+      folderId: r.folder_id || null,
+      spaceUsed: r.space_used,
+      spaceTotal: r.space_total,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async getDriveAccountById(id: string): Promise<DbDriveAccount | null> {
+    const r = this.getSqlite()
+      .prepare('SELECT id, email, display_name, encrypted_refresh_token, folder_id, space_used, space_total, created_at, updated_at FROM drive_accounts WHERE id = ?')
+      .get(id) as any;
+
+    if (!r) return null;
+    return {
+      id: r.id,
+      email: r.email,
+      displayName: r.display_name || null,
+      encryptedRefreshToken: r.encrypted_refresh_token,
+      folderId: r.folder_id || null,
+      spaceUsed: r.space_used,
+      spaceTotal: r.space_total,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  async removeDriveAccount(id: string): Promise<boolean> {
+    const res = this.getSqlite()
+      .prepare('DELETE FROM drive_accounts WHERE id = ?')
+      .run(id);
+    return res.changes > 0;
+  }
+
+  async updateDriveAccountFolder(id: string, folderId: string): Promise<void> {
+    this.getSqlite()
+      .prepare('UPDATE drive_accounts SET folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(folderId, id);
+  }
+
+  async updateDriveAccountQuota(id: string, spaceUsed: number, spaceTotal: number): Promise<void> {
+    this.getSqlite()
+      .prepare('UPDATE drive_accounts SET space_used = ?, space_total = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(spaceUsed, spaceTotal, id);
+  }
+
+  // Attachments
+  async saveAttachment(attachment: Omit<DbAttachment, 'id' | 'createdAt'> & { id?: string }): Promise<DbAttachment> {
+    const id = attachment.id || 'att_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+    const now = new Date().toISOString();
+
+    this.getSqlite()
+      .prepare(`
+        INSERT INTO attachments (id, conversation_id, message_id, uploader_id, drive_account_id, drive_account_email, drive_file_id, file_name, file_size, mime_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        attachment.conversationId,
+        attachment.messageId || null,
+        attachment.uploaderId,
+        attachment.driveAccountId,
+        attachment.driveAccountEmail || null,
+        attachment.driveFileId,
+        attachment.fileName,
+        attachment.fileSize,
+        attachment.mimeType,
+        now
+      );
+
+    return {
+      id,
+      conversationId: attachment.conversationId,
+      messageId: attachment.messageId || null,
+      uploaderId: attachment.uploaderId,
+      driveAccountId: attachment.driveAccountId,
+      driveAccountEmail: attachment.driveAccountEmail,
+      driveFileId: attachment.driveFileId,
+      fileName: attachment.fileName,
+      fileSize: attachment.fileSize,
+      mimeType: attachment.mimeType,
+      createdAt: now,
+    };
+  }
+
+  async getAttachmentById(id: string): Promise<DbAttachment | null> {
+    const r = this.getSqlite()
+      .prepare('SELECT id, conversation_id, message_id, uploader_id, drive_account_id, drive_account_email, drive_file_id, file_name, file_size, mime_type, created_at FROM attachments WHERE id = ?')
+      .get(id) as any;
+
+    if (!r) return null;
+    return {
+      id: r.id,
+      conversationId: r.conversation_id,
+      messageId: r.message_id || null,
+      uploaderId: r.uploader_id,
+      driveAccountId: r.drive_account_id,
+      driveAccountEmail: r.drive_account_email || undefined,
+      driveFileId: r.drive_file_id,
+      fileName: r.file_name,
+      fileSize: r.file_size,
+      mimeType: r.mime_type,
+      createdAt: r.created_at,
+    };
+  }
+
+  async getAttachmentsForConversation(conversationId: string): Promise<DbAttachment[]> {
+    const rows = this.getSqlite()
+      .prepare('SELECT id, conversation_id, message_id, uploader_id, drive_account_id, drive_account_email, drive_file_id, file_name, file_size, mime_type, created_at FROM attachments WHERE conversation_id = ? ORDER BY created_at DESC')
+      .all(conversationId) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      conversationId: r.conversation_id,
+      messageId: r.message_id || null,
+      uploaderId: r.uploader_id,
+      driveAccountId: r.drive_account_id,
+      driveAccountEmail: r.drive_account_email || undefined,
+      driveFileId: r.drive_file_id,
+      fileName: r.file_name,
+      fileSize: r.file_size,
+      mimeType: r.mime_type,
+      createdAt: r.created_at,
+    }));
+  }
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    const res = this.getSqlite()
+      .prepare('DELETE FROM attachments WHERE id = ?')
+      .run(id);
+    return res.changes > 0;
+  }
+
+  // Telegram Bots
+  async addTelegramBot(bot: Omit<DbTelegramBot, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<DbTelegramBot> {
+    const id = bot.id || 'bot_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+    const commandsJson = JSON.stringify(bot.customCommands || []);
+
+    this.getSqlite()
+      .prepare(`
+        INSERT INTO telegram_bots (id, bot_name, username, encrypted_token, webhook_secret_token, is_enabled, custom_commands_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        bot.botName,
+        bot.username.replace(/^@/, ''),
+        bot.encryptedToken,
+        bot.webhookSecretToken,
+        bot.isEnabled ? 1 : 0,
+        commandsJson,
+        now,
+        now
+      );
+
+    return {
+      id,
+      botName: bot.botName,
+      username: bot.username.replace(/^@/, ''),
+      encryptedToken: bot.encryptedToken,
+      webhookSecretToken: bot.webhookSecretToken,
+      isEnabled: bot.isEnabled,
+      customCommands: bot.customCommands || [],
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async getTelegramBots(): Promise<DbTelegramBot[]> {
+    const rows = this.getSqlite()
+      .prepare('SELECT id, bot_name, username, encrypted_token, webhook_secret_token, is_enabled, custom_commands_json, created_at, updated_at FROM telegram_bots ORDER BY created_at DESC')
+      .all() as any[];
+
+    return rows.map((r) => {
+      let customCommands: TelegramCommandConfig[] = [];
+      try {
+        customCommands = JSON.parse(r.custom_commands_json || '[]');
+      } catch (_) {}
+
+      return {
+        id: r.id,
+        botName: r.bot_name,
+        username: r.username,
+        encryptedToken: r.encrypted_token,
+        webhookSecretToken: r.webhook_secret_token,
+        isEnabled: r.is_enabled === 1,
+        customCommands,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    });
+  }
+
+  async getTelegramBotById(id: string): Promise<DbTelegramBot | null> {
+    const r = this.getSqlite()
+      .prepare('SELECT id, bot_name, username, encrypted_token, webhook_secret_token, is_enabled, custom_commands_json, created_at, updated_at FROM telegram_bots WHERE id = ?')
+      .get(id) as any;
+
+    if (!r) return null;
+    let customCommands: TelegramCommandConfig[] = [];
+    try {
+      customCommands = JSON.parse(r.custom_commands_json || '[]');
+    } catch (_) {}
+
+    return {
+      id: r.id,
+      botName: r.bot_name,
+      username: r.username,
+      encryptedToken: r.encrypted_token,
+      webhookSecretToken: r.webhook_secret_token,
+      isEnabled: r.is_enabled === 1,
+      customCommands,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  async updateTelegramBot(id: string, updates: Partial<Pick<DbTelegramBot, 'isEnabled' | 'customCommands' | 'encryptedToken' | 'webhookSecretToken'>>): Promise<DbTelegramBot | null> {
+    const updateParts: string[] = [];
+    const params: any[] = [];
+
+    if (updates.isEnabled !== undefined) {
+      updateParts.push('is_enabled = ?');
+      params.push(updates.isEnabled ? 1 : 0);
+    }
+    if (updates.customCommands !== undefined) {
+      updateParts.push('custom_commands_json = ?');
+      params.push(JSON.stringify(updates.customCommands));
+    }
+    if (updates.encryptedToken !== undefined) {
+      updateParts.push('encrypted_token = ?');
+      params.push(updates.encryptedToken);
+    }
+    if (updates.webhookSecretToken !== undefined) {
+      updateParts.push('webhook_secret_token = ?');
+      params.push(updates.webhookSecretToken);
+    }
+
+    if (updateParts.length > 0) {
+      updateParts.push('updated_at = CURRENT_TIMESTAMP');
+      params.push(id);
+      this.getSqlite()
+        .prepare(`UPDATE telegram_bots SET ${updateParts.join(', ')} WHERE id = ?`)
+        .run(...params);
+    }
+
+    return this.getTelegramBotById(id);
+  }
+
+  async deleteTelegramBot(id: string): Promise<boolean> {
+    const res = this.getSqlite()
+      .prepare('DELETE FROM telegram_bots WHERE id = ?')
+      .run(id);
+    return res.changes > 0;
   }
 }

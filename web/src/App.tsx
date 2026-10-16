@@ -128,6 +128,12 @@ export const AppContent: React.FC = () => {
       }
     });
 
+    socket.on('message:deleted', (data: { conversationId: string; messageId: string }) => {
+      if (data.conversationId === selectedConvIdRef.current) {
+        setMessages((prev) => prev.filter((m) => m.id !== data.messageId));
+      }
+    });
+
     socket.on('conversation:new', () => {
       loadConversations();
     });
@@ -185,7 +191,8 @@ export const AppContent: React.FC = () => {
     content: string,
     clientMessageId?: string,
     replyToMessageId?: string,
-    forwardedFrom?: { senderName: string }
+    forwardedFrom?: { senderName: string },
+    attachments?: any[]
   ) => {
     if (!selectedConversationId) return;
 
@@ -213,6 +220,7 @@ export const AppContent: React.FC = () => {
           }
         : null,
       forwardedFrom: forwardedFrom || null,
+      attachments: attachments || null,
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
@@ -227,6 +235,7 @@ export const AppContent: React.FC = () => {
           clientMessageId: clientMsgId,
           replyToMessageId,
           forwardedFrom,
+          attachments,
         },
         (res: any) => {
           if (res?.success && res.message) {
@@ -243,11 +252,30 @@ export const AppContent: React.FC = () => {
         content,
         clientMsgId,
         replyToMessageId,
-        forwardedFrom
+        forwardedFrom,
+        attachments
       );
       setMessages((prev) =>
         prev.map((m) => (m.clientMessageId === clientMsgId || m.id === res.message.id ? res.message : m))
       );
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!selectedConversationId) return;
+    try {
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('message:delete', {
+          conversationId: selectedConversationId,
+          messageId,
+        });
+      } else {
+        await api.deleteMessage(selectedConversationId, messageId);
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    } catch (err) {
+      console.error('Failed to delete message:', err);
     }
   };
 
@@ -331,6 +359,7 @@ export const AppContent: React.FC = () => {
                 currentUser={user}
                 conversations={conversations}
                 onSendMessage={handleSendMessage}
+                onDeleteMessage={handleDeleteMessage}
                 onToggleReaction={handleToggleReaction}
                 onBackMobile={() => setSelectedConversationId(null)}
                 typingUser={typingUser}
