@@ -52,8 +52,6 @@ services:
   - type: web
     name: xxq-chat-frontend
     runtime: static
-    plan: free
-    region: oregon
     buildCommand: pnpm install --frozen-lockfile --trust-lockfile && pnpm --filter xxq-chat-web build
     staticPublishPath: ./web/dist
     routes:
