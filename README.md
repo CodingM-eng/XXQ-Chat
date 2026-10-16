@@ -117,7 +117,7 @@ This deployment uses strictly zero-cost tiers:
 
 ---
 
-### Step 2: Deploy to Render via Blueprint
+### Step 2: Deploy to Render via Blueprint & Configure Frontend
 
 1. Fork or push this repository to your GitHub account (`CodingM-eng/XXQ-Chat`).
 2. Log in to [Render.com](https://render.com).
@@ -126,17 +126,32 @@ This deployment uses strictly zero-cost tiers:
 5. Render detects `render.yaml` with two free services:
    - `xxq-chat-backend`: Node Web Service (`plan: free`)
    - `xxq-chat-frontend`: Static Site
-6. Under `xxq-chat-backend` environment variables in the Render dashboard, enter:
-   - `FIREBASE_PROJECT_ID`: Your Firebase Project ID
-   - `FIREBASE_CLIENT_EMAIL`: Your service account client email
-   - `FIREBASE_PRIVATE_KEY`: Your service account private key (including `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----`)
+6. **Configure `xxq-chat-frontend` Environment Variables**:
+   In the Render Dashboard (either during Blueprint setup or under **Dashboard > xxq-chat-frontend > Environment**):
+   - `VITE_FIREBASE_API_KEY`: `AIzaSyCCk8A6picstXW0qSMCXB75tAuj47BfJps`
+   - `VITE_FIREBASE_AUTH_DOMAIN`: `xxq-chat.firebaseapp.com`
+   - `VITE_FIREBASE_PROJECT_ID`: `xxq-chat`
+   *(Optional additional client properties: `VITE_FIREBASE_STORAGE_BUCKET=xxq-chat.firebasestorage.app`, `VITE_FIREBASE_MESSAGING_SENDER_ID=361932070636`, `VITE_FIREBASE_APP_ID=1:361932070636:web:086c009ce9f7fb68998fc9`, `VITE_FIREBASE_MEASUREMENT_ID=G-CXJNKZYRLG`)*
+
+   > [!NOTE]
+   > The Firebase Web API Key is client configuration used by browser SDKs to identify your Firebase project. It is **not** a secret and does not grant administrative privileges (unlike the backend Firebase Admin private key).
+
+7. **Configure `xxq-chat-backend` Environment Variables**:
+   Under **Dashboard > xxq-chat-backend > Environment**:
+   - `FIREBASE_PROJECT_ID`: `xxq-chat`
+   - `FIREBASE_CLIENT_EMAIL`: Your service account client email (from Firebase Console > Service Accounts)
+   - `FIREBASE_PRIVATE_KEY`: Your service account private key (from downloaded JSON, kept private and never committed)
    - `INITIAL_ADMIN_EMAIL`: `codingdevelopia@gmail.com`
-7. Under `xxq-chat-frontend` environment variables, enter:
-   - `VITE_FIREBASE_API_KEY`: Firebase web API key
-   - `VITE_FIREBASE_AUTH_DOMAIN`: `<project-id>.firebaseapp.com`
-   - `VITE_FIREBASE_PROJECT_ID`: Firebase project ID
-8. Click **Apply**.
-9. Once deployed, verify backend health:
+
+8. **CRITICAL: Authorize Render Domain in Firebase Authentication**:
+   In [Firebase Console](https://console.firebase.google.com/project/xxq-chat/authentication/settings):
+   - Go to **Build > Authentication > Settings tab > Authorized domains**.
+   - Click **Add domain**.
+   - Add your actual Render frontend domain: `xxq-chat-frontend.onrender.com` (or your custom domain if configured).
+   - If this domain is not authorized, Google Sign-In popups will fail with `auth/unauthorized-domain`.
+
+9. Click **Apply** or **Manual Deploy > Deploy latest commit**.
+10. Once deployed, verify backend health:
    ```bash
    curl https://xxq-chat-backend.onrender.com/health
    ```

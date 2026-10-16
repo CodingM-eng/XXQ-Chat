@@ -56,7 +56,10 @@ services:
       # Connects frontend to the backend service above
       - key: VITE_API_URL
         value: https://xxq-chat-backend.onrender.com
-      # Client Firebase credentials for Google Sign-In (configure in Render dashboard)
+      # Client Firebase credentials for Google Sign-In (enter these in Render Dashboard for xxq-chat-frontend):
+      # VITE_FIREBASE_API_KEY: AIzaSyCCk8A6picstXW0qSMCXB75tAuj47BfJps
+      # VITE_FIREBASE_AUTH_DOMAIN: xxq-chat.firebaseapp.com
+      # VITE_FIREBASE_PROJECT_ID: xxq-chat
       - key: VITE_FIREBASE_API_KEY
         sync: false
       - key: VITE_FIREBASE_AUTH_DOMAIN
