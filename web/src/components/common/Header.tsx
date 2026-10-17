@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle } from 'lucide-react';
+import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle, Mail } from 'lucide-react';
 import { ProfileEditModal } from './ProfileEditModal';
 import { SearchModal } from '../chat/SearchModal';
 import { SupportModal } from './SupportModal';
+import { InvitationsModal } from '../chat/InvitationsModal';
+import { api } from '../../services/api';
 
 interface HeaderProps {
   currentView: 'chat' | 'admin';
@@ -25,6 +27,25 @@ export const Header: React.FC<HeaderProps> = ({
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
+  const [isInvitationsOpen, setIsInvitationsOpen] = useState(false);
+  const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
+
+  const loadInvitationsCount = async () => {
+    if (!user) return;
+    try {
+      const res = await api.getMyInvitations();
+      const count = res.invitations?.filter((i) => i.status === 'pending').length || 0;
+      setPendingInvitationsCount(count);
+    } catch {
+      // Ignore background error
+    }
+  };
+
+  useEffect(() => {
+    loadInvitationsCount();
+    const interval = setInterval(loadInvitationsCount, 30000);
+    return () => clearInterval(interval);
+  }, [user?.id]);
 
   return (
     <>
@@ -86,6 +107,22 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Search className="w-3.5 h-3.5 text-purple-400" />
               <span className="hidden md:inline">Ara...</span>
+            </button>
+          )}
+
+          {/* Group & Server Invitations Button */}
+          {user && (
+            <button
+              onClick={() => setIsInvitationsOpen(true)}
+              className="relative p-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-slate-300 hover:text-purple-300 transition-colors"
+              title="Grup ve Sunucu Davetleri"
+            >
+              <Mail className="w-4 h-4 text-purple-400" />
+              {pendingInvitationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-purple-600 text-white text-[9px] font-bold flex items-center justify-center animate-pulse shadow-sm">
+                  {pendingInvitationsCount}
+                </span>
+              )}
             </button>
           )}
 
@@ -199,6 +236,20 @@ export const Header: React.FC<HeaderProps> = ({
       <SupportModal
         isOpen={isSupportModalOpen}
         onClose={() => setIsSupportModalOpen(false)}
+      />
+
+      {/* Invitations Modal */}
+      <InvitationsModal
+        isOpen={isInvitationsOpen}
+        onClose={() => {
+          setIsInvitationsOpen(false);
+          loadInvitationsCount();
+        }}
+        onInvitationAccepted={(targetId) => {
+          setIsInvitationsOpen(false);
+          loadInvitationsCount();
+          onSelectConversation?.(targetId);
+        }}
       />
     </>
   );

@@ -62,9 +62,11 @@ router.post('/reports', async (req, res) => {
       ipAddress: req.ip,
     });
 
+    const { userEmail, ...safeReport } = report;
+
     res.status(201).json({
       success: true,
-      report,
+      report: safeReport,
       message: 'Sorun bildiriminiz başarıyla iletildi. İnceleme sonrası tarafınıza dönüş yapılacaktır.',
     });
   } catch (err: any) {
@@ -78,7 +80,11 @@ router.get('/reports', requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 100);
     const reports = await dataStore.getSupportReports(limit);
-    res.json({ reports });
+    const sanitizedReports = reports.map((r) => {
+      const { userEmail, ...safe } = r;
+      return safe;
+    });
+    res.json({ reports: sanitizedReports });
   } catch (err: any) {
     res.status(500).json({ error: 'FETCH_FAILED', message: err.message });
   }

@@ -261,5 +261,158 @@ router.delete('/moderators/:userId', async (req, res) => {
   });
 });
 
+// POST /api/admin/whitelist/reject - reject a pending access request
+const rejectSchema = z.object({
+  email: z.string().email(),
+});
+
+router.post('/whitelist/reject', async (req, res) => {
+  const parseResult = rejectSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
+    return;
+  }
+
+  const email = parseResult.data.email.toLowerCase().trim();
+  const user = req.user!;
+
+  await dataStore.rejectPendingAccess(email);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'USER_WHITELIST_REJECTED',
+    target: email,
+    details: `${email} kullanıcısının erişim isteği reddedildi`,
+    ipAddress: req.ip,
+  });
+
+  res.json({ success: true, email, message: `${email} erişim isteği reddedildi.` });
+});
+
+// GET /api/admin/pending/history - view resolved request history
+router.get('/pending/history', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const requests = await dataStore.getResolvedAccessRequests(limit);
+  res.json({ resolvedRequests: requests });
+});
+
+// GET /api/admin/groups - list all groups
+router.get('/groups', async (req, res) => {
+  const groups = await dataStore.getAllGroups();
+  res.json({ groups });
+});
+
+// GET /api/admin/servers - list all servers
+router.get('/servers', async (req, res) => {
+  const servers = await dataStore.getAllServers();
+  res.json({ servers });
+});
+
+// POST /api/admin/groups/:id/members - Force add approved user to group
+const forceAddMemberSchema = z.object({
+  userId: z.string().min(1),
+  confirmation: z.literal(true),
+});
+
+router.post('/groups/:id/members', async (req, res) => {
+  const parseResult = forceAddMemberSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'CONFIRMATION_REQUIRED', message: 'Zorunlu kullanıcı ekleme işlemi için onay gereklidir.' });
+    return;
+  }
+
+  const conversationId = req.params.id as string;
+  const { userId } = parseResult.data;
+  const adminUser = req.user!;
+
+  const targetUser = await dataStore.getUserById(userId);
+  if (!targetUser) {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  const whitelistEnabled = await isWhitelistModeEnabled();
+  if (whitelistEnabled) {
+    const isWhitelisted = await dataStore.isEmailWhitelisted(targetUser.email);
+    if (!isWhitelisted && !targetUser.isAdmin) {
+      res.status(400).json({ error: 'USER_NOT_WHITELISTED', message: 'Kullanıcı beyaz listede onaylı değil.' });
+      return;
+    }
+  }
+
+  const isMember = await dataStore.isConversationParticipant(conversationId, userId);
+  if (isMember) {
+    res.status(400).json({ error: 'ALREADY_MEMBER', message: 'Kullanıcı zaten bu grubun üyesidir.' });
+    return;
+  }
+
+  await dataStore.addConversationParticipants(conversationId, [userId]);
+
+  await dataStore.recordAuditLog({
+    actorId: adminUser.id,
+    actorEmail: adminUser.email,
+    action: 'ADMIN_FORCE_ADD_GROUP_MEMBER',
+    target: targetUser.email,
+    details: `Yönetici ${targetUser.displayName || targetUser.email} kullanıcısını ${conversationId} grubuna zorunlu olarak ekledi`,
+    ipAddress: req.ip,
+  });
+
+  res.json({
+    success: true,
+    message: `${targetUser.displayName || targetUser.email} gruba başarıyla eklendi.`,
+  });
+});
+
+// POST /api/admin/servers/:id/members - Force add approved user to server
+router.post('/servers/:id/members', async (req, res) => {
+  const parseResult = forceAddMemberSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'CONFIRMATION_REQUIRED', message: 'Zorunlu kullanıcı ekleme işlemi için onay gereklidir.' });
+    return;
+  }
+
+  const serverId = req.params.id as string;
+  const { userId } = parseResult.data;
+  const adminUser = req.user!;
+
+  const targetUser = await dataStore.getUserById(userId);
+  if (!targetUser) {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  const whitelistEnabled = await isWhitelistModeEnabled();
+  if (whitelistEnabled) {
+    const isWhitelisted = await dataStore.isEmailWhitelisted(targetUser.email);
+    if (!isWhitelisted && !targetUser.isAdmin) {
+      res.status(400).json({ error: 'USER_NOT_WHITELISTED', message: 'Kullanıcı beyaz listede onaylı değil.' });
+      return;
+    }
+  }
+
+  const isMember = await dataStore.isServerMember(serverId, userId);
+  if (isMember) {
+    res.status(400).json({ error: 'ALREADY_MEMBER', message: 'Kullanıcı zaten bu sunucunun üyesidir.' });
+    return;
+  }
+
+  await dataStore.addServerMember(serverId, userId, 'member');
+
+  await dataStore.recordAuditLog({
+    actorId: adminUser.id,
+    actorEmail: adminUser.email,
+    action: 'ADMIN_FORCE_ADD_SERVER_MEMBER',
+    target: targetUser.email,
+    details: `Yönetici ${targetUser.displayName || targetUser.email} kullanıcısını ${serverId} sunucusuna zorunlu olarak ekledi`,
+    ipAddress: req.ip,
+  });
+
+  res.json({
+    success: true,
+    message: `${targetUser.displayName || targetUser.email} sunucuya başarıyla eklendi.`,
+  });
+});
+
 export const adminRouter = router;
 

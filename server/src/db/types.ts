@@ -24,6 +24,7 @@ export interface DbPendingAccessRequest {
   lastAttemptAt: string;
   attemptCount: number;
   status: 'pending' | 'approved' | 'rejected';
+  resolvedAt?: string | null;
 }
 
 export interface DbWhitelistEntry {
@@ -69,11 +70,16 @@ export interface DbSupportReport {
 
 export interface DbConversationSummary {
   id: string;
-  type: 'direct' | 'group';
+  type: 'direct' | 'group' | 'channel';
   name: string;
   avatarUrl?: string | null;
   creatorId?: string | null;
   adminIds?: string[];
+  description?: string | null;
+  rules?: string | null;
+  joinPolicy?: 'auto' | 'invite' | 'request';
+  serverId?: string | null;
+  isAnnouncementOnly?: boolean;
   participantCount?: number;
   participants?: Array<{
     id: string;
@@ -81,6 +87,9 @@ export interface DbConversationSummary {
     displayName: string;
     avatarUrl?: string | null;
     isAdmin?: boolean;
+    role?: 'owner' | 'admin' | 'moderator' | 'member';
+    customTag?: string | null;
+    joinedAt?: string;
   }>;
   peer: {
     id: string;
@@ -99,6 +108,45 @@ export interface DbConversationSummary {
   } | null;
   unreadCount: number;
   updatedAt: string;
+}
+
+export type ServerPurpose = 'gaming' | 'chat' | 'community' | 'business' | 'other';
+
+export interface DbServer {
+  id: string;
+  name: string;
+  description?: string | null;
+  purpose: ServerPurpose;
+  avatarUrl?: string | null;
+  rules?: string | null;
+  ownerId: string;
+  memberIds: string[];
+  channels?: DbConversationSummary[];
+  members?: Array<{
+    id: string;
+    displayName: string;
+    avatarUrl?: string | null;
+    role: 'owner' | 'admin' | 'moderator' | 'member';
+    customTag?: string | null;
+    joinedAt: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DbMembershipInvitation {
+  id: string;
+  targetType: 'group' | 'server';
+  targetId: string;
+  targetName: string;
+  userId: string;
+  userDisplayName: string;
+  type: 'invite' | 'request';
+  status: 'pending' | 'accepted' | 'declined' | 'approved' | 'rejected' | 'expired';
+  createdById: string;
+  createdAt: string;
+  resolvedAt?: string | null;
+  resolvedById?: string | null;
 }
 
 export interface DbMessageReply {
@@ -192,7 +240,9 @@ export interface DataStore {
   // Pending access requests
   recordPendingAccess(email: string, displayName?: string, avatarUrl?: string, ipAddress?: string): Promise<void>;
   getPendingAccessRequests(): Promise<DbPendingAccessRequest[]>;
+  getResolvedAccessRequests(limit?: number): Promise<DbPendingAccessRequest[]>;
   resolvePendingAccess(email: string, status: 'approved' | 'rejected'): Promise<void>;
+  rejectPendingAccess(email: string): Promise<void>;
 
   // Users
   getUserById(id: string): Promise<DbUser | null>;
@@ -319,4 +369,30 @@ export interface DataStore {
 
   // Authorized Message Search
   searchMessages(userId: string, query: string, conversationId?: string): Promise<Array<DbMessage & { conversationName?: string }>>;
+
+  // Groups Management & Roles
+  getAllGroups(): Promise<DbConversationSummary[]>;
+  updateGroupSettings(conversationId: string, settings: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; joinPolicy?: 'auto' | 'invite' | 'request' }): Promise<void>;
+  updateParticipantRole(conversationId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void>;
+  getConversationRole(conversationId: string, userId: string): Promise<'owner' | 'admin' | 'moderator' | 'member' | null>;
+
+  // Servers & Channels
+  createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; rules?: string | null }): Promise<{ server: DbServer; channels: DbConversationSummary[] }>;
+  getServer(serverId: string, userId: string): Promise<DbServer | null>;
+  getUserServers(userId: string): Promise<DbServer[]>;
+  getAllServers(): Promise<DbServer[]>;
+  createServerChannel(serverId: string, actorId: string, data: { name: string; isAnnouncementOnly?: boolean }): Promise<DbConversationSummary>;
+  addServerMember(serverId: string, userId: string, role?: 'admin' | 'moderator' | 'member'): Promise<void>;
+  removeServerMember(serverId: string, userId: string): Promise<void>;
+  updateServerMemberRole(serverId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void>;
+  updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; purpose?: ServerPurpose }): Promise<void>;
+  isServerMember(serverId: string, userId: string): Promise<boolean>;
+  isServerAdmin(serverId: string, userId: string): Promise<boolean>;
+
+  // Membership Invitations & Join Requests
+  createMembershipInvitation(invitation: Omit<DbMembershipInvitation, 'id' | 'createdAt' | 'status'> & { id?: string }): Promise<DbMembershipInvitation>;
+  getUserInvitations(userId: string): Promise<DbMembershipInvitation[]>;
+  getTargetJoinRequests(targetType: 'group' | 'server', targetId: string): Promise<DbMembershipInvitation[]>;
+  resolveMembershipInvitation(id: string, status: 'accepted' | 'declined' | 'approved' | 'rejected', actorId: string): Promise<DbMembershipInvitation | null>;
+  hasActiveInvitationOrRequest(targetId: string, userId: string): Promise<boolean>;
 }

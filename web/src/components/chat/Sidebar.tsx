@@ -1,12 +1,25 @@
 import React, { useState } from 'react';
 import { Conversation, User } from '../../types';
-import { Search, Plus, MessageCircle, Check, CheckCheck, Clock, Users, User as UserIcon } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  MessageCircle,
+  Check,
+  CheckCheck,
+  Clock,
+  Users,
+  User as UserIcon,
+  Layers,
+  Hash,
+  Megaphone,
+} from 'lucide-react';
 
 interface SidebarProps {
   conversations: Conversation[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenNewChat: () => void;
+  onOpenNewServer?: () => void;
   currentUser: User | null;
 }
 
@@ -15,10 +28,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedId,
   onSelect,
   onOpenNewChat,
+  onOpenNewServer,
   currentUser,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [tab, setTab] = useState<'all' | 'direct' | 'group' | 'unread'>('all');
+  const [tab, setTab] = useState<'all' | 'direct' | 'group' | 'channel' | 'unread'>('all');
 
   // Filter conversations
   const filtered = conversations.filter((c) => {
@@ -30,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     if (tab === 'direct') return c.type === 'direct';
     if (tab === 'group') return c.type === 'group';
+    if (tab === 'channel') return c.type === 'channel';
     if (tab === 'unread') return c.unreadCount > 0;
     return true;
   });
@@ -60,6 +75,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="w-full bg-[#141021] border border-[#261e3d] rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-purple-500 transition-all"
           />
         </div>
+
+        {onOpenNewServer && (
+          <button
+            onClick={onOpenNewServer}
+            className="p-2 bg-[#171226] hover:bg-[#231b3b] text-purple-300 hover:text-white border border-[#2b2144] rounded-xl shadow-md transition-all shrink-0 focus:outline-none focus:ring-2 focus:ring-purple-400"
+            title="Yeni Discord-Tarzı Sunucu Oluştur"
+          >
+            <Layers className="w-4 h-4" />
+          </button>
+        )}
 
         <button
           onClick={onOpenNewChat}
@@ -103,6 +128,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           Gruplar
         </button>
         <button
+          onClick={() => setTab('channel')}
+          className={`px-2.5 py-1 rounded-lg font-medium transition-colors ${
+            tab === 'channel'
+              ? 'bg-[#1b152d] text-purple-300 font-semibold border border-purple-800/40'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-[#151124]'
+          }`}
+        >
+          Kanallar
+        </button>
+        <button
           onClick={() => setTab('unread')}
           className={`px-2.5 py-1 rounded-lg font-medium transition-colors flex items-center gap-1.5 ${
             tab === 'unread'
@@ -134,6 +169,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const isSelected = conv.id === selectedId;
             const isSentByMe = conv.lastMessage?.senderId === currentUser?.id;
             const isGroup = conv.type === 'group';
+            const isChannel = conv.type === 'channel';
 
             return (
               <button
@@ -149,12 +185,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="relative shrink-0">
                   <div
                     className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-white text-base shadow-inner uppercase overflow-hidden ${
-                      isGroup
+                      isChannel
+                        ? 'bg-gradient-to-tr from-indigo-950 to-purple-900 border border-indigo-700/50'
+                        : isGroup
                         ? 'bg-gradient-to-tr from-purple-800 to-indigo-600'
                         : 'bg-gradient-to-tr from-purple-900 via-purple-700 to-sky-500'
                     }`}
                   >
-                    {conv.avatarUrl || conv.peer?.avatarUrl ? (
+                    {isChannel ? (
+                      conv.isAnnouncementOnly ? (
+                        <Megaphone className="w-5 h-5 text-amber-300" />
+                      ) : (
+                        <Hash className="w-5 h-5 text-purple-300" />
+                      )
+                    ) : conv.avatarUrl || conv.peer?.avatarUrl ? (
                       <img
                         src={conv.avatarUrl || conv.peer?.avatarUrl || ''}
                         alt={conv.name}
@@ -167,8 +211,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   </div>
 
-                  {/* Group or Online Badge */}
-                  {isGroup ? (
+                  {/* Group / Channel / Online Badge */}
+                  {isChannel ? (
+                    <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-indigo-700 border-2 border-[#0c0a14] flex items-center justify-center text-[9px] text-white">
+                      <Hash className="w-2.5 h-2.5" />
+                    </span>
+                  ) : isGroup ? (
                     <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-purple-700 border-2 border-[#0c0a14] flex items-center justify-center text-[9px] text-white">
                       <Users className="w-2.5 h-2.5" />
                     </span>

@@ -17,6 +17,9 @@ import {
   DbTelegramBot,
   TelegramCommandConfig,
   DbSupportReport,
+  DbServer,
+  ServerPurpose,
+  DbMembershipInvitation,
 } from './types.js';
 
 export class SqliteStore implements DataStore {
@@ -89,10 +92,15 @@ export class SqliteStore implements DataStore {
 
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('direct', 'group')),
+        type TEXT NOT NULL CHECK(type IN ('direct', 'group', 'channel')),
         name TEXT,
         avatar_url TEXT,
         creator_id TEXT,
+        description TEXT,
+        rules TEXT,
+        join_policy TEXT DEFAULT 'auto',
+        server_id TEXT,
+        is_announcement_only INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -101,11 +109,49 @@ export class SqliteStore implements DataStore {
         conversation_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
         is_admin INTEGER NOT NULL DEFAULT 0,
+        role TEXT NOT NULL DEFAULT 'member',
+        custom_tag TEXT,
         joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_read_message_id TEXT,
         PRIMARY KEY (conversation_id, user_id),
         FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        purpose TEXT NOT NULL,
+        avatar_url TEXT,
+        rules TEXT,
+        owner_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS server_members (
+        server_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        custom_tag TEXT,
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS membership_invitations (
+        id TEXT PRIMARY KEY,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        target_name TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_display_name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_by_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        resolved_at DATETIME,
+        resolved_by_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -210,7 +256,45 @@ export class SqliteStore implements DataStore {
     try { sqlite.exec('ALTER TABLE whitelist ADD COLUMN is_moderator INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN avatar_url TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN creator_id TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE conversations ADD COLUMN description TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE conversations ADD COLUMN rules TEXT;'); } catch (_) {}
+    try { sqlite.exec("ALTER TABLE conversations ADD COLUMN join_policy TEXT DEFAULT 'auto';"); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE conversations ADD COLUMN server_id TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE conversations ADD COLUMN is_announcement_only INTEGER DEFAULT 0;'); } catch (_) {}
+
+    // Migrate conversations check constraint if 'channel' is not permitted in existing table
+    try {
+      const convTableSql = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='conversations'").get() as any;
+      if (convTableSql && convTableSql.sql && !convTableSql.sql.includes("'channel'")) {
+        sqlite.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE conversations_migrated (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('direct', 'group', 'channel')),
+            name TEXT,
+            avatar_url TEXT,
+            creator_id TEXT,
+            description TEXT,
+            rules TEXT,
+            join_policy TEXT DEFAULT 'auto',
+            server_id TEXT,
+            is_announcement_only INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT INTO conversations_migrated (id, type, name, avatar_url, creator_id, description, rules, join_policy, server_id, is_announcement_only, created_at, updated_at)
+            SELECT id, type, name, avatar_url, creator_id, description, rules, join_policy, server_id, is_announcement_only, created_at, updated_at FROM conversations;
+          DROP TABLE conversations;
+          ALTER TABLE conversations_migrated RENAME TO conversations;
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+    } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversation_participants ADD COLUMN is_admin INTEGER DEFAULT 0;'); } catch (_) {}
+    try { sqlite.exec("ALTER TABLE conversation_participants ADD COLUMN role TEXT DEFAULT 'member';"); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE conversation_participants ADD COLUMN custom_tag TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE pending_access_requests ADD COLUMN resolved_at DATETIME;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE pending_access_requests ADD COLUMN resolved_by TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN reply_to TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN forwarded_from TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN attachments TEXT;'); } catch (_) {}
@@ -396,6 +480,7 @@ export class SqliteStore implements DataStore {
         .prepare(`
           UPDATE pending_access_requests
           SET attempt_count = attempt_count + 1,
+              status = 'pending',
               last_attempt_at = CURRENT_TIMESTAMP,
               display_name = COALESCE(?, display_name),
               avatar_url = COALESCE(?, avatar_url)
@@ -418,6 +503,7 @@ export class SqliteStore implements DataStore {
       .prepare(`
         SELECT id, email, display_name, avatar_url, first_attempt_at, last_attempt_at, attempt_count, status
         FROM pending_access_requests
+        WHERE status = 'pending'
         ORDER BY last_attempt_at DESC
       `)
       .all() as any[];
@@ -434,11 +520,39 @@ export class SqliteStore implements DataStore {
     }));
   }
 
+  async getResolvedAccessRequests(limit: number = 50): Promise<DbPendingAccessRequest[]> {
+    const rows = this.getSqlite()
+      .prepare(`
+        SELECT id, email, display_name, avatar_url, first_attempt_at, last_attempt_at, attempt_count, status, resolved_at
+        FROM pending_access_requests
+        WHERE status IN ('approved', 'rejected')
+        ORDER BY COALESCE(resolved_at, last_attempt_at) DESC
+        LIMIT ?
+      `)
+      .all(limit) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      displayName: r.display_name || null,
+      avatarUrl: r.avatar_url || null,
+      firstAttemptAt: r.first_attempt_at,
+      lastAttemptAt: r.last_attempt_at,
+      attemptCount: r.attempt_count,
+      status: r.status as 'pending' | 'approved' | 'rejected',
+      resolvedAt: r.resolved_at || r.last_attempt_at || null,
+    }));
+  }
+
   async resolvePendingAccess(email: string, status: 'approved' | 'rejected'): Promise<void> {
     const normalized = email.toLowerCase().trim();
     this.getSqlite()
-      .prepare('UPDATE pending_access_requests SET status = ? WHERE LOWER(email) = ?')
+      .prepare("UPDATE pending_access_requests SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE LOWER(email) = ?")
       .run(status, normalized);
+  }
+
+  async rejectPendingAccess(email: string): Promise<void> {
+    await this.resolvePendingAccess(email, 'rejected');
   }
 
   // Users
@@ -820,7 +934,8 @@ export class SqliteStore implements DataStore {
   async getUserConversations(userId: string): Promise<DbConversationSummary[]> {
     const conversations = this.getSqlite()
       .prepare(`
-        SELECT c.id, c.type, c.name, c.avatar_url, c.creator_id, c.updated_at
+        SELECT c.id, c.type, c.name, c.avatar_url, c.creator_id, c.updated_at,
+               c.description, c.rules, c.join_policy, c.server_id, c.is_announcement_only
         FROM conversations c
         JOIN conversation_participants p ON p.conversation_id = c.id
         WHERE p.user_id = ?
@@ -848,10 +963,10 @@ export class SqliteStore implements DataStore {
             `)
             .get(conv.id, userId) as any;
         } else {
-          // Group participants summary
+          // Group or Channel participants summary
           const partRows = this.getSqlite()
             .prepare(`
-              SELECT u.id, u.email, u.display_name, u.avatar_url, cp.is_admin
+              SELECT u.id, u.email, u.display_name, u.avatar_url, cp.is_admin, cp.role, cp.custom_tag, cp.joined_at
               FROM conversation_participants cp
               JOIN users u ON u.id = cp.user_id
               WHERE cp.conversation_id = ?
@@ -864,7 +979,10 @@ export class SqliteStore implements DataStore {
             email: p.email,
             displayName: p.display_name,
             avatarUrl: p.avatar_url || null,
-            isAdmin: p.is_admin === 1,
+            isAdmin: p.is_admin === 1 || p.role === 'owner' || p.role === 'admin',
+            role: (p.role || (p.is_admin === 1 ? 'admin' : 'member')) as 'owner' | 'admin' | 'moderator' | 'member',
+            customTag: p.custom_tag || null,
+            joinedAt: p.joined_at || undefined,
           }));
         }
 
@@ -896,19 +1014,24 @@ export class SqliteStore implements DataStore {
           )?.count || 0;
 
         const adminRows = this.getSqlite()
-          .prepare('SELECT user_id FROM conversation_participants WHERE conversation_id = ? AND is_admin = 1')
+          .prepare("SELECT user_id FROM conversation_participants WHERE conversation_id = ? AND (is_admin = 1 OR role IN ('owner', 'admin'))")
           .all(conv.id) as any[];
         const adminIds = adminRows.map((a) => a.user_id);
 
         return {
           id: conv.id,
           type: conv.type,
-          name: conv.type === 'direct' && peer ? peer.display_name : conv.name || 'Chat',
+          name: conv.type === 'direct' && peer ? peer.display_name : conv.name || (conv.type === 'channel' ? 'Kanal' : 'Chat'),
+          description: conv.description || null,
+          rules: conv.rules || null,
+          joinPolicy: (conv.join_policy as any) || 'auto',
           avatarUrl: conv.avatar_url || null,
           creatorId: conv.creator_id || null,
+          serverId: conv.server_id || null,
+          isAnnouncementOnly: conv.is_announcement_only === 1,
           adminIds,
           participantCount,
-          participants: conv.type === 'group' ? participants : undefined,
+          participants: conv.type === 'group' || conv.type === 'channel' ? participants : undefined,
           peer: peer
             ? {
                 id: peer.id,
@@ -937,7 +1060,36 @@ export class SqliteStore implements DataStore {
 
   async getConversation(conversationId: string, userId: string): Promise<DbConversationSummary | null> {
     const isParticipant = await this.isConversationParticipant(conversationId, userId);
-    if (!isParticipant) return null;
+    if (!isParticipant) {
+      const user = await this.getUserById(userId);
+      if (user?.isAdmin) {
+        const allGroups = await this.getAllGroups();
+        const match = allGroups.find((g) => g.id === conversationId);
+        if (match) return match;
+
+        const chanRow = this.getSqlite()
+          .prepare('SELECT id, type, name, description, rules, server_id, is_announcement_only, updated_at FROM conversations WHERE id = ?')
+          .get(conversationId) as any;
+        if (chanRow) {
+          return {
+            id: chanRow.id,
+            type: chanRow.type,
+            name: chanRow.name,
+            description: chanRow.description || null,
+            rules: chanRow.rules || null,
+            serverId: chanRow.server_id || null,
+            isAnnouncementOnly: chanRow.is_announcement_only === 1,
+            adminIds: [],
+            participantCount: 0,
+            peer: null,
+            lastMessage: null,
+            unreadCount: 0,
+            updatedAt: chanRow.updated_at,
+          };
+        }
+      }
+      return null;
+    }
 
     const convs = await this.getUserConversations(userId);
     return convs.find((c) => c.id === conversationId) || null;
@@ -1000,16 +1152,16 @@ export class SqliteStore implements DataStore {
     try {
       sqlite
         .prepare(`
-          INSERT INTO conversations (id, type, name, avatar_url, creator_id, created_at, updated_at)
-          VALUES (?, 'group', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          INSERT INTO conversations (id, type, name, avatar_url, creator_id, join_policy, created_at, updated_at)
+          VALUES (?, 'group', ?, ?, ?, 'auto', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         `)
         .run(convId, name, avatarUrl || null, creatorId);
 
-      // Creator is group admin
+      // Creator is group owner
       sqlite
         .prepare(`
-          INSERT INTO conversation_participants (conversation_id, user_id, is_admin)
-          VALUES (?, ?, 1)
+          INSERT INTO conversation_participants (conversation_id, user_id, is_admin, role)
+          VALUES (?, ?, 1, 'owner')
         `)
         .run(convId, creatorId);
 
@@ -1018,8 +1170,8 @@ export class SqliteStore implements DataStore {
       for (const memberId of uniqueMembers) {
         sqlite
           .prepare(`
-            INSERT INTO conversation_participants (conversation_id, user_id, is_admin)
-            VALUES (?, ?, 0)
+            INSERT INTO conversation_participants (conversation_id, user_id, is_admin, role)
+            VALUES (?, ?, 0, 'member')
           `)
           .run(convId, memberId);
       }
@@ -1039,8 +1191,8 @@ export class SqliteStore implements DataStore {
       for (const userId of userIds) {
         sqlite
           .prepare(`
-            INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id, is_admin)
-            VALUES (?, ?, 0)
+            INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id, is_admin, role)
+            VALUES (?, ?, 0, 'member')
           `)
           .run(conversationId, userId);
       }
@@ -1094,7 +1246,7 @@ export class SqliteStore implements DataStore {
     const row = this.getSqlite()
       .prepare(`
         SELECT 1 FROM conversation_participants
-        WHERE conversation_id = ? AND user_id = ? AND is_admin = 1
+        WHERE conversation_id = ? AND user_id = ? AND (is_admin = 1 OR role IN ('owner', 'admin'))
       `)
       .get(conversationId, userId);
     if (row) return true;
@@ -1857,5 +2009,579 @@ export class SqliteStore implements DataStore {
         conversationName: row.conversation_name || (row.conversation_type === 'direct' ? 'Direkt Mesaj' : 'Grup'),
       };
     });
+  }
+
+  // Groups Management & Roles
+  async getAllGroups(): Promise<DbConversationSummary[]> {
+    const rows = this.getSqlite()
+      .prepare(`
+        SELECT c.id, c.type, c.name, c.avatar_url, c.creator_id, c.updated_at,
+               c.description, c.rules, c.join_policy, c.server_id, c.is_announcement_only
+        FROM conversations c
+        WHERE c.type = 'group'
+        ORDER BY c.updated_at DESC
+      `)
+      .all() as any[];
+
+    return Promise.all(
+      rows.map(async (conv) => {
+        const partRows = this.getSqlite()
+          .prepare(`
+            SELECT u.id, u.email, u.display_name, u.avatar_url, cp.is_admin, cp.role, cp.custom_tag, cp.joined_at
+            FROM conversation_participants cp
+            JOIN users u ON u.id = cp.user_id
+            WHERE cp.conversation_id = ?
+            ORDER BY cp.is_admin DESC, u.display_name ASC
+          `)
+          .all(conv.id) as any[];
+
+        const participants = partRows.map((p) => ({
+          id: p.id,
+          email: p.email,
+          displayName: p.display_name,
+          avatarUrl: p.avatar_url || null,
+          isAdmin: p.is_admin === 1 || p.role === 'owner' || p.role === 'admin',
+          role: (p.role || (p.is_admin === 1 ? 'admin' : 'member')) as 'owner' | 'admin' | 'moderator' | 'member',
+          customTag: p.custom_tag || null,
+          joinedAt: p.joined_at || undefined,
+        }));
+
+        const adminIds = participants.filter((p) => p.isAdmin).map((p) => p.id);
+
+        return {
+          id: conv.id,
+          type: conv.type,
+          name: conv.name || 'Grup',
+          description: conv.description || null,
+          rules: conv.rules || null,
+          joinPolicy: (conv.join_policy as any) || 'auto',
+          avatarUrl: conv.avatar_url || null,
+          creatorId: conv.creator_id || null,
+          serverId: null,
+          isAnnouncementOnly: false,
+          adminIds,
+          participantCount: participants.length,
+          participants,
+          peer: null,
+          lastMessage: null,
+          unreadCount: 0,
+          updatedAt: conv.updated_at,
+        };
+      })
+    );
+  }
+
+  async updateGroupSettings(conversationId: string, settings: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; joinPolicy?: 'auto' | 'invite' | 'request' }): Promise<void> {
+    const updateParts: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+    const params: any[] = [];
+
+    if (settings.name !== undefined) {
+      updateParts.push('name = ?');
+      params.push(settings.name);
+    }
+    if (settings.description !== undefined) {
+      updateParts.push('description = ?');
+      params.push(settings.description);
+    }
+    if (settings.rules !== undefined) {
+      updateParts.push('rules = ?');
+      params.push(settings.rules);
+    }
+    if (settings.avatarUrl !== undefined) {
+      updateParts.push('avatar_url = ?');
+      params.push(settings.avatarUrl);
+    }
+    if (settings.joinPolicy !== undefined) {
+      updateParts.push('join_policy = ?');
+      params.push(settings.joinPolicy);
+    }
+
+    params.push(conversationId);
+    this.getSqlite().prepare(`UPDATE conversations SET ${updateParts.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  async updateParticipantRole(conversationId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void> {
+    const isAdmin = role === 'owner' || role === 'admin' ? 1 : 0;
+    this.getSqlite().prepare(`
+      UPDATE conversation_participants
+      SET role = ?, is_admin = ?, custom_tag = ?
+      WHERE conversation_id = ? AND user_id = ?
+    `).run(role, isAdmin, customTag !== undefined ? customTag : null, conversationId, userId);
+  }
+
+  async getConversationRole(conversationId: string, userId: string): Promise<'owner' | 'admin' | 'moderator' | 'member' | null> {
+    const row = this.getSqlite().prepare(`
+      SELECT role, is_admin FROM conversation_participants
+      WHERE conversation_id = ? AND user_id = ?
+    `).get(conversationId, userId) as any;
+    if (!row) return null;
+    if (row.role) return row.role as any;
+    return row.is_admin === 1 ? 'admin' : 'member';
+  }
+
+  // Servers & Channels
+  async createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; rules?: string | null }): Promise<{ server: DbServer; channels: DbConversationSummary[] }> {
+    const serverId = 'srv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+    const sqlite = this.getSqlite();
+
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      sqlite.prepare(`
+        INSERT INTO servers (id, name, description, purpose, avatar_url, rules, owner_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(serverId, data.name, data.description || null, data.purpose || 'chat', data.avatarUrl || null, data.rules || null, ownerId);
+
+      sqlite.prepare(`
+        INSERT INTO server_members (server_id, user_id, role, joined_at)
+        VALUES (?, ?, 'owner', CURRENT_TIMESTAMP)
+      `).run(serverId, ownerId);
+
+      const defaultChannels = [
+        { name: 'genel-sohbet', isAnnouncement: 0 },
+        { name: 'duyurular', isAnnouncement: 1 },
+        { name: 'kurallar', isAnnouncement: 1 },
+      ];
+
+      const channels: DbConversationSummary[] = [];
+
+      for (const ch of defaultChannels) {
+        const chId = 'chan_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+        sqlite.prepare(`
+          INSERT INTO conversations (id, type, name, creator_id, server_id, is_announcement_only, created_at, updated_at)
+          VALUES (?, 'channel', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).run(chId, ch.name, ownerId, serverId, ch.isAnnouncement);
+
+        sqlite.prepare(`
+          INSERT INTO conversation_participants (conversation_id, user_id, is_admin, role)
+          VALUES (?, ?, 1, 'owner')
+        `).run(chId, ownerId);
+
+        channels.push({
+          id: chId,
+          type: 'channel',
+          name: ch.name,
+          creatorId: ownerId,
+          serverId,
+          isAnnouncementOnly: ch.isAnnouncement === 1,
+          adminIds: [ownerId],
+          participantCount: 1,
+          peer: null,
+          lastMessage: null,
+          unreadCount: 0,
+          updatedAt: now,
+        });
+      }
+
+      sqlite.exec('COMMIT');
+
+      const ownerUser = await this.getUserById(ownerId);
+      const server: DbServer = {
+        id: serverId,
+        name: data.name,
+        description: data.description || null,
+        purpose: data.purpose,
+        avatarUrl: data.avatarUrl || null,
+        rules: data.rules || null,
+        ownerId,
+        memberIds: [ownerId],
+        members: ownerUser ? [{
+          id: ownerUser.id,
+          displayName: ownerUser.displayName,
+          avatarUrl: ownerUser.avatarUrl,
+          role: 'owner',
+          customTag: null,
+          joinedAt: now,
+        }] : [],
+        channels,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      return { server, channels };
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async getServer(serverId: string, userId: string): Promise<DbServer | null> {
+    const s = this.getSqlite().prepare(`
+      SELECT id, name, description, purpose, avatar_url, rules, owner_id, created_at, updated_at
+      FROM servers WHERE id = ?
+    `).get(serverId) as any;
+    if (!s) return null;
+
+    const memberRows = this.getSqlite().prepare(`
+      SELECT sm.user_id, sm.role, sm.custom_tag, sm.joined_at, u.display_name, u.avatar_url
+      FROM server_members sm
+      JOIN users u ON u.id = sm.user_id
+      WHERE sm.server_id = ?
+      ORDER BY sm.joined_at ASC
+    `).all(serverId) as any[];
+
+    const memberIds = memberRows.map((m) => m.user_id);
+    const members = memberRows.map((m) => ({
+      id: m.user_id,
+      displayName: m.display_name,
+      avatarUrl: m.avatar_url || null,
+      role: m.role as any,
+      customTag: m.custom_tag || null,
+      joinedAt: m.joined_at,
+    }));
+
+    const chanRows = this.getSqlite().prepare(`
+      SELECT id, name, is_announcement_only, updated_at, creator_id
+      FROM conversations
+      WHERE server_id = ?
+      ORDER BY created_at ASC
+    `).all(serverId) as any[];
+
+    const channels: DbConversationSummary[] = chanRows.map((c) => ({
+      id: c.id,
+      type: 'channel',
+      name: c.name,
+      serverId,
+      creatorId: c.creator_id,
+      isAnnouncementOnly: c.is_announcement_only === 1,
+      adminIds: [s.owner_id],
+      participantCount: memberIds.length,
+      peer: null,
+      lastMessage: null,
+      unreadCount: 0,
+      updatedAt: c.updated_at,
+    }));
+
+    return {
+      id: s.id,
+      name: s.name,
+      description: s.description || null,
+      purpose: s.purpose || 'chat',
+      avatarUrl: s.avatar_url || null,
+      rules: s.rules || null,
+      ownerId: s.owner_id,
+      memberIds,
+      members,
+      channels,
+      createdAt: s.created_at,
+      updatedAt: s.updated_at,
+    };
+  }
+
+  async getUserServers(userId: string): Promise<DbServer[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT s.id
+      FROM servers s
+      JOIN server_members sm ON sm.server_id = s.id
+      WHERE sm.user_id = ?
+      ORDER BY s.updated_at DESC
+    `).all(userId) as any[];
+
+    const servers: DbServer[] = [];
+    for (const r of rows) {
+      const s = await this.getServer(r.id, userId);
+      if (s) servers.push(s);
+    }
+    return servers;
+  }
+
+  async getAllServers(): Promise<DbServer[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, name, description, purpose, avatar_url, rules, owner_id, created_at, updated_at
+      FROM servers
+      ORDER BY updated_at DESC
+    `).all() as any[];
+
+    const servers: DbServer[] = [];
+    for (const r of rows) {
+      const s = await this.getServer(r.id, r.owner_id);
+      if (s) servers.push(s);
+    }
+    return servers;
+  }
+
+  async createServerChannel(serverId: string, actorId: string, data: { name: string; isAnnouncementOnly?: boolean }): Promise<DbConversationSummary> {
+    const chId = 'chan_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const cleanName = data.name.replace(/^#/, '').trim();
+    const isAnnounce = data.isAnnouncementOnly ? 1 : 0;
+    const now = new Date().toISOString();
+
+    const sqlite = this.getSqlite();
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      sqlite.prepare(`
+        INSERT INTO conversations (id, type, name, creator_id, server_id, is_announcement_only, created_at, updated_at)
+        VALUES (?, 'channel', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(chId, cleanName, actorId, serverId, isAnnounce);
+
+      const members = sqlite.prepare('SELECT user_id, role, custom_tag FROM server_members WHERE server_id = ?').all(serverId) as any[];
+      for (const m of members) {
+        const isAdmin = m.role === 'owner' || m.role === 'admin' ? 1 : 0;
+        sqlite.prepare(`
+          INSERT INTO conversation_participants (conversation_id, user_id, is_admin, role, custom_tag)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(chId, m.user_id, isAdmin, m.role, m.custom_tag);
+      }
+
+      sqlite.prepare('UPDATE servers SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(serverId);
+      sqlite.exec('COMMIT');
+
+      return {
+        id: chId,
+        type: 'channel',
+        name: cleanName,
+        serverId,
+        creatorId: actorId,
+        isAnnouncementOnly: isAnnounce === 1,
+        adminIds: members.filter((m) => m.role === 'owner' || m.role === 'admin').map((m) => m.user_id),
+        participantCount: members.length,
+        peer: null,
+        lastMessage: null,
+        unreadCount: 0,
+        updatedAt: now,
+      };
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async addServerMember(serverId: string, userId: string, role: 'admin' | 'moderator' | 'member' = 'member'): Promise<void> {
+    const sqlite = this.getSqlite();
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      sqlite.prepare(`
+        INSERT OR REPLACE INTO server_members (server_id, user_id, role, joined_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(serverId, userId, role);
+
+      const channels = sqlite.prepare('SELECT id FROM conversations WHERE server_id = ?').all(serverId) as any[];
+      const isAdmin = role === 'admin' ? 1 : 0;
+      for (const ch of channels) {
+        sqlite.prepare(`
+          INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id, is_admin, role)
+          VALUES (?, ?, ?, ?)
+        `).run(ch.id, userId, isAdmin, role);
+      }
+
+      sqlite.prepare('UPDATE servers SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(serverId);
+      sqlite.exec('COMMIT');
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async removeServerMember(serverId: string, userId: string): Promise<void> {
+    const sqlite = this.getSqlite();
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      sqlite.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+      const channels = sqlite.prepare('SELECT id FROM conversations WHERE server_id = ?').all(serverId) as any[];
+      for (const ch of channels) {
+        sqlite.prepare('DELETE FROM conversation_participants WHERE conversation_id = ? AND user_id = ?').run(ch.id, userId);
+      }
+      sqlite.prepare('UPDATE servers SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(serverId);
+      sqlite.exec('COMMIT');
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async updateServerMemberRole(serverId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void> {
+    const sqlite = this.getSqlite();
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      if (customTag !== undefined) {
+        sqlite.prepare(`
+          UPDATE server_members SET role = ?, custom_tag = ? WHERE server_id = ? AND user_id = ?
+        `).run(role, customTag, serverId, userId);
+      } else {
+        sqlite.prepare(`
+          UPDATE server_members SET role = ? WHERE server_id = ? AND user_id = ?
+        `).run(role, serverId, userId);
+      }
+
+      const isAdmin = role === 'owner' || role === 'admin' ? 1 : 0;
+      const channels = sqlite.prepare('SELECT id FROM conversations WHERE server_id = ?').all(serverId) as any[];
+      for (const ch of channels) {
+        if (customTag !== undefined) {
+          sqlite.prepare(`
+            UPDATE conversation_participants SET role = ?, is_admin = ?, custom_tag = ?
+            WHERE conversation_id = ? AND user_id = ?
+          `).run(role, isAdmin, customTag, ch.id, userId);
+        } else {
+          sqlite.prepare(`
+            UPDATE conversation_participants SET role = ?, is_admin = ?
+            WHERE conversation_id = ? AND user_id = ?
+          `).run(role, isAdmin, ch.id, userId);
+        }
+      }
+      sqlite.exec('COMMIT');
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; purpose?: ServerPurpose }): Promise<void> {
+    const updateParts: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+    const params: any[] = [];
+
+    if (updates.name !== undefined) {
+      updateParts.push('name = ?');
+      params.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      updateParts.push('description = ?');
+      params.push(updates.description);
+    }
+    if (updates.rules !== undefined) {
+      updateParts.push('rules = ?');
+      params.push(updates.rules);
+    }
+    if (updates.avatarUrl !== undefined) {
+      updateParts.push('avatar_url = ?');
+      params.push(updates.avatarUrl);
+    }
+    if (updates.purpose !== undefined) {
+      updateParts.push('purpose = ?');
+      params.push(updates.purpose);
+    }
+
+    params.push(serverId);
+    this.getSqlite().prepare(`UPDATE servers SET ${updateParts.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  async isServerMember(serverId: string, userId: string): Promise<boolean> {
+    const row = this.getSqlite().prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId);
+    return !!row;
+  }
+
+  async isServerAdmin(serverId: string, userId: string): Promise<boolean> {
+    const row = this.getSqlite().prepare(`
+      SELECT 1 FROM server_members
+      WHERE server_id = ? AND user_id = ? AND role IN ('owner', 'admin')
+    `).get(serverId, userId);
+    if (row) return true;
+
+    const s = this.getSqlite().prepare('SELECT owner_id FROM servers WHERE id = ?').get(serverId) as any;
+    return s?.owner_id === userId;
+  }
+
+  // Membership Invitations & Join Requests
+  async createMembershipInvitation(invitation: Omit<DbMembershipInvitation, 'id' | 'createdAt' | 'status'> & { id?: string }): Promise<DbMembershipInvitation> {
+    const id = invitation.id || 'inv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    this.getSqlite().prepare(`
+      INSERT INTO membership_invitations (id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(id, invitation.targetType, invitation.targetId, invitation.targetName, invitation.userId, invitation.userDisplayName, invitation.type, invitation.createdById, now);
+
+    return {
+      id,
+      targetType: invitation.targetType,
+      targetId: invitation.targetId,
+      targetName: invitation.targetName,
+      userId: invitation.userId,
+      userDisplayName: invitation.userDisplayName,
+      type: invitation.type,
+      status: 'pending',
+      createdById: invitation.createdById,
+      createdAt: now,
+      resolvedAt: null,
+      resolvedById: null,
+    };
+  }
+
+  async getUserInvitations(userId: string): Promise<DbMembershipInvitation[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at, resolved_at, resolved_by_id
+      FROM membership_invitations
+      WHERE user_id = ? AND type = 'invite' AND status = 'pending'
+      ORDER BY created_at DESC
+    `).all(userId) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      targetType: r.target_type,
+      targetId: r.target_id,
+      targetName: r.target_name,
+      userId: r.user_id,
+      userDisplayName: r.user_display_name,
+      type: r.type,
+      status: r.status,
+      createdById: r.created_by_id,
+      createdAt: r.created_at,
+      resolvedAt: r.resolved_at || null,
+      resolvedById: r.resolved_by_id || null,
+    }));
+  }
+
+  async getTargetJoinRequests(targetType: 'group' | 'server', targetId: string): Promise<DbMembershipInvitation[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at, resolved_at, resolved_by_id
+      FROM membership_invitations
+      WHERE target_id = ? AND type = 'request' AND status = 'pending'
+      ORDER BY created_at DESC
+    `).all(targetId) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      targetType: r.target_type,
+      targetId: r.target_id,
+      targetName: r.target_name,
+      userId: r.user_id,
+      userDisplayName: r.user_display_name,
+      type: r.type,
+      status: r.status,
+      createdById: r.created_by_id,
+      createdAt: r.created_at,
+      resolvedAt: r.resolved_at || null,
+      resolvedById: r.resolved_by_id || null,
+    }));
+  }
+
+  async resolveMembershipInvitation(id: string, status: 'accepted' | 'declined' | 'approved' | 'rejected', actorId: string): Promise<DbMembershipInvitation | null> {
+    const now = new Date().toISOString();
+    const res = this.getSqlite().prepare(`
+      UPDATE membership_invitations
+      SET status = ?, resolved_at = ?, resolved_by_id = ?
+      WHERE id = ?
+    `).run(status, now, actorId, id);
+
+    if (res.changes === 0) return null;
+
+    const r = this.getSqlite().prepare(`
+      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at, resolved_at, resolved_by_id
+      FROM membership_invitations
+      WHERE id = ?
+    `).get(id) as any;
+
+    if (!r) return null;
+    return {
+      id: r.id,
+      targetType: r.target_type,
+      targetId: r.target_id,
+      targetName: r.target_name,
+      userId: r.user_id,
+      userDisplayName: r.user_display_name,
+      type: r.type,
+      status: r.status,
+      createdById: r.created_by_id,
+      createdAt: r.created_at,
+      resolvedAt: r.resolved_at || null,
+      resolvedById: r.resolved_by_id || null,
+    };
+  }
+
+  async hasActiveInvitationOrRequest(targetId: string, userId: string): Promise<boolean> {
+    const row = this.getSqlite().prepare(`
+      SELECT 1 FROM membership_invitations
+      WHERE target_id = ? AND user_id = ? AND status = 'pending'
+    `).get(targetId, userId);
+    return !!row;
   }
 }

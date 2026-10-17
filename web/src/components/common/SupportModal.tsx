@@ -147,7 +147,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose }) =
               </div>
               <div className="col-span-2 truncate">
                 <span className="text-slate-500">Kullanıcı: </span>
-                {user?.email || 'Giriş yapılmadı'}
+                {user?.displayName || 'Kullanıcı'}
               </div>
               <div className="col-span-2 truncate">
                 <span className="text-slate-500">Zaman: </span>

@@ -16,6 +16,9 @@ import {
   DbTelegramBot,
   TelegramCommandConfig,
   DbSupportReport,
+  DbServer,
+  ServerPurpose,
+  DbMembershipInvitation,
 } from './types.js';
 
 export class FirestoreStore implements DataStore {
@@ -261,6 +264,7 @@ export class FirestoreStore implements DataStore {
         {
           attemptCount: (d.attemptCount || 1) + 1,
           lastAttemptAt: now,
+          status: 'pending',
           displayName: displayName || d.displayName || null,
           avatarUrl: avatarUrl || d.avatarUrl || null,
         },
@@ -285,19 +289,48 @@ export class FirestoreStore implements DataStore {
     const requests: DbPendingAccessRequest[] = [];
     snap.forEach((doc) => {
       const d = doc.data();
-      requests.push({
-        id: d.id || doc.id,
-        email: d.email || doc.id,
-        displayName: d.displayName || null,
-        avatarUrl: d.avatarUrl || null,
-        firstAttemptAt: d.firstAttemptAt || new Date().toISOString(),
-        lastAttemptAt: d.lastAttemptAt || new Date().toISOString(),
-        attemptCount: d.attemptCount || 1,
-        status: (d.status || 'pending') as 'pending' | 'approved' | 'rejected',
-      });
+      const status = (d.status || 'pending') as 'pending' | 'approved' | 'rejected';
+      if (status === 'pending') {
+        requests.push({
+          id: d.id || doc.id,
+          email: d.email || doc.id,
+          displayName: d.displayName || null,
+          avatarUrl: d.avatarUrl || null,
+          firstAttemptAt: d.firstAttemptAt || new Date().toISOString(),
+          lastAttemptAt: d.lastAttemptAt || new Date().toISOString(),
+          attemptCount: d.attemptCount || 1,
+          status,
+        });
+      }
     });
 
     return requests.sort((a, b) => b.lastAttemptAt.localeCompare(a.lastAttemptAt));
+  }
+
+  async getResolvedAccessRequests(limit = 50): Promise<DbPendingAccessRequest[]> {
+    const snap = await this.getFirestore().collection('pending_access_requests').get();
+    const requests: DbPendingAccessRequest[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data();
+      const status = (d.status || 'pending') as 'pending' | 'approved' | 'rejected';
+      if (status === 'approved' || status === 'rejected') {
+        requests.push({
+          id: d.id || doc.id,
+          email: d.email || doc.id,
+          displayName: d.displayName || null,
+          avatarUrl: d.avatarUrl || null,
+          firstAttemptAt: d.firstAttemptAt || new Date().toISOString(),
+          lastAttemptAt: d.lastAttemptAt || new Date().toISOString(),
+          attemptCount: d.attemptCount || 1,
+          status,
+          resolvedAt: d.resolvedAt || d.lastAttemptAt || null,
+        });
+      }
+    });
+
+    return requests
+      .sort((a, b) => b.lastAttemptAt.localeCompare(a.lastAttemptAt))
+      .slice(0, Math.min(Math.max(limit, 1), 100));
   }
 
   async resolvePendingAccess(email: string, status: 'approved' | 'rejected'): Promise<void> {
@@ -305,8 +338,12 @@ export class FirestoreStore implements DataStore {
     const ref = this.getFirestore().collection('pending_access_requests').doc(normalized);
     const doc = await ref.get();
     if (doc.exists) {
-      await ref.set({ status }, { merge: true });
+      await ref.set({ status, resolvedAt: new Date().toISOString() }, { merge: true });
     }
+  }
+
+  async rejectPendingAccess(email: string): Promise<void> {
+    await this.resolvePendingAccess(email, 'rejected');
   }
 
   // Users
@@ -631,16 +668,20 @@ export class FirestoreStore implements DataStore {
           }
         }
       } else {
-        // Group participants
+        // Group or channel participants
         for (const pid of participants) {
           const pUser = await this.getUserById(pid);
           if (pUser) {
+            const role = (data.roles?.[pid] || (data.adminIds?.includes(pid) ? 'admin' : (data.creatorId === pid ? 'owner' : 'member'))) as 'owner' | 'admin' | 'moderator' | 'member';
             participantList.push({
               id: pUser.id,
               email: pUser.email,
               displayName: pUser.displayName,
               avatarUrl: pUser.avatarUrl,
-              isAdmin: (data.adminIds as string[])?.includes(pid) || data.creatorId === pid,
+              isAdmin: (data.adminIds as string[])?.includes(pid) || data.creatorId === pid || role === 'owner' || role === 'admin',
+              role,
+              customTag: data.customTags?.[pid] || null,
+              joinedAt: data.joinedAts?.[pid] || undefined,
             });
           }
         }
@@ -672,12 +713,17 @@ export class FirestoreStore implements DataStore {
       summaries.push({
         id: doc.id,
         type: data.type || 'direct',
-        name: data.type === 'direct' && peer ? peer.displayName : data.name || 'Chat',
+        name: data.type === 'direct' && peer ? peer.displayName : data.name || (data.type === 'channel' ? 'Kanal' : 'Chat'),
+        description: data.description || null,
+        rules: data.rules || null,
+        joinPolicy: data.joinPolicy || 'auto',
         avatarUrl: data.avatarUrl || null,
         creatorId: data.creatorId || null,
+        serverId: data.serverId || null,
+        isAnnouncementOnly: !!data.isAnnouncementOnly,
         adminIds: data.adminIds || [],
         participantCount: participants.length,
-        participants: data.type === 'group' ? participantList : undefined,
+        participants: data.type === 'group' || data.type === 'channel' ? participantList : undefined,
         peer,
         lastMessage,
         unreadCount,
@@ -690,7 +736,15 @@ export class FirestoreStore implements DataStore {
 
   async getConversation(conversationId: string, userId: string): Promise<DbConversationSummary | null> {
     const isParticipant = await this.isConversationParticipant(conversationId, userId);
-    if (!isParticipant) return null;
+    if (!isParticipant) {
+      const user = await this.getUserById(userId);
+      if (user?.isAdmin) {
+        const allGroups = await this.getAllGroups();
+        const match = allGroups.find((g) => g.id === conversationId);
+        if (match) return match;
+      }
+      return null;
+    }
 
     const convs = await this.getUserConversations(userId);
     return convs.find((c) => c.id === conversationId) || null;
@@ -743,8 +797,15 @@ export class FirestoreStore implements DataStore {
     const uniqueParticipants = Array.from(new Set([creatorId, ...memberIds]));
 
     const unreadCounts: Record<string, number> = {};
+    const roles: Record<string, string> = { [creatorId]: 'owner' };
+    const joinedAts: Record<string, string> = { [creatorId]: now };
+
     for (const pid of uniqueParticipants) {
       unreadCounts[pid] = 0;
+      if (pid !== creatorId) {
+        roles[pid] = 'member';
+        joinedAts[pid] = now;
+      }
     }
 
     const convData = {
@@ -755,6 +816,10 @@ export class FirestoreStore implements DataStore {
       creatorId,
       adminIds: [creatorId],
       participantIds: uniqueParticipants,
+      roles,
+      joinedAts,
+      customTags: {},
+      joinPolicy: 'auto',
       unreadCounts,
       lastReadMessageIds: {},
       createdAt: now,
@@ -768,10 +833,20 @@ export class FirestoreStore implements DataStore {
 
   async addConversationParticipants(conversationId: string, userIds: string[]): Promise<void> {
     const convRef = this.getFirestore().collection('conversations').doc(conversationId);
+    const now = new Date().toISOString();
+    const rolesUpdates: Record<string, string> = {};
+    const joinedUpdates: Record<string, string> = {};
+    for (const uid of userIds) {
+      rolesUpdates[`roles.${uid}`] = 'member';
+      joinedUpdates[`joinedAts.${uid}`] = now;
+    }
+
     await convRef.set(
       {
         participantIds: FieldValue.arrayUnion(...userIds),
-        updatedAt: new Date().toISOString(),
+        ...rolesUpdates,
+        ...joinedUpdates,
+        updatedAt: now,
       },
       { merge: true }
     );
@@ -809,6 +884,7 @@ export class FirestoreStore implements DataStore {
     if (!doc.exists) return false;
     const data = doc.data();
     if (data?.creatorId === userId) return true;
+    if (data?.roles?.[userId] === 'owner' || data?.roles?.[userId] === 'admin') return true;
     return Array.isArray(data?.adminIds) && data.adminIds.includes(userId);
   }
 
@@ -1406,5 +1482,546 @@ export class FirestoreStore implements DataStore {
 
     results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return results.slice(0, 50);
+  }
+
+  // Groups Management & Roles
+  async getAllGroups(): Promise<DbConversationSummary[]> {
+    const snap = await this.getFirestore()
+      .collection('conversations')
+      .where('type', '==', 'group')
+      .get();
+
+    const groups: DbConversationSummary[] = [];
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const participants = (data.participantIds as string[]) || [];
+      const participantList: any[] = [];
+
+      for (const pid of participants) {
+        const pUser = await this.getUserById(pid);
+        if (pUser) {
+          const role = (data.roles?.[pid] || (data.adminIds?.includes(pid) ? 'admin' : (data.creatorId === pid ? 'owner' : 'member'))) as 'owner' | 'admin' | 'moderator' | 'member';
+          participantList.push({
+            id: pUser.id,
+            email: pUser.email,
+            displayName: pUser.displayName,
+            avatarUrl: pUser.avatarUrl,
+            isAdmin: role === 'owner' || role === 'admin' || (data.adminIds as string[])?.includes(pid),
+            role,
+            customTag: data.customTags?.[pid] || null,
+            joinedAt: data.joinedAts?.[pid] || undefined,
+          });
+        }
+      }
+
+      groups.push({
+        id: doc.id,
+        type: 'group',
+        name: data.name || 'Grup',
+        description: data.description || null,
+        rules: data.rules || null,
+        joinPolicy: data.joinPolicy || 'auto',
+        avatarUrl: data.avatarUrl || null,
+        creatorId: data.creatorId || null,
+        serverId: null,
+        isAnnouncementOnly: false,
+        adminIds: data.adminIds || [],
+        participantCount: participants.length,
+        participants: participantList,
+        peer: null,
+        lastMessage: null,
+        unreadCount: 0,
+        updatedAt: data.updatedAt || new Date().toISOString(),
+      });
+    }
+
+    return groups.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async updateGroupSettings(conversationId: string, settings: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; joinPolicy?: 'auto' | 'invite' | 'request' }): Promise<void> {
+    const convRef = this.getFirestore().collection('conversations').doc(conversationId);
+    const data: any = { updatedAt: new Date().toISOString() };
+    if (settings.name !== undefined) data.name = settings.name;
+    if (settings.description !== undefined) data.description = settings.description;
+    if (settings.rules !== undefined) data.rules = settings.rules;
+    if (settings.avatarUrl !== undefined) data.avatarUrl = settings.avatarUrl;
+    if (settings.joinPolicy !== undefined) data.joinPolicy = settings.joinPolicy;
+    await convRef.set(data, { merge: true });
+  }
+
+  async updateParticipantRole(conversationId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void> {
+    const convRef = this.getFirestore().collection('conversations').doc(conversationId);
+    const doc = await convRef.get();
+    if (!doc.exists) return;
+    const data = doc.data()!;
+    const adminIds = new Set<string>(data.adminIds || []);
+    if (role === 'owner' || role === 'admin') {
+      adminIds.add(userId);
+    } else {
+      adminIds.delete(userId);
+    }
+    const updatePayload: any = {
+      adminIds: Array.from(adminIds),
+      [`roles.${userId}`]: role,
+      updatedAt: new Date().toISOString(),
+    };
+    if (customTag !== undefined) {
+      updatePayload[`customTags.${userId}`] = customTag;
+    }
+    await convRef.update(updatePayload);
+  }
+
+  async getConversationRole(conversationId: string, userId: string): Promise<'owner' | 'admin' | 'moderator' | 'member' | null> {
+    const doc = await this.getFirestore().collection('conversations').doc(conversationId).get();
+    if (!doc.exists) return null;
+    const data = doc.data()!;
+    if (data.roles?.[userId]) return data.roles[userId];
+    if (data.creatorId === userId) return 'owner';
+    if (Array.isArray(data.adminIds) && data.adminIds.includes(userId)) return 'admin';
+    if (Array.isArray(data.participantIds) && data.participantIds.includes(userId)) return 'member';
+    return null;
+  }
+
+  // Servers & Channels
+  async createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; rules?: string | null }): Promise<{ server: DbServer; channels: DbConversationSummary[] }> {
+    const serverId = 'srv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    const serverDoc = {
+      id: serverId,
+      name: data.name,
+      description: data.description || null,
+      purpose: data.purpose || 'chat',
+      avatarUrl: data.avatarUrl || null,
+      rules: data.rules || null,
+      ownerId,
+      memberIds: [ownerId],
+      roles: { [ownerId]: 'owner' },
+      customTags: {},
+      joinedAts: { [ownerId]: now },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.getFirestore().collection('servers').doc(serverId).set(serverDoc);
+
+    const defaultChannels = [
+      { name: 'genel-sohbet', isAnnouncement: false },
+      { name: 'duyurular', isAnnouncement: true },
+      { name: 'kurallar', isAnnouncement: true },
+    ];
+
+    const channels: DbConversationSummary[] = [];
+
+    for (const ch of defaultChannels) {
+      const chId = 'chan_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+      const chDoc = {
+        id: chId,
+        type: 'channel',
+        name: ch.name,
+        creatorId: ownerId,
+        serverId,
+        isAnnouncementOnly: ch.isAnnouncement,
+        participantIds: [ownerId],
+        adminIds: [ownerId],
+        roles: { [ownerId]: 'owner' },
+        customTags: {},
+        joinedAts: { [ownerId]: now },
+        unreadCounts: { [ownerId]: 0 },
+        lastReadMessageIds: {},
+        createdAt: now,
+        updatedAt: now,
+        messageCount: 0,
+      };
+
+      await this.getFirestore().collection('conversations').doc(chId).set(chDoc);
+
+      channels.push({
+        id: chId,
+        type: 'channel',
+        name: ch.name,
+        creatorId: ownerId,
+        serverId,
+        isAnnouncementOnly: ch.isAnnouncement,
+        adminIds: [ownerId],
+        participantCount: 1,
+        peer: null,
+        lastMessage: null,
+        unreadCount: 0,
+        updatedAt: now,
+      });
+    }
+
+    const ownerUser = await this.getUserById(ownerId);
+    const server: DbServer = {
+      id: serverId,
+      name: data.name,
+      description: data.description || null,
+      purpose: data.purpose,
+      avatarUrl: data.avatarUrl || null,
+      rules: data.rules || null,
+      ownerId,
+      memberIds: [ownerId],
+      members: ownerUser ? [{
+        id: ownerUser.id,
+        displayName: ownerUser.displayName,
+        avatarUrl: ownerUser.avatarUrl,
+        role: 'owner',
+        customTag: null,
+        joinedAt: now,
+      }] : [],
+      channels,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    return { server, channels };
+  }
+
+  async getServer(serverId: string, userId: string): Promise<DbServer | null> {
+    const sDoc = await this.getFirestore().collection('servers').doc(serverId).get();
+    if (!sDoc.exists) return null;
+    const data = sDoc.data()!;
+
+    const memberIds = (data.memberIds as string[]) || [];
+    const members: any[] = [];
+    for (const mid of memberIds) {
+      const u = await this.getUserById(mid);
+      if (u) {
+        members.push({
+          id: u.id,
+          displayName: u.displayName,
+          avatarUrl: u.avatarUrl,
+          role: data.roles?.[mid] || (data.ownerId === mid ? 'owner' : 'member'),
+          customTag: data.customTags?.[mid] || null,
+          joinedAt: data.joinedAts?.[mid] || data.createdAt,
+        });
+      }
+    }
+
+    const chanSnap = await this.getFirestore().collection('conversations')
+      .where('serverId', '==', serverId)
+      .get();
+
+    const channels: DbConversationSummary[] = [];
+    for (const c of chanSnap.docs) {
+      const cd = c.data();
+      channels.push({
+        id: c.id,
+        type: 'channel',
+        name: cd.name,
+        serverId,
+        creatorId: cd.creatorId,
+        isAnnouncementOnly: !!cd.isAnnouncementOnly,
+        adminIds: cd.adminIds || [data.ownerId],
+        participantCount: memberIds.length,
+        peer: null,
+        lastMessage: null,
+        unreadCount: 0,
+        updatedAt: cd.updatedAt || data.updatedAt,
+      });
+    }
+
+    return {
+      id: sDoc.id,
+      name: data.name,
+      description: data.description || null,
+      purpose: data.purpose || 'chat',
+      avatarUrl: data.avatarUrl || null,
+      rules: data.rules || null,
+      ownerId: data.ownerId,
+      memberIds,
+      members,
+      channels: channels.sort((a, b) => a.name.localeCompare(b.name)),
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+    };
+  }
+
+  async getUserServers(userId: string): Promise<DbServer[]> {
+    const snap = await this.getFirestore().collection('servers')
+      .where('memberIds', 'array-contains', userId)
+      .get();
+
+    const servers: DbServer[] = [];
+    for (const doc of snap.docs) {
+      const s = await this.getServer(doc.id, userId);
+      if (s) servers.push(s);
+    }
+    return servers.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getAllServers(): Promise<DbServer[]> {
+    const snap = await this.getFirestore().collection('servers').get();
+    const servers: DbServer[] = [];
+    for (const doc of snap.docs) {
+      const s = await this.getServer(doc.id, doc.data()?.ownerId || '');
+      if (s) servers.push(s);
+    }
+    return servers.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async createServerChannel(serverId: string, actorId: string, data: { name: string; isAnnouncementOnly?: boolean }): Promise<DbConversationSummary> {
+    const sDoc = await this.getFirestore().collection('servers').doc(serverId).get();
+    if (!sDoc.exists) throw new Error('Server not found');
+    const sData = sDoc.data()!;
+    const memberIds = (sData.memberIds as string[]) || [];
+
+    const chId = 'chan_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const cleanName = data.name.replace(/^#/, '').trim();
+    const now = new Date().toISOString();
+
+    const roles: Record<string, string> = {};
+    const customTags: Record<string, string> = {};
+    const joinedAts: Record<string, string> = {};
+    const unreadCounts: Record<string, number> = {};
+
+    for (const mid of memberIds) {
+      roles[mid] = sData.roles?.[mid] || (sData.ownerId === mid ? 'owner' : 'member');
+      if (sData.customTags?.[mid]) customTags[mid] = sData.customTags[mid];
+      joinedAts[mid] = now;
+      unreadCounts[mid] = 0;
+    }
+
+    const chDoc = {
+      id: chId,
+      type: 'channel',
+      name: cleanName,
+      creatorId: actorId,
+      serverId,
+      isAnnouncementOnly: !!data.isAnnouncementOnly,
+      participantIds: memberIds,
+      adminIds: memberIds.filter((mid) => roles[mid] === 'owner' || roles[mid] === 'admin'),
+      roles,
+      customTags,
+      joinedAts,
+      unreadCounts,
+      lastReadMessageIds: {},
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+    };
+
+    await this.getFirestore().collection('conversations').doc(chId).set(chDoc);
+    await this.getFirestore().collection('servers').doc(serverId).update({ updatedAt: now });
+
+    return {
+      id: chId,
+      type: 'channel',
+      name: cleanName,
+      serverId,
+      creatorId: actorId,
+      isAnnouncementOnly: !!data.isAnnouncementOnly,
+      adminIds: chDoc.adminIds,
+      participantCount: memberIds.length,
+      peer: null,
+      lastMessage: null,
+      unreadCount: 0,
+      updatedAt: now,
+    };
+  }
+
+  async addServerMember(serverId: string, userId: string, role: 'admin' | 'moderator' | 'member' = 'member'): Promise<void> {
+    const sRef = this.getFirestore().collection('servers').doc(serverId);
+    const now = new Date().toISOString();
+
+    await sRef.set(
+      {
+        memberIds: FieldValue.arrayUnion(userId),
+        [`roles.${userId}`]: role,
+        [`joinedAts.${userId}`]: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    const chanSnap = await this.getFirestore().collection('conversations')
+      .where('serverId', '==', serverId)
+      .get();
+
+    for (const c of chanSnap.docs) {
+      const cRef = this.getFirestore().collection('conversations').doc(c.id);
+      const updateData: any = {
+        participantIds: FieldValue.arrayUnion(userId),
+        [`roles.${userId}`]: role,
+        [`joinedAts.${userId}`]: now,
+        [`unreadCounts.${userId}`]: 0,
+        updatedAt: now,
+      };
+      if (role === 'admin') {
+        updateData.adminIds = FieldValue.arrayUnion(userId);
+      }
+      await cRef.set(updateData, { merge: true });
+    }
+  }
+
+  async removeServerMember(serverId: string, userId: string): Promise<void> {
+    const sRef = this.getFirestore().collection('servers').doc(serverId);
+    const now = new Date().toISOString();
+
+    await sRef.update({
+      memberIds: FieldValue.arrayRemove(userId),
+      [`roles.${userId}`]: FieldValue.delete(),
+      [`customTags.${userId}`]: FieldValue.delete(),
+      [`joinedAts.${userId}`]: FieldValue.delete(),
+      updatedAt: now,
+    });
+
+    const chanSnap = await this.getFirestore().collection('conversations')
+      .where('serverId', '==', serverId)
+      .get();
+
+    for (const c of chanSnap.docs) {
+      await this.getFirestore().collection('conversations').doc(c.id).update({
+        participantIds: FieldValue.arrayRemove(userId),
+        adminIds: FieldValue.arrayRemove(userId),
+        [`roles.${userId}`]: FieldValue.delete(),
+        [`customTags.${userId}`]: FieldValue.delete(),
+        [`joinedAts.${userId}`]: FieldValue.delete(),
+        [`unreadCounts.${userId}`]: FieldValue.delete(),
+        updatedAt: now,
+      });
+    }
+  }
+
+  async updateServerMemberRole(serverId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void> {
+    const sRef = this.getFirestore().collection('servers').doc(serverId);
+    const now = new Date().toISOString();
+    const updateData: any = {
+      [`roles.${userId}`]: role,
+      updatedAt: now,
+    };
+    if (customTag !== undefined) {
+      updateData[`customTags.${userId}`] = customTag;
+    }
+    await sRef.update(updateData);
+
+    const chanSnap = await this.getFirestore().collection('conversations')
+      .where('serverId', '==', serverId)
+      .get();
+
+    for (const c of chanSnap.docs) {
+      const cRef = this.getFirestore().collection('conversations').doc(c.id);
+      const cUpdate: any = {
+        [`roles.${userId}`]: role,
+        updatedAt: now,
+      };
+      if (role === 'owner' || role === 'admin') {
+        cUpdate.adminIds = FieldValue.arrayUnion(userId);
+      } else {
+        cUpdate.adminIds = FieldValue.arrayRemove(userId);
+      }
+      if (customTag !== undefined) {
+        cUpdate[`customTags.${userId}`] = customTag;
+      }
+      await cRef.update(cUpdate);
+    }
+  }
+
+  async updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; purpose?: ServerPurpose }): Promise<void> {
+    const sRef = this.getFirestore().collection('servers').doc(serverId);
+    const data: any = { updatedAt: new Date().toISOString() };
+    if (updates.name !== undefined) data.name = updates.name;
+    if (updates.description !== undefined) data.description = updates.description;
+    if (updates.rules !== undefined) data.rules = updates.rules;
+    if (updates.avatarUrl !== undefined) data.avatarUrl = updates.avatarUrl;
+    if (updates.purpose !== undefined) data.purpose = updates.purpose;
+    await sRef.set(data, { merge: true });
+  }
+
+  async isServerMember(serverId: string, userId: string): Promise<boolean> {
+    const sDoc = await this.getFirestore().collection('servers').doc(serverId).get();
+    if (!sDoc.exists) return false;
+    const data = sDoc.data()!;
+    return Array.isArray(data.memberIds) && data.memberIds.includes(userId);
+  }
+
+  async isServerAdmin(serverId: string, userId: string): Promise<boolean> {
+    const sDoc = await this.getFirestore().collection('servers').doc(serverId).get();
+    if (!sDoc.exists) return false;
+    const data = sDoc.data()!;
+    if (data.ownerId === userId) return true;
+    return data.roles?.[userId] === 'owner' || data.roles?.[userId] === 'admin';
+  }
+
+  // Membership Invitations & Join Requests
+  async createMembershipInvitation(invitation: Omit<DbMembershipInvitation, 'id' | 'createdAt' | 'status'> & { id?: string }): Promise<DbMembershipInvitation> {
+    const id = invitation.id || 'inv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    const data: DbMembershipInvitation = {
+      id,
+      targetType: invitation.targetType,
+      targetId: invitation.targetId,
+      targetName: invitation.targetName,
+      userId: invitation.userId,
+      userDisplayName: invitation.userDisplayName,
+      type: invitation.type,
+      status: 'pending',
+      createdById: invitation.createdById,
+      createdAt: now,
+      resolvedAt: null,
+      resolvedById: null,
+    };
+
+    await this.getFirestore().collection('membership_invitations').doc(id).set(data);
+    return data;
+  }
+
+  async getUserInvitations(userId: string): Promise<DbMembershipInvitation[]> {
+    const snap = await this.getFirestore().collection('membership_invitations')
+      .where('userId', '==', userId)
+      .where('type', '==', 'invite')
+      .where('status', '==', 'pending')
+      .get();
+
+    const list: DbMembershipInvitation[] = [];
+    snap.forEach((doc) => {
+      list.push(doc.data() as DbMembershipInvitation);
+    });
+
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getTargetJoinRequests(targetType: 'group' | 'server', targetId: string): Promise<DbMembershipInvitation[]> {
+    const snap = await this.getFirestore().collection('membership_invitations')
+      .where('targetId', '==', targetId)
+      .where('type', '==', 'request')
+      .where('status', '==', 'pending')
+      .get();
+
+    const list: DbMembershipInvitation[] = [];
+    snap.forEach((doc) => {
+      list.push(doc.data() as DbMembershipInvitation);
+    });
+
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async resolveMembershipInvitation(id: string, status: 'accepted' | 'declined' | 'approved' | 'rejected', actorId: string): Promise<DbMembershipInvitation | null> {
+    const ref = this.getFirestore().collection('membership_invitations').doc(id);
+    const doc = await ref.get();
+    if (!doc.exists) return null;
+
+    const now = new Date().toISOString();
+    await ref.set({
+      status,
+      resolvedAt: now,
+      resolvedById: actorId,
+    }, { merge: true });
+
+    const updated = await ref.get();
+    return updated.data() as DbMembershipInvitation;
+  }
+
+  async hasActiveInvitationOrRequest(targetId: string, userId: string): Promise<boolean> {
+    const snap = await this.getFirestore().collection('membership_invitations')
+      .where('targetId', '==', targetId)
+      .where('userId', '==', userId)
+      .where('status', '==', 'pending')
+      .limit(1)
+      .get();
+
+    return !snap.empty;
   }
 }

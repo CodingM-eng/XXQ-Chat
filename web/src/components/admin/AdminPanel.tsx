@@ -11,6 +11,8 @@ import {
   TelegramCommandConfig,
   SupportReport,
   DriveStatus,
+  Conversation,
+  Server,
 } from '../../types';
 import {
   Shield,
@@ -26,6 +28,7 @@ import {
   CheckCircle,
   X,
   UserCheck,
+  UserX,
   Clock,
   RefreshCw,
   HardDrive,
@@ -39,6 +42,8 @@ import {
   Activity,
   Key,
   Terminal,
+  Layers,
+  Server as ServerIcon,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -50,6 +55,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
   const [whitelistMode, setWhitelistMode] = useState<boolean>(true);
   const [whitelist, setWhitelist] = useState<WhitelistItem[]>([]);
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [resolvedRequests, setResolvedRequests] = useState<PendingRequest[]>([]);
+  const [adminGroups, setAdminGroups] = useState<Conversation[]>([]);
+  const [adminServers, setAdminServers] = useState<Server[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [moderators, setModerators] = useState<User[]>([]);
   const [driveAccounts, setDriveAccounts] = useState<DriveAccount[]>([]);
@@ -64,13 +72,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'pending' | 'whitelist' | 'moderators' | 'drive' | 'telegram' | 'audit' | 'reports'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'whitelist' | 'moderators' | 'groups_servers' | 'drive' | 'telegram' | 'audit' | 'reports'>('pending');
+  const [pendingSubTab, setPendingSubTab] = useState<'active' | 'history'>('active');
+  const [groupsServersSubTab, setGroupsServersSubTab] = useState<'groups' | 'servers'>('groups');
 
   // Search & input states
   const [searchQuery, setSearchQuery] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [approvingEmail, setApprovingEmail] = useState<string | null>(null);
+  const [rejectingEmail, setRejectingEmail] = useState<string | null>(null);
+  const [forceAddModal, setForceAddModal] = useState<{
+    targetType: 'group' | 'server';
+    targetId: string;
+    targetName: string;
+    selectedUserId: string;
+    submitting: boolean;
+  } | null>(null);
 
   // Confirmation Modals
   const [confirmToggleModal, setConfirmToggleModal] = useState<boolean>(false);
@@ -111,10 +129,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
     try {
       setLoading(true);
       setError(null);
-      const [statusRes, whitelistRes, pendingRes, logsRes, modsRes, driveRes, botsRes, usersRes, reportsRes, driveStatusRes] = await Promise.all([
+      const [statusRes, whitelistRes, pendingRes, resolvedRes, logsRes, modsRes, driveRes, botsRes, usersRes, reportsRes, driveStatusRes, groupsRes, serversRes] = await Promise.all([
         api.getAdminStatus(),
         api.getWhitelist(),
         api.getPendingRequests().catch(() => ({ pendingRequests: [] })),
+        api.getPendingHistory(50).catch(() => ({ resolvedRequests: [] })),
         api.getAuditLogs(50).catch(() => ({ auditLogs: [] })),
         api.getModerators().catch(() => ({ moderators: [] })),
         api.getDriveAccounts().catch(() => ({ accounts: [] })),
@@ -122,12 +141,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         api.getAdminUsers().catch(() => ({ users: [] })),
         api.getSupportReports(50).catch(() => ({ reports: [] })),
         api.getDriveStatus().catch(() => null),
+        api.getAdminGroups().catch(() => ({ groups: [] })),
+        api.getAdminServers().catch(() => ({ servers: [] })),
       ]);
 
       setStats(statusRes.stats);
       setWhitelistMode(statusRes.whitelistMode);
       setWhitelist(whitelistRes.whitelist || []);
       setPendingRequests(pendingRes.pendingRequests || []);
+      setResolvedRequests(resolvedRes.resolvedRequests || []);
+      setAdminGroups(groupsRes.groups || []);
+      setAdminServers(serversRes.servers || []);
       setAuditLogs(logsRes.auditLogs || []);
       setModerators(modsRes.moderators || []);
       setDriveAccounts(driveRes.accounts || []);
@@ -187,6 +211,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setError(err.message || 'Erişim talebi onaylanırken bir hata oluştu');
     } finally {
       setApprovingEmail(null);
+    }
+  };
+
+  const handleRejectPending = async (email: string) => {
+    try {
+      setRejectingEmail(email);
+      setError(null);
+      await api.rejectPendingRequest(email);
+      setSuccessMsg(`${email} kullanıcısının erişim talebi reddedildi`);
+      loadAdminData();
+    } catch (err: any) {
+      setError(err.message || 'Erişim talebi reddedilirken bir hata oluştu');
+    } finally {
+      setRejectingEmail(null);
+    }
+  };
+
+  const handleForceAdd = async () => {
+    if (!forceAddModal || !forceAddModal.selectedUserId || forceAddModal.submitting) return;
+    try {
+      setForceAddModal({ ...forceAddModal, submitting: true });
+      setError(null);
+      if (forceAddModal.targetType === 'group') {
+        await api.adminForceAddGroupMember(forceAddModal.targetId, forceAddModal.selectedUserId);
+        setSuccessMsg(`Kullanıcı "${forceAddModal.targetName}" grubuna başarıyla eklendi`);
+      } else {
+        await api.adminForceAddServerMember(forceAddModal.targetId, forceAddModal.selectedUserId);
+        setSuccessMsg(`Kullanıcı "${forceAddModal.targetName}" sunucusuna başarıyla eklendi`);
+      }
+      setForceAddModal(null);
+      loadAdminData();
+    } catch (err: any) {
+      setError(err.message || 'Kullanıcı eklenirken bir hata oluştu');
+      setForceAddModal((prev) => (prev ? { ...prev, submitting: false } : null));
     }
   };
 
@@ -603,6 +661,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
           </button>
 
           <button
+            onClick={() => setActiveTab('groups_servers')}
+            className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'groups_servers'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                : 'bg-[#120e20] text-slate-400 hover:text-white border border-[#241c38]'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Gruplar ve Sunucular ({adminGroups.length + adminServers.length})</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('drive')}
             className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
               activeTab === 'drive'
@@ -659,57 +729,152 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         {/* TAB 1: PENDING REQUESTS */}
         {activeTab === 'pending' && (
           <div className="bg-[#120e20] border border-[#261d3d] rounded-2xl p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#201834]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#201834]">
               <div>
-                <h2 className="text-base font-bold text-white">Erişim Onayı Bekleyen Hesaplar</h2>
+                <h2 className="text-base font-bold text-white">Erişim Talepleri Yönetimi</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Giriş yapmaya çalışan ancak beyaz listede henüz onaylanmamış kullanıcılar.
+                  XXQ Chat'e giriş yapmaya çalışan kullanıcıların erişim izinleri ve geçmişi.
                 </p>
+              </div>
+
+              {/* Sub-tab switcher */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPendingSubTab('active')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    pendingSubTab === 'active'
+                      ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                      : 'bg-[#1b152d] text-slate-400 hover:text-white border border-[#2a2042]'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Bekleyen Talepler</span>
+                  {pendingRequests.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-extrabold border border-amber-500/30">
+                      {pendingRequests.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setPendingSubTab('history')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    pendingSubTab === 'history'
+                      ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                      : 'bg-[#1b152d] text-slate-400 hover:text-white border border-[#2a2042]'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Talep Geçmişi ({resolvedRequests.length})</span>
+                </button>
               </div>
             </div>
 
-            {pendingRequests.length === 0 ? (
-              <div className="py-12 text-center text-slate-500">
-                <Clock className="w-10 h-10 mx-auto mb-2 text-slate-600" />
-                <p className="text-sm font-semibold text-slate-400">Bekleyen erişim talebi bulunmuyor.</p>
-                <p className="text-xs text-slate-500 mt-1">Yeni bir kullanıcı giriş yaptığında burada listelenecektir.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-[#201834]">
-                {pendingRequests.map((req) => (
-                  <div key={req.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-purple-950 border border-purple-800 flex items-center justify-center font-bold text-purple-300 text-xs">
-                        {req.displayName?.charAt(0) || req.email.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm text-white">{req.displayName || req.email}</span>
-                          <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-bold border border-amber-500/20">
-                            {req.attemptCount} deneme
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-400">{req.email}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleApprovePending(req.email)}
-                        disabled={approvingEmail === req.email}
-                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors shadow-sm"
-                      >
-                        {approvingEmail === req.email ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <UserCheck className="w-3.5 h-3.5" />
-                        )}
-                        <span>Onayla ve İzin Ver</span>
-                      </button>
-                    </div>
+            {/* Active Pending Requests */}
+            {pendingSubTab === 'active' && (
+              <>
+                {pendingRequests.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500">
+                    <Clock className="w-10 h-10 mx-auto mb-2 text-slate-600" />
+                    <p className="text-sm font-semibold text-slate-400">Bekleyen erişim talebi bulunmuyor.</p>
+                    <p className="text-xs text-slate-500 mt-1">Yeni bir kullanıcı giriş yaptığında burada listelenecektir.</p>
                   </div>
-                ))}
-              </div>
+                ) : (
+                  <div className="divide-y divide-[#201834]">
+                    {pendingRequests.map((req) => (
+                      <div key={req.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-purple-950 border border-purple-800 flex items-center justify-center font-bold text-purple-300 text-xs">
+                            {req.displayName?.charAt(0) || req.email.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-sm text-white">{req.displayName || req.email}</span>
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-bold border border-amber-500/20">
+                                {req.attemptCount} deneme
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400">{req.email}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleApprovePending(req.email)}
+                            disabled={approvingEmail === req.email || rejectingEmail === req.email}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors shadow-sm disabled:opacity-50"
+                          >
+                            {approvingEmail === req.email ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <UserCheck className="w-3.5 h-3.5" />
+                            )}
+                            <span>Onayla</span>
+                          </button>
+                          <button
+                            onClick={() => handleRejectPending(req.email)}
+                            disabled={approvingEmail === req.email || rejectingEmail === req.email}
+                            className="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors shadow-sm disabled:opacity-50"
+                          >
+                            {rejectingEmail === req.email ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <UserX className="w-3.5 h-3.5" />
+                            )}
+                            <span>Reddet</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Resolved Requests History */}
+            {pendingSubTab === 'history' && (
+              <>
+                {resolvedRequests.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500">
+                    <ShieldCheck className="w-10 h-10 mx-auto mb-2 text-slate-600" />
+                    <p className="text-sm font-semibold text-slate-400">Çözümlenmiş talep geçmişi bulunmuyor.</p>
+                    <p className="text-xs text-slate-500 mt-1">Onaylanan veya reddedilen talepler burada saklanır.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#201834]">
+                    {resolvedRequests.map((req) => (
+                      <div key={req.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center font-bold text-slate-300 text-xs">
+                            {req.displayName?.charAt(0) || req.email.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-sm text-white">{req.displayName || req.email}</span>
+                              {req.status === 'approved' ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
+                                  Onaylandı
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">
+                                  Reddedildi
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400">{req.email}</p>
+                          </div>
+                        </div>
+
+                        <div className="text-right text-xs text-slate-400">
+                          <div>{req.attemptCount} deneme</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            {req.resolvedAt ? new Date(req.resolvedAt).toLocaleString('tr-TR') : 'Tamamlandı'}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1286,7 +1451,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                        <span>{report.userDisplayName} ({report.userEmail})</span>
+                        <span>{report.userDisplayName || 'Kullanıcı'}</span>
                         <span>•</span>
                         <span>{new Date(report.createdAt).toLocaleString('tr-TR')}</span>
                       </div>
@@ -1349,6 +1514,184 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 8: GROUPS AND SERVERS */}
+        {activeTab === 'groups_servers' && (
+          <div className="bg-[#120e20] border border-[#261d3d] rounded-2xl p-6 shadow-xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#201834]">
+              <div>
+                <h2 className="text-base font-bold text-white">Topluluk ve Sunucu Yönetimi</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  XXQ Chat bünyesindeki tüm grup sohbetleri ve çok kanallı sunucuları denetleyin.
+                </p>
+              </div>
+
+              {/* Sub-tab switcher */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setGroupsServersSubTab('groups')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    groupsServersSubTab === 'groups'
+                      ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                      : 'bg-[#1b152d] text-slate-400 hover:text-white border border-[#2a2042]'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Gruplar ({adminGroups.length})</span>
+                </button>
+                <button
+                  onClick={() => setGroupsServersSubTab('servers')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    groupsServersSubTab === 'servers'
+                      ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                      : 'bg-[#1b152d] text-slate-400 hover:text-white border border-[#2a2042]'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Sunucular ({adminServers.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Groups List */}
+            {groupsServersSubTab === 'groups' && (
+              <>
+                {adminGroups.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500">
+                    <Users className="w-10 h-10 mx-auto mb-2 text-slate-600" />
+                    <p className="text-sm font-semibold text-slate-400">Kayıtlı grup sohbeti bulunmuyor.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#201834]">
+                    {adminGroups.map((group) => (
+                      <div key={group.id} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex items-start gap-3.5">
+                          <div className="w-10 h-10 rounded-2xl bg-purple-950/80 border border-purple-800 flex items-center justify-center font-bold text-purple-300 text-sm shrink-0">
+                            {group.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-sm text-white">{group.name}</span>
+                              <span className="px-2 py-0.5 rounded-full bg-purple-900/40 text-purple-300 text-[10px] font-bold border border-purple-700/50">
+                                {group.participants?.length || 0} Üye
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-semibold border border-slate-700">
+                                {group.joinPolicy === 'auto'
+                                  ? 'Otomatik Katılım'
+                                  : group.joinPolicy === 'request'
+                                  ? 'Katılma İsteği'
+                                  : 'Davet İle'}
+                              </span>
+                            </div>
+                            {group.description && (
+                              <p className="text-xs text-slate-400 max-w-xl">{group.description}</p>
+                            )}
+                            {group.rules && (
+                              <p className="text-[11px] text-slate-500 italic max-w-xl">
+                                Kurallar: {group.rules}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() =>
+                              setForceAddModal({
+                                targetType: 'group',
+                                targetId: group.id,
+                                targetName: group.name,
+                                selectedUserId: '',
+                                submitting: false,
+                              })
+                            }
+                            className="px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600 text-purple-200 hover:text-white border border-purple-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" />
+                            <span>Kullanıcı Ekle</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Servers List */}
+            {groupsServersSubTab === 'servers' && (
+              <>
+                {adminServers.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500">
+                    <Layers className="w-10 h-10 mx-auto mb-2 text-slate-600" />
+                    <p className="text-sm font-semibold text-slate-400">Kayıtlı sunucu bulunmuyor.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#201834]">
+                    {adminServers.map((server) => {
+                      const purposeLabels: Record<string, string> = {
+                        gaming: 'Oyun',
+                        chat: 'Sohbet',
+                        community: 'Duyuru ve Topluluk',
+                        business: 'Para Kazanma / İş',
+                        other: 'Diğer',
+                      };
+                      return (
+                        <div key={server.id} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="flex items-start gap-3.5">
+                            <div className="w-10 h-10 rounded-2xl bg-indigo-950/80 border border-indigo-800 flex items-center justify-center font-bold text-indigo-300 text-sm shrink-0">
+                              {server.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-sm text-white">{server.name}</span>
+                                <span className="px-2 py-0.5 rounded-full bg-indigo-900/40 text-indigo-300 text-[10px] font-bold border border-indigo-700/50">
+                                  {purposeLabels[server.purpose] || 'Sunucu'}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full bg-purple-900/30 text-purple-300 text-[10px] font-semibold border border-purple-700/40">
+                                  {server.channels?.length || 0} Kanal
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-semibold border border-slate-700">
+                                  {server.members?.length || 0} Üye
+                                </span>
+                              </div>
+                              {server.description && (
+                                <p className="text-xs text-slate-400 max-w-xl">{server.description}</p>
+                              )}
+                              {server.rules && (
+                                <p className="text-[11px] text-slate-500 italic max-w-xl">
+                                  Kurallar: {server.rules}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() =>
+                                setForceAddModal({
+                                  targetType: 'server',
+                                  targetId: server.id,
+                                  targetName: server.name,
+                                  selectedUserId: '',
+                                  submitting: false,
+                                })
+                              }
+                              className="px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600 text-purple-200 hover:text-white border border-purple-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" />
+                              <span>Kullanıcı Ekle</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1827,6 +2170,71 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Force Add Member to Group/Server */}
+      {forceAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#120e20] border border-[#2a2042] w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-[#241c38]">
+              <div className="flex items-center gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-purple-400" />
+                <h3 className="font-bold text-base text-white">
+                  Yönetici Doğrudan Kullanıcı Ekleme
+                </h3>
+              </div>
+              <button
+                onClick={() => setForceAddModal(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-amber-950/20 border border-amber-800/40 text-xs text-amber-200 leading-relaxed space-y-1">
+              <div className="font-semibold text-amber-300">
+                Hedef: {forceAddModal.targetType === 'group' ? 'Grup' : 'Sunucu'} - {forceAddModal.targetName}
+              </div>
+              <p>
+                Platform yöneticisi olarak onaylı bir kullanıcıyı davet/istek kuralı aranmaksızın doğrudan bu topluluğa ekliyorsunuz. Bu işlem denetim günlüğüne kaydedilir.
+              </p>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <label className="block text-slate-300 font-semibold">Eklenecek Onaylı Kullanıcıyı Seçin</label>
+              <select
+                value={forceAddModal.selectedUserId}
+                onChange={(e) => setForceAddModal({ ...forceAddModal, selectedUserId: e.target.value })}
+                className="w-full px-3.5 py-2.5 bg-[#1b152d] border border-[#2d2247] rounded-xl text-white focus:outline-none focus:border-purple-500 text-xs"
+              >
+                <option value="">-- Kullanıcı Seçiniz --</option>
+                {allUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.displayName || u.email} ({u.email})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3">
+              <button
+                type="button"
+                onClick={() => setForceAddModal(null)}
+                className="px-4 py-2 bg-[#1b152d] hover:bg-[#251d3e] text-slate-300 text-xs font-semibold rounded-xl"
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                onClick={handleForceAdd}
+                disabled={forceAddModal.submitting || !forceAddModal.selectedUserId}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-lg shadow-purple-950/50 disabled:opacity-50"
+              >
+                {forceAddModal.submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Onayla ve Ekle'}
+              </button>
+            </div>
           </div>
         </div>
       )}

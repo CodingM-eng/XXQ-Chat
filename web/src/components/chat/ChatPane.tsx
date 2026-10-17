@@ -27,9 +27,13 @@ import {
   Phone,
   Video,
   ChevronDown,
+  Megaphone,
+  Hash,
+  Settings,
 } from 'lucide-react';
 import { ScreenShareModal } from './ScreenShareModal';
 import { GroupAvatarModal } from './GroupAvatarModal';
+import { GroupSettingsModal } from './GroupSettingsModal';
 
 interface ChatPaneProps {
   conversation: Conversation;
@@ -73,6 +77,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [showGroupMembersModal, setShowGroupMembersModal] = useState(false);
   const [isScreenShareOpen, setIsScreenShareOpen] = useState(false);
   const [isGroupAvatarOpen, setIsGroupAvatarOpen] = useState(false);
+  const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
   const [isCallMenuOpen, setIsCallMenuOpen] = useState(false);
   const callMenuRef = useRef<HTMLDivElement>(null);
 
@@ -197,6 +202,15 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   };
 
   const isGroup = conversation.type === 'group';
+  const isChannel = conversation.type === 'channel';
+  const currentParticipant = conversation.participants?.find((p) => p.id === currentUser?.id);
+  const isOwnerOrAdmin =
+    currentParticipant?.role === 'owner' ||
+    currentParticipant?.role === 'admin' ||
+    currentParticipant?.isAdmin ||
+    conversation.createdById === currentUser?.id ||
+    currentUser?.isAdmin;
+  const isAnnouncementOnlyRestricted = conversation.isAnnouncementOnly && !isOwnerOrAdmin;
 
   return (
     <main className="flex-1 flex flex-col h-full bg-[#0c0a13] relative overflow-hidden">
@@ -241,10 +255,22 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
 
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
+              {isChannel && <Hash className="w-4 h-4 text-purple-400 shrink-0" />}
               <h2 className="font-bold text-slate-100 text-sm leading-tight truncate">{conversation.name}</h2>
               {isGroup && (
                 <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-950/80 text-purple-300 border border-purple-800/40">
                   Grup
+                </span>
+              )}
+              {isChannel && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] bg-indigo-950/80 text-indigo-300 border border-indigo-800/40">
+                  Kanal
+                </span>
+              )}
+              {conversation.isAnnouncementOnly && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/40 flex items-center gap-1">
+                  <Megaphone className="w-3 h-3 text-amber-400" />
+                  <span>Duyuru Kanalı</span>
                 </span>
               )}
             </div>
@@ -378,6 +404,16 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
               >
                 <Users className="w-4 h-4 text-purple-400" />
                 <span className="hidden sm:inline">Üyeler</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsGroupSettingsOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
+                title="Grup Yönetimi & Ayarları"
+              >
+                <Settings className="w-4 h-4 text-purple-400" />
+                <span className="hidden sm:inline">Grup Ayarları</span>
               </button>
             </>
           )}
@@ -642,65 +678,74 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         </div>
       )}
 
-      {/* Message Input Bar */}
-      <div className="p-3 border-t border-[#26203b] bg-[#151221]/95 backdrop-blur-md shrink-0 relative">
-        {/* Emoji Picker Popover */}
-        {showEmojiPicker && (
-          <div className="absolute bottom-16 right-4 z-40">
-            <EmojiPicker
-              onSelect={(emoji) => setInputText((prev) => prev + emoji)}
-              onClose={() => setShowEmojiPicker(false)}
-            />
+      {/* Message Input Bar or Announcement Restricted Banner */}
+      {isAnnouncementOnlyRestricted ? (
+        <div className="p-4 border-t border-[#26203b] bg-[#120e20]/95 backdrop-blur-md text-center shrink-0">
+          <div className="max-w-lg mx-auto py-2.5 px-4 rounded-2xl bg-purple-950/40 border border-purple-800/40 text-purple-300 text-xs flex items-center justify-center gap-2 shadow-sm">
+            <Megaphone className="w-4 h-4 text-purple-400 shrink-0" />
+            <span>Bu kanal duyuru kanalıdır. Yalnızca yetkili yöneticiler mesaj gönderebilir.</span>
           </div>
-        )}
-
-        <div className="max-w-4xl mx-auto flex items-end gap-2 bg-[#1b172a] border border-[#2b2444] rounded-2xl p-2 focus-within:ring-2 focus-within:ring-purple-500 focus-within:border-transparent transition-all">
-          {/* File Attachment Button */}
-          <button
-            type="button"
-            disabled={isUploading}
-            onClick={() => fileInputRef.current?.click()}
-            className="p-2 text-slate-400 hover:text-slate-200 hover:bg-[#26203b] rounded-xl transition-colors shrink-0"
-            title="Dosya veya Görsel Ekle (Google Drive)"
-          >
-            {isUploading ? <Loader2 className="w-5 h-5 animate-spin text-purple-400" /> : <Paperclip className="w-5 h-5" />}
-          </button>
-
-          <textarea
-            value={inputText}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Bir mesaj yazın... (Göndermek için Enter, yeni satır için Shift+Enter)"
-            rows={1}
-            className="flex-1 bg-transparent border-0 text-slate-100 placeholder:text-slate-500 text-xs sm:text-sm focus:outline-none resize-none max-h-32 py-1.5 px-2 leading-relaxed"
-          />
-
-          <button
-            type="button"
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className={`p-2 transition-colors rounded-xl ${
-              showEmojiPicker ? 'text-purple-400 bg-purple-950/60' : 'text-slate-400 hover:text-slate-200 hover:bg-[#26203b]'
-            }`}
-            title="Emoji Ekle"
-          >
-            <Smile className="w-5 h-5" />
-          </button>
-
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={(!inputText.trim() && pendingAttachments.length === 0) || sending || isUploading}
-            className={`p-2.5 rounded-xl transition-all shadow-md shrink-0 ${
-              (inputText.trim() || pendingAttachments.length > 0) && !sending && !isUploading
-                ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30 active:scale-95'
-                : 'bg-slate-800 text-slate-600 cursor-not-allowed'
-            }`}
-            title="Mesajı Gönder"
-          >
-            <Send className="w-4 h-4" />
-          </button>
         </div>
-      </div>
+      ) : (
+        <div className="p-3 border-t border-[#26203b] bg-[#151221]/95 backdrop-blur-md shrink-0 relative">
+          {/* Emoji Picker Popover */}
+          {showEmojiPicker && (
+            <div className="absolute bottom-16 right-4 z-40">
+              <EmojiPicker
+                onSelect={(emoji) => setInputText((prev) => prev + emoji)}
+                onClose={() => setShowEmojiPicker(false)}
+              />
+            </div>
+          )}
+
+          <div className="max-w-4xl mx-auto flex items-end gap-2 bg-[#1b172a] border border-[#2b2444] rounded-2xl p-2 focus-within:ring-2 focus-within:ring-purple-500 focus-within:border-transparent transition-all">
+            {/* File Attachment Button */}
+            <button
+              type="button"
+              disabled={isUploading}
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2 text-slate-400 hover:text-slate-200 hover:bg-[#26203b] rounded-xl transition-colors shrink-0"
+              title="Dosya veya Görsel Ekle (Google Drive)"
+            >
+              {isUploading ? <Loader2 className="w-5 h-5 animate-spin text-purple-400" /> : <Paperclip className="w-5 h-5" />}
+            </button>
+
+            <textarea
+              value={inputText}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Bir mesaj yazın... (Göndermek için Enter, yeni satır için Shift+Enter)"
+              rows={1}
+              className="flex-1 bg-transparent border-0 text-slate-100 placeholder:text-slate-500 text-xs sm:text-sm focus:outline-none resize-none max-h-32 py-1.5 px-2 leading-relaxed"
+            />
+
+            <button
+              type="button"
+              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              className={`p-2 transition-colors rounded-xl ${
+                showEmojiPicker ? 'text-purple-400 bg-purple-950/60' : 'text-slate-400 hover:text-slate-200 hover:bg-[#26203b]'
+              }`}
+              title="Emoji Ekle"
+            >
+              <Smile className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={(!inputText.trim() && pendingAttachments.length === 0) || sending || isUploading}
+              className={`p-2.5 rounded-xl transition-all shadow-md shrink-0 ${
+                (inputText.trim() || pendingAttachments.length > 0) && !sending && !isUploading
+                  ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30 active:scale-95'
+                  : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+              }`}
+              title="Mesajı Gönder"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Forward Modal */}
       {forwardTarget && (
@@ -773,6 +818,19 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           conversation={conversation}
           onAvatarUpdated={(newUrl) => {
             conversation.avatarUrl = newUrl;
+            onRefreshConversations?.();
+          }}
+        />
+      )}
+
+      {/* Group Settings Modal */}
+      {isGroup && (
+        <GroupSettingsModal
+          isOpen={isGroupSettingsOpen}
+          onClose={() => setIsGroupSettingsOpen(false)}
+          conversation={conversation}
+          currentUser={currentUser}
+          onUpdated={() => {
             onRefreshConversations?.();
           }}
         />

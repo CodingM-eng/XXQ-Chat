@@ -14,6 +14,9 @@ import {
   SupportReport,
   DriveStatus,
   SearchResults,
+  Server,
+  ServerPurpose,
+  MembershipInvitation,
 } from '../types';
 
 export function getBackendBaseUrl(): string {
@@ -194,11 +197,14 @@ class ApiService {
   async createGroupConversation(
     name: string,
     memberIds: string[],
-    avatarUrl?: string
+    avatarUrl?: string | null,
+    description?: string | null,
+    rules?: string | null,
+    joinPolicy?: 'auto' | 'invite' | 'request'
   ): Promise<{ conversation: Conversation }> {
     return this.request('/api/conversations/group', {
       method: 'POST',
-      body: JSON.stringify({ name, memberIds, avatarUrl }),
+      body: JSON.stringify({ name, memberIds, avatarUrl, description, rules, joinPolicy }),
     });
   }
 
@@ -219,6 +225,202 @@ class ApiService {
     return this.request(`/api/conversations/${conversationId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
+    });
+  }
+
+  async updateGroupSettings(
+    conversationId: string,
+    data: {
+      name?: string;
+      description?: string | null;
+      rules?: string | null;
+      avatarUrl?: string | null;
+      joinPolicy?: 'auto' | 'invite' | 'request';
+    }
+  ): Promise<{ success: boolean; conversation: Conversation }> {
+    return this.request(`/api/conversations/${conversationId}/settings`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateParticipantRole(
+    conversationId: string,
+    userId: string,
+    role: 'owner' | 'admin' | 'moderator' | 'member',
+    customTag?: string | null
+  ): Promise<{ success: boolean; conversation: Conversation }> {
+    return this.request(`/api/conversations/${conversationId}/participants/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role, customTag }),
+    });
+  }
+
+  async inviteToGroup(conversationId: string, userId: string): Promise<{ success: boolean; message: string; autoAdded?: boolean; invitation?: MembershipInvitation }> {
+    return this.request(`/api/conversations/${conversationId}/invite`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  }
+
+  async inviteUserToConversation(conversationId: string, userId: string): Promise<{ success: boolean; message: string; autoAdded?: boolean; invitation?: MembershipInvitation }> {
+    return this.inviteToGroup(conversationId, userId);
+  }
+
+  async requestToJoinGroup(conversationId: string): Promise<{ success: boolean; message: string; autoAdded?: boolean; invitation?: MembershipInvitation }> {
+    return this.request(`/api/conversations/${conversationId}/join-request`, {
+      method: 'POST',
+    });
+  }
+
+  // Servers & Channels endpoints
+  async getServers(): Promise<{ servers: Server[] }> {
+    return this.request('/api/servers');
+  }
+
+  async getServer(serverId: string): Promise<{ server: Server }> {
+    return this.request(`/api/servers/${serverId}`);
+  }
+
+  async createServer(data: {
+    name: string;
+    description?: string | null;
+    purpose: ServerPurpose;
+    avatarUrl?: string | null;
+    rules?: string | null;
+  }): Promise<{ server: Server; channels: Conversation[] }> {
+    return this.request('/api/servers', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateServer(
+    serverId: string,
+    data: {
+      name?: string;
+      description?: string | null;
+      purpose?: ServerPurpose;
+      avatarUrl?: string | null;
+      rules?: string | null;
+    }
+  ): Promise<{ success: boolean; server: Server }> {
+    return this.request(`/api/servers/${serverId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createServerChannel(
+    serverId: string,
+    data: { name: string; isAnnouncementOnly?: boolean }
+  ): Promise<{ success: boolean; channel: Conversation }> {
+    return this.request(`/api/servers/${serverId}/channels`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async addServerMember(
+    serverId: string,
+    userId: string,
+    role: 'admin' | 'moderator' | 'member' = 'member'
+  ): Promise<{ success: boolean; server: Server; message: string }> {
+    return this.request(`/api/servers/${serverId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, role }),
+    });
+  }
+
+  async removeServerMember(serverId: string, userId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/servers/${serverId}/members/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateServerMemberRole(
+    serverId: string,
+    userId: string,
+    role: 'owner' | 'admin' | 'moderator' | 'member',
+    customTag?: string | null
+  ): Promise<{ success: boolean; server: Server }> {
+    return this.request(`/api/servers/${serverId}/members/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role, customTag }),
+    });
+  }
+
+  // Membership Invitations & Join Requests
+  async getMyInvitations(): Promise<{ invitations: MembershipInvitation[] }> {
+    return this.request('/api/invitations/my');
+  }
+
+  async respondToInvitation(
+    id: string,
+    actionOrResponse: 'accept' | 'decline' | 'accepted' | 'rejected'
+  ): Promise<{ success: boolean; invitation: MembershipInvitation; message: string }> {
+    const action = (actionOrResponse === 'accepted' || actionOrResponse === 'accept') ? 'accept' : 'decline';
+    return this.request(`/api/invitations/${id}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ action, response: actionOrResponse }),
+    });
+  }
+
+  async getJoinRequests(
+    targetType: 'group' | 'server',
+    targetId: string
+  ): Promise<{ requests: MembershipInvitation[] }> {
+    return this.request(`/api/invitations/requests/${targetType}/${targetId}`);
+  }
+
+  async resolveJoinRequest(
+    id: string,
+    actionOrStatus: 'approve' | 'reject' | 'approved' | 'rejected'
+  ): Promise<{ success: boolean; invitation: MembershipInvitation; message: string }> {
+    const action = (actionOrStatus === 'approved' || actionOrStatus === 'approve') ? 'approve' : 'reject';
+    return this.request(`/api/invitations/requests/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ action, status: actionOrStatus }),
+    });
+  }
+
+  // Admin Pending Reject & History & Platform Group/Server Management
+  async rejectPendingRequest(email: string): Promise<{ success: boolean; email: string; message: string }> {
+    return this.request('/api/admin/whitelist/reject', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async getPendingHistory(limit: number = 50): Promise<{ resolvedRequests: PendingRequest[] }> {
+    return this.request(`/api/admin/pending/history?limit=${limit}`);
+  }
+
+  async getAdminGroups(): Promise<{ groups: Conversation[] }> {
+    return this.request('/api/admin/groups');
+  }
+
+  async getAdminServers(): Promise<{ servers: Server[] }> {
+    return this.request('/api/admin/servers');
+  }
+
+  async adminForceAddGroupMember(
+    conversationId: string,
+    userId: string
+  ): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/admin/groups/${conversationId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, confirmation: true }),
+    });
+  }
+
+  async adminForceAddServerMember(
+    serverId: string,
+    userId: string
+  ): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/admin/servers/${serverId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, confirmation: true }),
     });
   }
 

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../auth/index.js';
 import { enforceWhitelist } from '../middleware/whitelist.js';
-import { dataStore } from '../db/index.js';
+import { dataStore, isWhitelistModeEnabled } from '../db/index.js';
 import { getSocketServer } from '../sockets/index.js';
 
 import multer from 'multer';
@@ -128,8 +128,12 @@ router.post('/direct', async (req, res) => {
 // POST /api/conversations/group - create a new group conversation
 const groupChatSchema = z.object({
   name: z.string().min(1, 'Grup adı gereklidir.').max(60),
-  memberIds: z.array(z.string()).min(1, 'Grup için en az bir üye seçilmelidir.'),
-  avatarUrl: z.string().optional(),
+  memberIds: z.array(z.string()).optional(),
+  participantIds: z.array(z.string()).optional(),
+  avatarUrl: z.string().nullable().optional(),
+  description: z.string().max(1000).nullable().optional(),
+  rules: z.string().max(2000).nullable().optional(),
+  joinPolicy: z.enum(['auto', 'invite', 'request']).optional().default('auto'),
 });
 
 router.post('/group', async (req, res) => {
@@ -140,9 +144,27 @@ router.post('/group', async (req, res) => {
   }
 
   const currentUser = req.user!;
-  const { name, memberIds, avatarUrl } = parseResult.data;
+  const { name, avatarUrl, description, rules, joinPolicy } = parseResult.data;
+  const rawMemberIds = parseResult.data.memberIds || parseResult.data.participantIds || [];
 
-  const convId = await dataStore.createGroupConversation(currentUser.id, name.trim(), memberIds, avatarUrl);
+  const convId = await dataStore.createGroupConversation(currentUser.id, name.trim(), rawMemberIds, avatarUrl || null);
+
+  if (description !== undefined || rules !== undefined || joinPolicy !== undefined) {
+    await dataStore.updateGroupSettings(convId, {
+      description: description || null,
+      rules: rules || null,
+      joinPolicy: joinPolicy || 'auto',
+    });
+  }
+
+  await dataStore.recordAuditLog({
+    actorId: currentUser.id,
+    actorEmail: currentUser.email,
+    action: 'GROUP_CREATED',
+    target: convId,
+    details: `"${name}" adlı grup oluşturuldu (Katılma ilkesi: ${joinPolicy || 'auto'})`,
+    ipAddress: req.ip,
+  });
 
   const participantIds = await dataStore.getConversationParticipantIds(convId);
 
@@ -171,11 +193,12 @@ const addParticipantsSchema = z.object({
 });
 
 router.post('/:id/participants', async (req, res) => {
-  const convId = req.params.id;
+  const convId = req.params.id as string;
   const user = req.user!;
 
   const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
-  if (!isAdmin) {
+  const isPlatformAdmin = user.isAdmin;
+  if (!isAdmin && !isPlatformAdmin) {
     res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup yöneticileri üye ekleyebilir.' });
     return;
   }
@@ -187,11 +210,45 @@ router.post('/:id/participants', async (req, res) => {
   }
 
   const { userIds } = parseResult.data;
-  await dataStore.addConversationParticipants(convId, userIds);
+  const currentParticipants = await dataStore.getConversationParticipantIds(convId);
+  const whitelistEnabled = await isWhitelistModeEnabled();
+
+  const toAdd: string[] = [];
+  for (const uid of userIds) {
+    if (currentParticipants.includes(uid)) continue;
+
+    const targetUser = await dataStore.getUserById(uid);
+    if (!targetUser) continue;
+
+    if (whitelistEnabled && !targetUser.isAdmin) {
+      const isWhitelisted = await dataStore.isEmailWhitelisted(targetUser.email);
+      if (!isWhitelisted) {
+        res.status(400).json({ error: 'USER_NOT_WHITELISTED', message: `${targetUser.displayName} kullanıcısı beyaz listede onaylı değil.` });
+        return;
+      }
+    }
+    toAdd.push(uid);
+  }
+
+  if (toAdd.length === 0) {
+    res.status(400).json({ error: 'ALREADY_MEMBERS', message: 'Seçilen tüm kullanıcılar zaten bu grubun üyesidir.' });
+    return;
+  }
+
+  await dataStore.addConversationParticipants(convId, toAdd);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'GROUP_MEMBERS_ADDED',
+    target: convId,
+    details: `${toAdd.length} üye gruba eklendi`,
+    ipAddress: req.ip,
+  });
 
   const io = getSocketServer();
   if (io) {
-    userIds.forEach((uId) => io.in(`user:${uId}`).socketsJoin(`conversation:${convId}`));
+    toAdd.forEach((uId) => io.in(`user:${uId}`).socketsJoin(`conversation:${convId}`));
     const participantIds = await dataStore.getConversationParticipantIds(convId);
     for (const pId of participantIds) {
       const summary = await dataStore.getConversation(convId, pId);
@@ -205,19 +262,36 @@ router.post('/:id/participants', async (req, res) => {
 
 // DELETE /api/conversations/:id/participants/:userId - remove member or leave group
 router.delete('/:id/participants/:userId', async (req, res) => {
-  const convId = req.params.id;
+  const convId = req.params.id as string;
   const user = req.user!;
-  const targetUserId = req.params.userId;
+  const targetUserId = req.params.userId as string;
 
   const isSelf = user.id === targetUserId;
   const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
+  const isPlatformAdmin = user.isAdmin;
 
-  if (!isSelf && !isAdmin) {
+  if (!isSelf && !isAdmin && !isPlatformAdmin) {
     res.status(403).json({ error: 'FORBIDDEN', message: 'Gruptan üye çıkarma yetkiniz bulunmamaktadır.' });
     return;
   }
 
+  // Prevent removing owner unless self-leaving or platform admin
+  const targetRole = await dataStore.getConversationRole(convId, targetUserId);
+  if (targetRole === 'owner' && !isSelf && !isPlatformAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Grup sahibi gruptan çıkarılamaz.' });
+    return;
+  }
+
   await dataStore.removeConversationParticipant(convId, targetUserId);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: isSelf ? 'GROUP_LEFT' : 'GROUP_MEMBER_REMOVED',
+    target: convId,
+    details: isSelf ? `${user.displayName} gruptan ayrıldı` : `${targetUserId} gruptan çıkarıldı`,
+    ipAddress: req.ip,
+  });
 
   const io = getSocketServer();
   if (io) {
@@ -231,32 +305,45 @@ router.delete('/:id/participants/:userId', async (req, res) => {
     }
   }
 
-  res.json({ success: true, message: 'Üye gruptan çıkarıldı.' });
+  res.json({ success: true, message: isSelf ? 'Gruptan ayrıldınız.' : 'Üye gruptan çıkarıldı.' });
 });
 
-// PATCH /api/conversations/:id - update group info
-const updateGroupSchema = z.object({
+// PATCH /api/conversations/:id/settings or PATCH /api/conversations/:id - update group settings
+const updateGroupSettingsSchema = z.object({
   name: z.string().min(1).max(60).optional(),
-  avatarUrl: z.string().optional(),
+  description: z.string().max(1000).nullable().optional(),
+  rules: z.string().max(2000).nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
+  joinPolicy: z.enum(['auto', 'invite', 'request']).optional(),
 });
 
-router.patch('/:id', async (req, res) => {
-  const convId = req.params.id;
+const handleUpdateGroupSettings = async (req: any, res: any) => {
+  const convId = req.params.id as string;
   const user = req.user!;
 
   const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
-  if (!isAdmin) {
-    res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup yöneticileri grup bilgilerini güncelleyebilir.' });
+  const isPlatformAdmin = user.isAdmin;
+  if (!isAdmin && !isPlatformAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup yöneticileri ayarları güncelleyebilir.' });
     return;
   }
 
-  const parseResult = updateGroupSchema.safeParse(req.body);
+  const parseResult = updateGroupSettingsSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_INPUT', details: parseResult.error.format() });
     return;
   }
 
-  await dataStore.updateConversation(convId, parseResult.data);
+  await dataStore.updateGroupSettings(convId, parseResult.data);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'GROUP_SETTINGS_UPDATED',
+    target: convId,
+    details: `Grup ayarları güncellendi: ${Object.keys(parseResult.data).join(', ')}`,
+    ipAddress: req.ip,
+  });
 
   const participantIds = await dataStore.getConversationParticipantIds(convId);
   const io = getSocketServer();
@@ -268,7 +355,246 @@ router.patch('/:id', async (req, res) => {
   }
 
   const updatedConv = await dataStore.getConversation(convId, user.id);
-  res.json({ conversation: updatedConv });
+  res.json({ success: true, conversation: updatedConv });
+};
+
+router.patch('/:id/settings', handleUpdateGroupSettings);
+router.patch('/:id', handleUpdateGroupSettings);
+
+// PATCH /api/conversations/:id/participants/:userId/role - update role & custom tag
+const updateRoleSchema = z.object({
+  role: z.enum(['owner', 'admin', 'moderator', 'member']),
+  customTag: z.string().max(30).nullable().optional(),
+});
+
+router.patch('/:id/participants/:userId/role', async (req, res) => {
+  const convId = req.params.id as string;
+  const targetUserId = req.params.userId as string;
+  const user = req.user!;
+
+  const conv = await dataStore.getConversation(convId, user.id);
+  if (!conv) {
+    res.status(404).json({ error: 'CONVERSATION_NOT_FOUND', message: 'Grup bulunamadı.' });
+    return;
+  }
+
+  const actorRole = await dataStore.getConversationRole(convId, user.id);
+  const isPlatformAdmin = user.isAdmin;
+  const isGroupOwner = actorRole === 'owner' || conv.creatorId === user.id;
+  const isGroupAdmin = actorRole === 'admin';
+
+  if (!isPlatformAdmin && !isGroupOwner && !isGroupAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup sahipleri veya yöneticileri rol atayabilir.' });
+    return;
+  }
+
+  const parseResult = updateRoleSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', details: parseResult.error.format() });
+    return;
+  }
+
+  const { role: newRole, customTag } = parseResult.data;
+
+  // Protect owner
+  const targetRole = await dataStore.getConversationRole(convId, targetUserId);
+  if (targetRole === 'owner' && !isPlatformAdmin && !isGroupOwner) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Grup sahibinin rolü değiştirilemez.' });
+    return;
+  }
+
+  if (newRole === 'owner' && !isPlatformAdmin && !isGroupOwner) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca mevcut grup sahibi sahiplik devredebilir.' });
+    return;
+  }
+
+  if (newRole === 'owner') {
+    if (conv.creatorId && conv.creatorId !== targetUserId) {
+      await dataStore.updateParticipantRole(convId, conv.creatorId, 'admin');
+    }
+  }
+
+  await dataStore.updateParticipantRole(convId, targetUserId, newRole, customTag);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'GROUP_ROLE_UPDATED',
+    target: targetUserId,
+    details: `${conv.name} grubunda ${targetUserId} kullanıcısına "${newRole}" rolü ve "${customTag || '-'}" etiketi atandı`,
+    ipAddress: req.ip,
+  });
+
+  const participantIds = await dataStore.getConversationParticipantIds(convId);
+  const io = getSocketServer();
+  if (io) {
+    for (const pId of participantIds) {
+      const summary = await dataStore.getConversation(convId, pId);
+      if (summary) io.to(`user:${pId}`).emit('conversation:updated', summary);
+    }
+  }
+
+  const updatedConv = await dataStore.getConversation(convId, user.id);
+  res.json({ success: true, conversation: updatedConv });
+});
+
+// POST /api/conversations/:id/invite - send invitation to join group
+const inviteSchema = z.object({
+  userId: z.string().min(1),
+});
+
+router.post('/:id/invite', async (req, res) => {
+  const convId = req.params.id as string;
+  const user = req.user!;
+
+  const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
+  const isPlatformAdmin = user.isAdmin;
+  if (!isAdmin && !isPlatformAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca grup yöneticileri davet gönderebilir.' });
+    return;
+  }
+
+  const parseResult = inviteSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', details: parseResult.error.format() });
+    return;
+  }
+
+  const { userId: targetUserId } = parseResult.data;
+  const conv = await dataStore.getConversation(convId, user.id);
+  if (!conv) {
+    res.status(404).json({ error: 'CONVERSATION_NOT_FOUND', message: 'Grup bulunamadı.' });
+    return;
+  }
+
+  const isAlreadyMember = await dataStore.isConversationParticipant(convId, targetUserId);
+  if (isAlreadyMember) {
+    res.status(400).json({ error: 'ALREADY_MEMBER', message: 'Kullanıcı zaten bu grubun üyesidir.' });
+    return;
+  }
+
+  const targetUser = await dataStore.getUserById(targetUserId);
+  if (!targetUser) {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  // Whitelist check
+  const whitelistEnabled = await isWhitelistModeEnabled();
+  if (whitelistEnabled && !targetUser.isAdmin) {
+    const isWhitelisted = await dataStore.isEmailWhitelisted(targetUser.email);
+    if (!isWhitelisted) {
+      res.status(400).json({ error: 'USER_NOT_WHITELISTED', message: 'Kullanıcı beyaz listede onaylı değil.' });
+      return;
+    }
+  }
+
+  // If join policy is 'auto', directly add!
+  if (conv.joinPolicy === 'auto') {
+    await dataStore.addConversationParticipants(convId, [targetUserId]);
+    const io = getSocketServer();
+    if (io) {
+      io.in(`user:${targetUserId}`).socketsJoin(`conversation:${convId}`);
+      const summary = await dataStore.getConversation(convId, targetUserId);
+      if (summary) io.to(`user:${targetUserId}`).emit('conversation:new', summary);
+    }
+    res.json({ success: true, autoAdded: true, message: `${targetUser.displayName} gruba doğrudan eklendi.` });
+    return;
+  }
+
+  // Check if active invitation already exists
+  const hasActive = await dataStore.hasActiveInvitationOrRequest(convId, targetUserId);
+  if (hasActive) {
+    res.status(400).json({ error: 'ALREADY_PENDING', message: 'Bu kullanıcı için zaten bekleyen bir davet veya istek bulunmaktadır.' });
+    return;
+  }
+
+  const invitation = await dataStore.createMembershipInvitation({
+    targetType: 'group',
+    targetId: convId,
+    targetName: conv.name,
+    userId: targetUserId,
+    userDisplayName: targetUser.displayName,
+    type: 'invite',
+    createdById: user.id,
+  });
+
+  const io = getSocketServer();
+  if (io) {
+    io.to(`user:${targetUserId}`).emit('invitation:new', invitation);
+  }
+
+  res.status(200).json({
+    success: true,
+    invitation,
+    invitationId: invitation.id,
+    message: `${targetUser.displayName} kullanıcısına grup daveti gönderildi.`,
+  });
+});
+
+// POST /api/conversations/:id/join-request - submit a request to join group
+router.post('/:id/join-request', async (req, res) => {
+  const convId = req.params.id as string;
+  const user = req.user!;
+
+  const isAlreadyMember = await dataStore.isConversationParticipant(convId, user.id);
+  if (isAlreadyMember) {
+    res.status(400).json({ error: 'ALREADY_MEMBER', message: 'Zaten bu grubun üyesisiniz.' });
+    return;
+  }
+
+  // Find conversation
+  const allGroups = await dataStore.getAllGroups();
+  const conv = allGroups.find((g) => g.id === convId);
+  if (!conv) {
+    res.status(404).json({ error: 'CONVERSATION_NOT_FOUND', message: 'Grup bulunamadı.' });
+    return;
+  }
+
+  // If join policy is 'auto', add immediately!
+  if (conv.joinPolicy === 'auto') {
+    await dataStore.addConversationParticipants(convId, [user.id]);
+    const io = getSocketServer();
+    if (io) {
+      io.in(`user:${user.id}`).socketsJoin(`conversation:${convId}`);
+      const summary = await dataStore.getConversation(convId, user.id);
+      if (summary) io.to(`user:${user.id}`).emit('conversation:new', summary);
+    }
+    res.json({ success: true, autoAdded: true, message: 'Gruba başarıyla katıldınız.' });
+    return;
+  }
+
+  // Check if active request already exists
+  const hasActive = await dataStore.hasActiveInvitationOrRequest(convId, user.id);
+  if (hasActive) {
+    res.status(400).json({ error: 'ALREADY_PENDING', message: 'Zaten bekleyen bir katılma isteğiniz bulunmaktadır.' });
+    return;
+  }
+
+  const invitation = await dataStore.createMembershipInvitation({
+    targetType: 'group',
+    targetId: convId,
+    targetName: conv.name,
+    userId: user.id,
+    userDisplayName: user.displayName,
+    type: 'request',
+    createdById: user.id,
+  });
+
+  // Notify admins
+  const io = getSocketServer();
+  if (io && conv.adminIds) {
+    for (const adminId of conv.adminIds) {
+      io.to(`user:${adminId}`).emit('join_request:new', invitation);
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    invitation,
+    invitationId: invitation.id,
+    message: 'Katılma isteğiniz grup yöneticilerine iletildi.',
+  });
 });
 
 // GET /api/conversations/:id/messages - get conversation message history
@@ -435,6 +761,20 @@ router.post('/:id/messages', async (req, res) => {
   if (!isParticipant) {
     res.status(403).json({ error: 'FORBIDDEN', message: 'Bu sohbete mesaj gönderme yetkiniz yok.' });
     return;
+  }
+
+  // Check announcement-only channel permission
+  const conv = await dataStore.getConversation(convId, user.id);
+  if (conv && conv.isAnnouncementOnly) {
+    const role = await dataStore.getConversationRole(convId, user.id);
+    const isOwnerOrAdmin = role === 'owner' || role === 'admin' || user.isAdmin;
+    if (!isOwnerOrAdmin) {
+      res.status(403).json({
+        error: 'ANNOUNCEMENT_ONLY',
+        message: 'Bu kanal salt okunur duyuru kanalıdır. Yalnızca yöneticiler mesaj gönderebilir.',
+      });
+      return;
+    }
   }
 
   const { content, clientMessageId, replyToMessageId, forwardedFrom, attachments } = parseResult.data;

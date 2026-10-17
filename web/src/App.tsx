@@ -8,6 +8,7 @@ import { Sidebar } from './components/chat/Sidebar';
 import { ChatPane } from './components/chat/ChatPane';
 import { EmptyState } from './components/chat/EmptyState';
 import { NewChatModal } from './components/chat/NewChatModal';
+import { NewServerModal } from './components/chat/NewServerModal';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { AuthModal } from './components/auth/AuthModal';
 import { AccessRestricted } from './components/auth/AccessRestricted';
@@ -24,6 +25,7 @@ export const AppContent: React.FC = () => {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
+  const [isNewServerOpen, setIsNewServerOpen] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
 
@@ -443,6 +445,7 @@ export const AppContent: React.FC = () => {
               selectedId={selectedConversationId}
               onSelect={(id) => setSelectedConversationId(id)}
               onOpenNewChat={() => setIsNewChatOpen(true)}
+              onOpenNewServer={() => setIsNewServerOpen(true)}
               currentUser={user}
             />
           </div>
@@ -477,6 +480,18 @@ export const AppContent: React.FC = () => {
         onSelectConversation={(id) => {
           loadConversations();
           setSelectedConversationId(id);
+        }}
+      />
+
+      {/* New Discord-Style Server Modal */}
+      <NewServerModal
+        isOpen={isNewServerOpen}
+        onClose={() => setIsNewServerOpen(false)}
+        onServerCreated={(server) => {
+          loadConversations();
+          if (server.channels && server.channels.length > 0) {
+            setSelectedConversationId(server.channels[0].id);
+          }
         }}
       />
 

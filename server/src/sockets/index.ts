@@ -206,6 +206,17 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             return;
           }
 
+          // Check announcement-only channel permission
+          const conv = await dataStore.getConversation(conversationId, user.id);
+          if (conv && conv.isAnnouncementOnly) {
+            const role = await dataStore.getConversationRole(conversationId, user.id);
+            const isOwnerOrAdmin = role === 'owner' || role === 'admin' || user.isAdmin;
+            if (!isOwnerOrAdmin) {
+              if (typeof callback === 'function') callback({ error: 'ANNOUNCEMENT_ONLY', message: 'Bu kanal salt okunur duyuru kanalıdır.' });
+              return;
+            }
+          }
+
           // Deduplication check
           if (clientMessageId) {
             const existing = await dataStore.findMessageByClientId(clientMessageId, user.id, conversationId);

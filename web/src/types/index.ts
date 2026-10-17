@@ -68,14 +68,65 @@ export interface ConversationParticipant {
   displayName: string;
   avatarUrl?: string | null;
   isAdmin?: boolean;
+  role?: 'owner' | 'admin' | 'moderator' | 'member';
+  customTag?: string | null;
+  joinedAt?: string;
+}
+
+export type ServerPurpose = 'gaming' | 'chat' | 'community' | 'business' | 'other';
+
+export interface ServerMember {
+  id: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  role: 'owner' | 'admin' | 'moderator' | 'member';
+  customTag?: string | null;
+  joinedAt: string;
+}
+
+export interface Server {
+  id: string;
+  name: string;
+  description?: string | null;
+  purpose: ServerPurpose;
+  avatarUrl?: string | null;
+  rules?: string | null;
+  ownerId: string;
+  memberIds: string[];
+  members?: ServerMember[];
+  channels?: Conversation[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MembershipInvitation {
+  id: string;
+  targetType: 'group' | 'server';
+  targetId: string;
+  targetName: string;
+  userId: string;
+  userDisplayName: string;
+  type: 'invite' | 'request';
+  status: 'pending' | 'accepted' | 'declined' | 'approved' | 'rejected' | 'expired';
+  createdById: string;
+  inviterName?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+  resolvedById?: string | null;
 }
 
 export interface Conversation {
   id: string;
-  type: 'direct' | 'group';
+  type: 'direct' | 'group' | 'channel';
   name: string;
+  description?: string | null;
+  rules?: string | null;
+  joinPolicy?: 'auto' | 'invite' | 'request';
   avatarUrl?: string | null;
   creatorId?: string | null;
+  createdById?: string | null;
+  serverId?: string | null;
+  isAnnouncementOnly?: boolean;
   adminIds?: string[];
   participantCount?: number;
   participants?: ConversationParticipant[];
@@ -107,6 +158,8 @@ export interface PendingRequest {
   lastAttemptAt: string;
   attemptCount: number;
   status: 'pending' | 'approved' | 'rejected';
+  resolvedAt?: string | null;
+  resolvedById?: string | null;
 }
 
 export interface WhitelistItem {
@@ -169,7 +222,7 @@ export interface TelegramBot {
 export interface SupportReport {
   id: string;
   userId: string;
-  userEmail: string;
+  userEmail?: string;
   userDisplayName: string;
   title: string;
   description: string;
