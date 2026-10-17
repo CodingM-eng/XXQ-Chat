@@ -30,6 +30,7 @@ describe('Discord-Inspired Responsive UI Suite', () => {
         isAnnouncementOnly: true,
         serverId: 'server_game_1',
         unreadCount: 0,
+        updatedAt: new Date(Date.now() - 3600000).toISOString(),
       },
       {
         id: 'ch_general',
@@ -38,6 +39,7 @@ describe('Discord-Inspired Responsive UI Suite', () => {
         isAnnouncementOnly: false,
         serverId: 'server_game_1',
         unreadCount: 3,
+        updatedAt: new Date(Date.now() - 1800000).toISOString(),
       },
     ],
     members: [
@@ -76,8 +78,9 @@ describe('Discord-Inspired Responsive UI Suite', () => {
         senderName: 'Zeynep Kaya',
         content: 'Selam, nasılsın?',
         status: 'sent',
-        createdAt: new Date().toISOString(),
+        createdAt: new Date(Date.now() - 600000).toISOString(),
       },
+      updatedAt: new Date(Date.now() - 600000).toISOString(),
     },
     {
       id: 'conv_grp_1',
@@ -98,8 +101,9 @@ describe('Discord-Inspired Responsive UI Suite', () => {
         senderName: 'Efe Kaan',
         content: 'Yeni versiyon yayında!',
         status: 'delivered',
-        createdAt: new Date().toISOString(),
+        createdAt: new Date(Date.now() - 1200000).toISOString(),
       },
+      updatedAt: new Date(Date.now() - 1200000).toISOString(),
     },
     ...mockServer.channels!,
   ];
