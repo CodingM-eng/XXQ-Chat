@@ -28,6 +28,7 @@ html.light .bg-\[\#07050d\],
 html.light .bg-\[\#08070b\],
 html.light .bg-\[\#090710\],
 html.light .bg-\[\#0b0914\],
+html.light .bg-\[\#0c0a14\],
 html.light .bg-\[\#0c0a14\]\/90,
 html.light .bg-slate-950,
 html.light .bg-slate-950\/80,
@@ -38,8 +39,12 @@ html.light .bg-slate-950\/90 {
 html.light .bg-\[\#120f1e\],
 html.light .bg-\[\#0f0d15\],
 html.light .bg-\[\#110e1a\],
+html.light .bg-\[\#130f21\],
+html.light .bg-\[\#140f24\],
 html.light .bg-\[\#151124\],
 html.light .bg-\[\#151221\]\/90,
+html.light .bg-\[\#161129\],
+html.light .bg-\[\#161226\],
 html.light .bg-slate-900,
 html.light .bg-slate-900\/80,
 html.light .bg-slate-900\/90,
@@ -51,6 +56,7 @@ html.light .bg-\[\#171520\],
 html.light .bg-\[\#181329\],
 html.light .bg-\[\#1b152d\],
 html.light .bg-\[\#1c182b\],
+html.light .bg-\[\#1c162e\],
 html.light .bg-\[\#1d1a29\],
 html.light .bg-\[\#201836\],
 html.light .bg-slate-800,
@@ -64,6 +70,9 @@ html.light .bg-slate-800\/80 {
 html.light .hover\:bg-slate-800:hover,
 html.light .hover\:bg-slate-800\/60:hover,
 html.light .hover\:bg-slate-900:hover,
+html.light .hover\:bg-\[\#161129\]:hover,
+html.light .hover\:bg-\[\#140f21\]:hover,
+html.light .hover\:bg-\[\#151024\]:hover,
 html.light .hover\:bg-purple-950\/40:hover {
   background-color: #ede9fe !important;
 }
@@ -97,6 +106,11 @@ html.light .text-slate-500 {
 }
 
 /* Borders */
+html.light .border-\[\#1e172e\],
+html.light .border-\[\#1f1930\],
+html.light .border-\[\#201833\],
+html.light .border-\[\#211a33\],
+html.light .border-\[\#22183b\],
 html.light .border-\[\#241c38\],
 html.light .border-\[\#261e3d\],
 html.light .border-\[\#26203b\],
@@ -189,4 +203,17 @@ html.light ::-webkit-scrollbar-thumb:hover {
 
 .animate-bounce-subtle {
   animation: bounceSubtle 3s ease-in-out infinite;
+}
+
+@keyframes slideLeft {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-left {
+  animation: slideLeft 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

@@ -44,20 +44,28 @@ class ApiService {
   private token: string | null = null;
 
   constructor() {
-    this.token = localStorage.getItem('xxq_chat_token');
+    if (typeof localStorage !== 'undefined') {
+      this.token = localStorage.getItem('xxq_chat_token');
+    }
   }
 
   setToken(token: string | null) {
     this.token = token;
-    if (token) {
-      localStorage.setItem('xxq_chat_token', token);
-    } else {
-      localStorage.removeItem('xxq_chat_token');
+    if (typeof localStorage !== 'undefined') {
+      if (token) {
+        localStorage.setItem('xxq_chat_token', token);
+      } else {
+        localStorage.removeItem('xxq_chat_token');
+      }
     }
   }
 
   getToken(): string | null {
-    return this.token || localStorage.getItem('xxq_chat_token');
+    if (this.token) return this.token;
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('xxq_chat_token');
+    }
+    return null;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -193,10 +201,27 @@ class ApiService {
     return this.request(`/api/conversations/${id}`);
   }
 
-  async createDirectConversation(peerEmail: string): Promise<{ conversationId: string; isNew: boolean; peer: any }> {
+  async createDirectConversation(
+    peerEmailOrTarget?: string | { peerEmail?: string; peerId?: string; targetUserId?: string; targetEmail?: string },
+    secondParam?: string
+  ): Promise<{ conversationId: string; isNew: boolean; peer: any }> {
+    let payload: any = {};
+    if (typeof peerEmailOrTarget === 'string') {
+      if (secondParam) {
+        payload = { peerEmail: peerEmailOrTarget, peerId: secondParam };
+      } else if (peerEmailOrTarget.includes('@')) {
+        payload = { peerEmail: peerEmailOrTarget };
+      } else {
+        payload = { peerId: peerEmailOrTarget };
+      }
+    } else if (peerEmailOrTarget) {
+      payload = peerEmailOrTarget;
+    } else if (secondParam) {
+      payload = { peerId: secondParam };
+    }
     return this.request('/api/conversations/direct', {
       method: 'POST',
-      body: JSON.stringify({ peerEmail }),
+      body: JSON.stringify(payload),
     });
   }
 

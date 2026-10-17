@@ -63,6 +63,10 @@ interface ChatPaneProps {
   typingUser: string | null;
   onRefreshConversations?: () => void;
   onStartCall?: (mode: 'audio' | 'video' | 'screen') => void;
+  isMemberListOpen?: boolean;
+  onToggleMemberList?: () => void;
+  draftText?: string;
+  onDraftChange?: (text: string) => void;
 }
 
 export const ChatPane: React.FC<ChatPaneProps> = ({
@@ -77,9 +81,17 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   typingUser,
   onRefreshConversations,
   onStartCall,
+  isMemberListOpen = false,
+  onToggleMemberList,
+  draftText = '',
+  onDraftChange,
 }) => {
-  const [inputText, setInputText] = useState('');
+  const [inputText, setInputText] = useState(draftText);
   const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    setInputText(draftText || '');
+  }, [conversation.id]);
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -226,6 +238,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInputText(val);
+    onDraftChange?.(val);
 
     const socket = getSocket();
     if (socket && conversation) {
@@ -274,6 +287,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
     try {
       setSending(true);
       setInputText('');
+      onDraftChange?.('');
       const attachmentsToSend = [...pendingAttachments];
       setPendingAttachments([]);
 
@@ -541,6 +555,23 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                 </button>
               )}
             </>
+          )}
+
+          {/* Member List Toggle Button */}
+          {onToggleMemberList && (
+            <button
+              type="button"
+              onClick={onToggleMemberList}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
+                isMemberListOpen
+                  ? 'bg-purple-950/70 border-purple-500 text-purple-300 shadow-sm'
+                  : 'bg-[#1c182b] hover:bg-[#26203b] border-[#2e2648] text-slate-300 hover:text-white'
+              }`}
+              title="Üye Listesi Paneli (Göster/Gizle)"
+            >
+              <Users className="w-4 h-4 text-purple-400" />
+              <span className="hidden sm:inline">Üyeler</span>
+            </button>
           )}
         </div>
       </div>
