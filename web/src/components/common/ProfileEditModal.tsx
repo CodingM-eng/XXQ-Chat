@@ -24,6 +24,10 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
   const [lastName, setLastName] = useState(user?.lastName || '');
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || '');
+  const [bio, setBio] = useState(user?.bio || '');
+  const [groupAddPrivacy, setGroupAddPrivacy] = useState<'everyone' | 'friends' | 'invite_only'>(
+    user?.groupAddPrivacy || 'everyone'
+  );
 
   // Avatar modes: 'preset' | 'file' | 'url'
   const [avatarMode, setAvatarMode] = useState<'preset' | 'file' | 'url'>('preset');
@@ -101,6 +105,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
         displayName: displayName.trim(),
         avatarUrl: finalAvatarUrl,
         phoneNumber: phoneNumber.trim() || undefined,
+        bio: bio.trim() || null,
+        groupAddPrivacy,
       });
 
       updateUser(res.user);
@@ -190,6 +196,68 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               placeholder="Örn: Efe Karahan"
               className="w-full px-3.5 py-2.5 bg-[#0b0914] border border-[#241c38] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
             />
+            {/* Platform Role Badges */}
+            <div className="flex items-center gap-1.5 mt-2">
+              <span className="text-[10px] text-slate-400">Yetki / Rol:</span>
+              {user.isAdmin ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60 shadow-sm">
+                  Platform Yöneticisi
+                </span>
+              ) : user.isFamily ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-pink-950/80 text-pink-300 border border-pink-700/60 shadow-sm">
+                  Aile Üyesi
+                </span>
+              ) : user.isModerator ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-700/60 shadow-sm">
+                  Moderatör
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#1e1732] text-slate-300 border border-[#31254e]">
+                  Kullanıcı
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Hakkımda (Bio) Field */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-300">
+                Hakkımda (Biyografi)
+              </label>
+              <span className="text-[10px] font-mono text-slate-400">
+                {bio.length}/500
+              </span>
+            </div>
+            <textarea
+              value={bio}
+              onChange={(e) => setBio(e.target.value.slice(0, 500))}
+              rows={3}
+              placeholder="Kendinizden, ilgi alanlarınızdan veya durumunuzdan bahsedin..."
+              className="w-full px-3.5 py-2.5 bg-[#0b0914] border border-[#241c38] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors resize-none"
+            />
+            <p className="text-[10px] text-slate-500 mt-1">
+              Bu bilgi profilinizi inceleyen diğer kullanıcılara ve sohbet katılımcılarına görünür.
+            </p>
+          </div>
+
+          {/* Group Add Privacy */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Grup Davet ve Ekleme Gizliliği
+            </label>
+            <select
+              value={groupAddPrivacy}
+              onChange={(e: any) => setGroupAddPrivacy(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-[#0b0914] border border-[#241c38] rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 transition-colors cursor-pointer"
+            >
+              <option value="everyone">Herkes (Beni herhangi biri gruplara ekleyebilir)</option>
+              <option value="friends">Yalnızca Arkadaşlarım (Sadece arkadaşlarım gruplara ekleyebilir)</option>
+              <option value="invite_only">Yalnızca Davetle (Gruplara doğrudan eklenemem, davet onayı gerekir)</option>
+            </select>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Grup kurucularının sizi doğrudan gruplara ekleyebilmesini veya davet onayınıza tabi tutulmasını belirler.
+            </p>
           </div>
 
           {/* Avatar Options */}

@@ -14,6 +14,13 @@ import {
   AlertCircle,
   Loader2,
   Users,
+  Volume2,
+  VolumeX,
+  Volume1,
+  Settings,
+  RotateCcw,
+  Keyboard,
+  X,
 } from 'lucide-react';
 
 export interface ActiveCallState {
@@ -70,6 +77,47 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
   const [callDuration, setCallDuration] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Volume slider for remote participant (local playback only)
+  const [remoteVolume, setRemoteVolume] = useState<number>(100);
+  const [isRemoteMuted, setIsRemoteMuted] = useState(false);
+
+  // Configurable Keyboard Shortcuts
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [shortcutKeys, setShortcutKeys] = useState<{
+    mute: string;
+    video: string;
+    screen: string;
+    end: string;
+  }>(() => {
+    try {
+      const saved = localStorage.getItem('xxq_call_shortcuts');
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return { mute: 'm', video: 'v', screen: 's', end: 'Escape' };
+  });
+  const [shortcutConflict, setShortcutConflict] = useState<string | null>(null);
+
+  const handleVolumeChange = (newVol: number) => {
+    const clamped = Math.max(0, Math.min(100, newVol));
+    setRemoteVolume(clamped);
+    setIsRemoteMuted(clamped === 0);
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.volume = clamped / 100;
+    }
+  };
+
+  const toggleRemoteMute = () => {
+    if (isRemoteMuted) {
+      const restoreVol = remoteVolume === 0 ? 100 : remoteVolume;
+      setRemoteVolume(restoreVol);
+      setIsRemoteMuted(false);
+      if (remoteAudioRef.current) remoteAudioRef.current.volume = restoreVol / 100;
+    } else {
+      setIsRemoteMuted(true);
+      if (remoteAudioRef.current) remoteAudioRef.current.volume = 0;
+    }
+  };
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -128,7 +176,7 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
     onEndCall();
   }, [callState, cleanUpMedia, onEndCall]);
 
-  // Acquire local media stream based on mode
+  // Acquire local media stream based on mode with desktop fallback
   const setupLocalMedia = useCallback(async (mode: 'audio' | 'video' | 'screen'): Promise<MediaStream> => {
     let stream: MediaStream;
 
@@ -153,17 +201,39 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
         stream = screenStream;
         setIsScreenSharing(true);
       } else if (mode === 'video') {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-        });
-        cameraTrackRef.current = stream.getVideoTracks()[0];
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          });
+        } catch (initialErr) {
+          // PC Device Fallback: desktop without microphone or webcam
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+            });
+          } catch (_) {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
+          }
+        }
+        cameraTrackRef.current = stream.getVideoTracks()[0] || null;
       } else {
         // Audio only
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: false,
-        });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+        } catch (audioErr) {
+          // PC without microphone: try requesting audio with relaxed constraints
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+        }
       }
 
       localStreamRef.current = stream;
@@ -180,7 +250,7 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         userMsg = 'Kamera veya mikrofon erişim izni reddedildi. Lütfen tarayıcı izinlerini kontrol edin.';
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        userMsg = 'Mikrofon veya kamera cihazı bulunamadı.';
+        userMsg = 'Mikrofon veya kamera cihazı bulunamadı. Lütfen cihazınızın bağlı olduğundan emin olun.';
       } else if (err.message) {
         userMsg = err.message;
       }
@@ -432,31 +502,82 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
     }
   };
 
-  // Video Camera Toggle
+  // Video Camera Toggle with WebRTC renegotiation if starting from audio
   const toggleVideo = async () => {
-    if (currentMode === 'audio') return;
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
 
-    if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoMuted(!videoTrack.enabled);
+    if (currentMode === 'audio' || !cameraTrackRef.current) {
+      try {
+        const vidStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        });
+        const vTrack = vidStream.getVideoTracks()[0];
+        cameraTrackRef.current = vTrack;
+        if (localStreamRef.current) {
+          localStreamRef.current.addTrack(vTrack);
+        }
+
+        const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(vTrack);
+        } else {
+          pc.addTrack(vTrack, localStreamRef.current || vidStream);
+          // Perform WebRTC renegotiation
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          const socket = getSocket();
+          if (socket && callState) {
+            socket.emit('webrtc:offer', {
+              conversationId: callState.conversationId,
+              targetUserId: callState.targetUser.id,
+              sdp: offer,
+            });
+          }
+        }
+
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current || vidStream;
+          localVideoRef.current.play().catch(() => {});
+        }
+
+        setCurrentMode('video');
+        setIsVideoMuted(false);
 
         const socket = getSocket();
         if (socket && callState) {
           socket.emit('call:mode-change', {
             conversationId: callState.conversationId,
             targetUserId: callState.targetUser.id,
-            mode: currentMode,
-            isVideoMuted: !videoTrack.enabled,
+            mode: 'video',
+            isVideoMuted: false,
             isScreenSharing,
           });
         }
+      } catch (err: any) {
+        setErrorMessage('Kamera başlatılamadı: ' + err.message);
+      }
+      return;
+    }
+
+    if (cameraTrackRef.current) {
+      cameraTrackRef.current.enabled = !cameraTrackRef.current.enabled;
+      setIsVideoMuted(!cameraTrackRef.current.enabled);
+
+      const socket = getSocket();
+      if (socket && callState) {
+        socket.emit('call:mode-change', {
+          conversationId: callState.conversationId,
+          targetUserId: callState.targetUser.id,
+          mode: currentMode,
+          isVideoMuted: !cameraTrackRef.current.enabled,
+          isScreenSharing,
+        });
       }
     }
   };
 
-  // Screen Sharing Toggle during call
+  // Screen Sharing Toggle during call with renegotiation
   const toggleScreenShare = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       setErrorMessage('Ekran paylaşımı bu tarayıcıda desteklenmiyor.');
@@ -475,16 +596,28 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
         const newScreenTrack = screenStream.getVideoTracks()[0];
         screenTrackRef.current = newScreenTrack;
 
-        // Replace video track in RTCPeerConnection sender
+        // Replace or add video track in RTCPeerConnection sender
         const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
         if (sender) {
           await sender.replaceTrack(newScreenTrack);
         } else {
           pc.addTrack(newScreenTrack, localStreamRef.current!);
+          // Perform WebRTC renegotiation offer
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          const socket = getSocket();
+          if (socket && callState) {
+            socket.emit('webrtc:offer', {
+              conversationId: callState.conversationId,
+              targetUserId: callState.targetUser.id,
+              sdp: offer,
+            });
+          }
         }
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = screenStream;
+          localVideoRef.current.play().catch(() => {});
         }
 
         setIsScreenSharing(true);
@@ -512,6 +645,33 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
       stopLocalScreenShare();
     }
   };
+
+  // Global Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (showShortcutsModal) return;
+
+      const key = e.key.toLowerCase();
+      if (key === shortcutKeys.mute.toLowerCase() || (shortcutKeys.mute.toLowerCase() === 'space' && e.code === 'Space')) {
+        e.preventDefault();
+        toggleAudio();
+      } else if (key === shortcutKeys.video.toLowerCase()) {
+        e.preventDefault();
+        toggleVideo();
+      } else if (key === shortcutKeys.screen.toLowerCase()) {
+        e.preventDefault();
+        toggleScreenShare();
+      } else if (e.key === shortcutKeys.end || (shortcutKeys.end.toLowerCase() === 'escape' && e.key === 'Escape')) {
+        e.preventDefault();
+        handleEndCall();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [shortcutKeys, showShortcutsModal, isAudioMuted, isVideoMuted, isScreenSharing]);
 
   const stopLocalScreenShare = async () => {
     if (screenTrackRef.current) {
@@ -607,6 +767,14 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowShortcutsModal(true)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-[#1f1736] transition-colors"
+              title="Klavye Kısayolları"
+            >
+              <Keyboard className="w-4 h-4" />
+            </button>
             {isVideoOrScreen && (
               <button
                 type="button"
@@ -733,21 +901,19 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
             {isAudioMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
-          {/* Video Toggle (Available in Video mode) */}
-          {(currentMode === 'video' || currentMode === 'screen') && (
-            <button
-              type="button"
-              onClick={toggleVideo}
-              className={`p-3.5 rounded-2xl border transition-all ${
-                isVideoMuted
-                  ? 'bg-rose-950/70 border-rose-800 text-rose-300 hover:bg-rose-900/80'
-                  : 'bg-[#1e1732] border-[#31254e] text-slate-200 hover:bg-[#281f44]'
-              }`}
-              title={isVideoMuted ? 'Kamerayı Aç' : 'Kamerayı Kapat'}
-            >
-              {isVideoMuted ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-            </button>
-          )}
+          {/* Video Toggle (Starts camera or toggles video) */}
+          <button
+            type="button"
+            onClick={toggleVideo}
+            className={`p-3.5 rounded-2xl border transition-all ${
+              isVideoMuted || currentMode === 'audio'
+                ? 'bg-[#1e1732] border-[#31254e] text-slate-400 hover:text-slate-200 hover:bg-[#281f44]'
+                : 'bg-blue-950/70 border-blue-800 text-blue-300 hover:bg-blue-900/80'
+            }`}
+            title={isVideoMuted || currentMode === 'audio' ? 'Kamerayı Aç' : 'Kamerayı Kapat'}
+          >
+            {isVideoMuted || currentMode === 'audio' ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+          </button>
 
           {/* Screen Share Toggle */}
           <button
@@ -763,6 +929,36 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
             <Monitor className="w-5 h-5" />
           </button>
 
+          {/* Local Audio Playback Volume Slider */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-[#1a142c] border border-[#2f244a] rounded-2xl text-slate-300 shadow-inner">
+            <button
+              type="button"
+              onClick={toggleRemoteMute}
+              className="text-slate-400 hover:text-white transition-colors"
+              title={isRemoteMuted ? 'Karşı Tarafın Sesini Aç' : 'Karşı Tarafın Sesini Kıs'}
+            >
+              {isRemoteMuted || remoteVolume === 0 ? (
+                <VolumeX className="w-4 h-4 text-rose-400" />
+              ) : remoteVolume < 50 ? (
+                <Volume1 className="w-4 h-4 text-purple-300" />
+              ) : (
+                <Volume2 className="w-4 h-4 text-purple-300" />
+              )}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={isRemoteMuted ? 0 : remoteVolume}
+              onChange={(e) => handleVolumeChange(Number(e.target.value))}
+              className="w-16 sm:w-20 accent-purple-500 cursor-pointer h-1.5 bg-[#0e0a1a] rounded-lg"
+              title={`Karşı Tarafın Ses Seviyesi: %${isRemoteMuted ? 0 : remoteVolume}`}
+            />
+            <span className="text-[10px] font-mono text-slate-400 w-7 text-right">
+              %{isRemoteMuted ? 0 : remoteVolume}
+            </span>
+          </div>
+
           {/* End Call Button */}
           <button
             type="button"
@@ -775,6 +971,127 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Configurable Keyboard Shortcuts Modal */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="bg-[#120f1e] border border-[#2e2448] w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#251c38] pb-3">
+              <div className="flex items-center gap-2 text-white font-bold text-sm">
+                <Keyboard className="w-4 h-4 text-purple-400" />
+                <span>Görüşme Klavye Kısayolları</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShortcutsModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#1f1734]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {shortcutConflict && (
+              <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{shortcutConflict}</span>
+              </div>
+            )}
+
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-300 font-medium">Mikrofon Aç/Kapat</span>
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={shortcutKeys.mute}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    setShortcutKeys((prev) => ({ ...prev, mute: val }));
+                  }}
+                  className="w-20 px-2 py-1 bg-[#0b0914] border border-[#2a2244] rounded-lg text-center text-purple-300 font-mono font-bold focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-slate-300 font-medium">Kamera Aç/Kapat</span>
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={shortcutKeys.video}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    setShortcutKeys((prev) => ({ ...prev, video: val }));
+                  }}
+                  className="w-20 px-2 py-1 bg-[#0b0914] border border-[#2a2244] rounded-lg text-center text-purple-300 font-mono font-bold focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-slate-300 font-medium">Ekran Paylaşımı</span>
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={shortcutKeys.screen}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    setShortcutKeys((prev) => ({ ...prev, screen: val }));
+                  }}
+                  className="w-20 px-2 py-1 bg-[#0b0914] border border-[#2a2244] rounded-lg text-center text-purple-300 font-mono font-bold focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-slate-300 font-medium">Aramayı Sonlandır</span>
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={shortcutKeys.end}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    setShortcutKeys((prev) => ({ ...prev, end: val }));
+                  }}
+                  className="w-20 px-2 py-1 bg-[#0b0914] border border-[#2a2244] rounded-lg text-center text-purple-300 font-mono font-bold focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#251c38]">
+              <button
+                type="button"
+                onClick={() => {
+                  const defaults = { mute: 'm', video: 'v', screen: 's', end: 'Escape' };
+                  setShortcutKeys(defaults);
+                  setShortcutConflict(null);
+                  localStorage.setItem('xxq_call_shortcuts', JSON.stringify(defaults));
+                }}
+                className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Varsayılanlara Sıfırla</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  // Check for conflicts
+                  const values = [shortcutKeys.mute, shortcutKeys.video, shortcutKeys.screen, shortcutKeys.end].map((s) => s.toLowerCase());
+                  const unique = new Set(values);
+                  if (unique.size !== values.length) {
+                    setShortcutConflict('Çakışma tespit edildi: Aynı tuş birden fazla işleme atanamaz!');
+                    return;
+                  }
+                  setShortcutConflict(null);
+                  localStorage.setItem('xxq_call_shortcuts', JSON.stringify(shortcutKeys));
+                  setShowShortcutsModal(false);
+                }}
+                className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs"
+              >
+                Kaydet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

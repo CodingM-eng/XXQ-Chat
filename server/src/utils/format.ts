@@ -19,6 +19,10 @@ export function formatMessage(m: any) {
     attachments: m.attachments || null,
     reactions: m.reactions || {},
     status: m.status || 'sent',
+    type: m.type || (m.isSystem || m.is_system ? 'system' : 'text'),
+    isSystem: Boolean(m.isSystem ?? m.is_system),
+    is_system: Boolean(m.isSystem ?? m.is_system),
+    readBy: m.readBy || m.read_by || [],
     createdAt: m.createdAt || m.created_at,
     created_at: m.createdAt || m.created_at,
   };

@@ -206,8 +206,27 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             return;
           }
 
-          // Check announcement-only channel permission
           const conv = await dataStore.getConversation(conversationId, user.id);
+
+          // Aile role messaging guard: only platform admin can send direct messages to Aile users
+          if (conv && conv.type === 'direct' && !user.isAdmin) {
+            const participants = await dataStore.getConversationParticipantIds(conversationId);
+            const peerId = participants.find((id) => id !== user.id);
+            if (peerId) {
+              const peer = await dataStore.getUserById(peerId);
+              if (peer && peer.isFamily) {
+                if (typeof callback === 'function') {
+                  callback({
+                    error: 'FAMILY_ROLE_PROTECTED',
+                    message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi mesaj gönderebilir.',
+                  });
+                }
+                return;
+              }
+            }
+          }
+
+          // Check announcement-only channel permission
           if (conv && conv.isAnnouncementOnly) {
             const role = await dataStore.getConversationRole(conversationId, user.id);
             const isOwnerOrAdmin = role === 'owner' || role === 'admin' || user.isAdmin;
@@ -241,6 +260,9 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             }
           }
 
+          const rawType = (data as any).type;
+          const msgType = rawType || (hasAttachments ? (attachments[0].mimeType?.startsWith('image') ? 'image' : attachments[0].mimeType?.startsWith('video') ? 'video' : attachments[0].mimeType?.startsWith('audio') ? 'audio' : 'file') : 'text');
+
           const savedMessage = await dataStore.saveMessage({
             conversationId,
             senderId: user.id,
@@ -251,6 +273,8 @@ export function setupSocketServer(httpServer: HttpServer): Server {
             replyTo: replyTo || null,
             forwardedFrom: forwardedFrom || null,
             attachments: attachments || null,
+            type: msgType,
+            isSystem: false,
             status: 'sent',
           });
 
@@ -353,22 +377,42 @@ export function setupSocketServer(httpServer: HttpServer): Server {
       }
     });
 
-    // Handle read receipt
+    // Handle read receipt with truthfulness and readBy tracking
     socket.on('message:read', async (data: { conversationId: string; messageId: string }) => {
       try {
         const { conversationId, messageId } = data;
         if (!conversationId || !messageId) return;
 
+        await dataStore.recordMessageRead(messageId, conversationId, user.id);
         await dataStore.markConversationRead(conversationId, user.id, messageId);
 
-        // Notify conversation room
-        socket.to(`conversation:${conversationId}`).emit('message:read_receipt', {
+        const readBy = await dataStore.getMessageReads(messageId);
+
+        // Notify conversation room and user rooms with accurate readBy list
+        const participantIds = await dataStore.getConversationParticipantIds(conversationId);
+        const targetRooms = [`conversation:${conversationId}`, ...participantIds.map((pId) => `user:${pId}`)];
+
+        io.to(targetRooms).emit('message:read_receipt', {
           conversationId,
           messageId,
           readByUserId: user.id,
+          readBy,
         });
       } catch (err) {
         console.error('Socket message:read error:', err);
+      }
+    });
+
+    // Query truthful online presence based strictly on active authenticated socket connections
+    socket.on('presence:query', (data: { userIds: string[] }, callback) => {
+      try {
+        const userIds = Array.isArray(data?.userIds) ? data.userIds : [];
+        const onlineUserIds = userIds.filter((uid) => activeUsers.has(uid) && activeUsers.get(uid)!.size > 0);
+        if (typeof callback === 'function') {
+          callback({ success: true, onlineUserIds });
+        }
+      } catch (err: any) {
+        if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
       }
     });
 

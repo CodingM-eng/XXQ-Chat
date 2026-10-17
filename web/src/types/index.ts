@@ -8,6 +8,9 @@ export interface User {
   phoneNumber?: string | null;
   isAdmin: boolean;
   isModerator?: boolean;
+  isFamily?: boolean;
+  groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
+  bio?: string | null;
   themePreference?: 'dark' | 'light';
   onboarded?: boolean;
   status?: 'active' | 'pending' | 'blocked';
@@ -54,12 +57,60 @@ export interface Message {
   senderAvatar?: string | null;
   clientMessageId?: string;
   content: string;
+  type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system';
+  isSystem?: boolean;
   replyTo?: MessageReply | null;
   forwardedFrom?: MessageForward | null;
   attachments?: Attachment[] | null;
   reactions?: Record<string, string[]>; // { "👍": ["userId1", "userId2"] }
   status: 'pending' | 'sent' | 'delivered' | 'read';
+  readBy?: { userId: string; displayName?: string; readAt: string }[];
   createdAt: string;
+}
+
+export interface ServerInvite {
+  id: string;
+  serverId: string;
+  code: string;
+  createdById: string;
+  maxUses?: number | null;
+  usedCount: number;
+  usesCount?: number;
+  expiresAt?: string | null;
+  isRevoked: boolean;
+  createdAt: string;
+}
+
+export interface FriendRequest {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string | null;
+  receiverId?: string;
+  receiverName?: string;
+  recipientId?: string;
+  recipientName?: string;
+  receiverAvatar?: string | null;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: string;
+}
+
+export interface BotPoolItem {
+  id: string;
+  botName: string;
+  username: string;
+  isAssigned: boolean;
+  assignedName?: string | null;
+  assignedConversationId?: string | null;
+  createdAt: string;
+}
+
+export interface GeminiConfig {
+  isEnabled: boolean;
+  defaultPrompt?: string | null;
+  model: string;
+  hasKey: boolean;
+  updatedAt?: string;
 }
 
 export interface ConversationParticipant {
@@ -164,14 +215,21 @@ export interface PendingRequest {
 
 export interface WhitelistItem {
   email: string;
-  approved_by: string;
-  created_at: string;
+  approved_by?: string;
+  approvedBy?: string;
+  created_at?: string;
+  createdAt?: string;
+  userId?: string | null;
   display_name?: string | null;
+  displayName?: string | null;
   avatar_url?: string | null;
+  avatarUrl?: string | null;
   is_admin?: number;
   is_moderator?: number;
+  is_family?: number | boolean;
   isAdmin?: boolean;
   isModerator?: boolean;
+  isFamily?: boolean;
 }
 
 export interface AuditLog {

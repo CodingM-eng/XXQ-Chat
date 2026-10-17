@@ -30,10 +30,19 @@ import {
   Megaphone,
   Hash,
   Settings,
+  Mic,
+  Play,
+  Pause,
+  Square,
+  StopCircle,
+  UserCheck,
+  Info,
+  Share2,
 } from 'lucide-react';
 import { ScreenShareModal } from './ScreenShareModal';
 import { GroupAvatarModal } from './GroupAvatarModal';
 import { GroupSettingsModal } from './GroupSettingsModal';
+import { ServerInviteModal } from './ServerInviteModal';
 
 interface ChatPaneProps {
   conversation: Conversation;
@@ -45,7 +54,8 @@ interface ChatPaneProps {
     clientMessageId?: string,
     replyToMessageId?: string,
     forwardedFrom?: { senderName: string },
-    attachments?: Attachment[]
+    attachments?: Attachment[],
+    type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system'
   ) => Promise<void>;
   onDeleteMessage?: (messageId: string) => Promise<void>;
   onToggleReaction: (messageId: string, emoji: string) => Promise<void>;
@@ -78,6 +88,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [isScreenShareOpen, setIsScreenShareOpen] = useState(false);
   const [isGroupAvatarOpen, setIsGroupAvatarOpen] = useState(false);
   const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
+  const [isServerInviteOpen, setIsServerInviteOpen] = useState(false);
   const [isCallMenuOpen, setIsCallMenuOpen] = useState(false);
   const callMenuRef = useRef<HTMLDivElement>(null);
 
@@ -86,6 +97,108 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Voice Recording state
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<any>(null);
+
+  // Read receipts popover
+  const [selectedReadByMsg, setSelectedReadByMsg] = useState<Message | null>(null);
+
+  // User profile inspect modal
+  const [inspectedUser, setInspectedUser] = useState<User | null>(null);
+  const [isLoadingInspectedUser, setIsLoadingInspectedUser] = useState(false);
+
+  const handleInspectUser = async (userId: string) => {
+    try {
+      setIsLoadingInspectedUser(true);
+      const res = await api.getUserProfile(userId);
+      setInspectedUser(res.user);
+    } catch (err) {
+      console.error('Failed to load user profile:', err);
+    } finally {
+      setIsLoadingInspectedUser(false);
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+
+        if (audioChunksRef.current.length > 0) {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const dataUrl = reader.result as string;
+            await onSendMessage(
+              '🎤 Sesli Mesaj',
+              undefined,
+              replyTarget?.id,
+              undefined,
+              [
+                {
+                  id: 'voice_' + Date.now(),
+                  conversationId: conversation.id,
+                  uploaderId: currentUser?.id || 'me',
+                  driveAccountId: 'voice_local',
+                  driveFileId: dataUrl,
+                  fileName: 'sesli-mesaj.webm',
+                  fileSize: audioBlob.size,
+                  mimeType: 'audio/webm',
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+              'voice'
+            );
+          };
+          reader.readAsDataURL(audioBlob);
+        }
+        setIsRecordingVoice(false);
+        setRecordingDuration(0);
+      };
+
+      mediaRecorder.start();
+      setIsRecordingVoice(true);
+      setRecordingDuration(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((d) => d + 1);
+      }, 1000);
+    } catch (err: any) {
+      alert('Mikrofon erişim izni alınamadı: ' + err.message);
+    }
+  };
+
+  const stopAndSendVoiceRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      audioChunksRef.current = [];
+      mediaRecorderRef.current.stream?.getTracks().forEach((t) => t.stop());
+      mediaRecorderRef.current.stop();
+    }
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecordingVoice(false);
+    setRecordingDuration(0);
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<any>(null);
@@ -415,6 +528,18 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                 <Settings className="w-4 h-4 text-purple-400" />
                 <span className="hidden sm:inline">Grup Ayarları</span>
               </button>
+
+              {(conversation.serverId || isChannel) && (
+                <button
+                  type="button"
+                  onClick={() => setIsServerInviteOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
+                  title="Sunucu Davet Bağlantısı Oluştur"
+                >
+                  <Share2 className="w-4 h-4 text-purple-400" />
+                  <span className="hidden sm:inline">Sunucu Daveti</span>
+                </button>
+              )}
             </>
           )}
         </div>
@@ -423,6 +548,18 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
       {/* Message Stream */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, idx) => {
+          // Distinct System Message rendering
+          if (msg.isSystem || msg.type === 'system') {
+            return (
+              <div key={msg.id || idx} className="flex justify-center my-3 select-none animate-fade-in">
+                <div className="px-4 py-1.5 rounded-full bg-[#1b152d] border border-purple-800/40 text-xs font-medium text-purple-200 shadow-md flex items-center gap-2 max-w-md text-center">
+                  <span>{msg.content}</span>
+                  <span className="text-[10px] text-purple-400 font-mono">({formatMessageTime(msg.createdAt)})</span>
+                </div>
+              </div>
+            );
+          }
+
           const isMe = msg.senderId === currentUser?.id;
           const isHovered = hoveredMessageId === msg.id;
           const canDelete = isMe || currentUser?.isAdmin || currentUser?.isModerator;
@@ -460,6 +597,14 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                     >
                       <Forward className="w-3.5 h-3.5" />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => handleInspectUser(msg.senderId)}
+                      className="p-1 hover:bg-[#2b2444] rounded-full text-slate-400 hover:text-purple-300 transition-colors"
+                      title="Kullanıcı Profilini Görüntüle"
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                    </button>
                     {canDelete && onDeleteMessage && (
                       <button
                         type="button"
@@ -481,11 +626,16 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                       : 'bg-[#181427] text-slate-100 border border-[#292243] rounded-tl-sm'
                   }`}
                 >
-                  {/* Sender Name in Group Chats */}
+                  {/* Sender Name in Group Chats with Profile Inspect */}
                   {!isMe && isGroup && (
-                    <span className="block text-[11px] font-bold text-purple-400 mb-1">
+                    <button
+                      type="button"
+                      onClick={() => handleInspectUser(msg.senderId)}
+                      className="block text-[11px] font-bold text-purple-400 hover:text-purple-300 hover:underline mb-1 text-left"
+                      title="Profili İncele"
+                    >
                       {msg.senderName}
-                    </span>
+                    </button>
                   )}
 
                   {/* Forwarded From Indicator */}
@@ -511,47 +661,89 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                     <div className="space-y-2 mb-2">
                       {msg.attachments.map((att) => {
                         const isImg = att.mimeType?.startsWith('image/');
-                        return (
-                          <div key={att.id} className="rounded-xl overflow-hidden bg-black/20 border border-white/10">
-                            {isImg ? (
-                              <div className="relative group/att">
-                                <img
-                                  src={api.getAttachmentUrl(conversation.id, att.id)}
-                                  alt={att.fileName}
-                                  loading="lazy"
-                                  className="max-h-60 w-auto rounded-lg object-contain cursor-pointer"
-                                  onClick={() => window.open(api.getAttachmentUrl(conversation.id, att.id), '_blank')}
-                                />
+                        const isVideo = att.mimeType?.startsWith('video/');
+                        const isAudio = att.mimeType?.startsWith('audio/') || msg.type === 'voice';
+
+                        if (isImg) {
+                          return (
+                            <div key={att.id} className="rounded-xl overflow-hidden bg-black/20 border border-white/10 relative group/att">
+                              <img
+                                src={api.getAttachmentUrl(conversation.id, att.id)}
+                                alt={att.fileName}
+                                loading="lazy"
+                                className="max-h-60 w-auto rounded-lg object-contain cursor-pointer"
+                                onClick={() => window.open(api.getAttachmentUrl(conversation.id, att.id), '_blank')}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
+                                className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 text-white rounded-lg opacity-0 group-hover/att:opacity-100 transition-opacity"
+                                title="Görseli İndir"
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        if (isVideo) {
+                          return (
+                            <div key={att.id} className="rounded-xl overflow-hidden bg-black/40 border border-purple-500/30 max-w-md">
+                              <video
+                                controls
+                                playsInline
+                                src={api.getAttachmentUrl(conversation.id, att.id)}
+                                className="w-full max-h-72 object-contain bg-black rounded-t-xl"
+                              />
+                              <div className="p-2 flex items-center justify-between bg-[#120e22] text-xs">
+                                <span className="truncate text-slate-200 font-semibold">{att.fileName}</span>
                                 <button
                                   type="button"
                                   onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
-                                  className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 text-white rounded-lg opacity-0 group-hover/att:opacity-100 transition-opacity"
-                                  title="Görseli İndir"
+                                  className="p-1 hover:bg-white/10 rounded text-slate-300 hover:text-white transition-colors"
+                                  title="Videoyu İndir"
                                 >
                                   <Download className="w-4 h-4" />
                                 </button>
                               </div>
-                            ) : (
-                              <div className="p-2.5 flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="w-8 h-8 rounded-lg bg-purple-950 flex items-center justify-center text-purple-300 shrink-0">
-                                    <FileText className="w-4 h-4" />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <p className="text-xs font-semibold truncate text-white">{att.fileName}</p>
-                                    <p className="text-[10px] text-slate-300">{formatBytes(att.fileSize)}</p>
-                                  </div>
+                            </div>
+                          );
+                        }
+
+                        if (isAudio) {
+                          const audioSrc = att.driveFileId?.startsWith('data:') ? att.driveFileId : api.getAttachmentUrl(conversation.id, att.id);
+                          return (
+                            <div key={att.id} className="p-3 rounded-2xl bg-purple-950/80 border border-purple-700/50 flex flex-col gap-2 min-w-[240px] max-w-xs shadow-inner">
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-white shrink-0 shadow">
+                                  <Mic className="w-3.5 h-3.5" />
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
-                                  className="p-1.5 hover:bg-white/10 rounded-lg text-slate-200 hover:text-white transition-colors"
-                                  title="Dosyayı İndir"
-                                >
-                                  <Download className="w-4 h-4" />
-                                </button>
+                                <span className="text-xs font-bold text-purple-200">Sesli Mesaj</span>
                               </div>
-                            )}
+                              <audio controls src={audioSrc} className="w-full h-8 accent-purple-500 rounded" />
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div key={att.id} className="rounded-xl overflow-hidden bg-black/20 border border-white/10 p-2.5 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-lg bg-purple-950 flex items-center justify-center text-purple-300 shrink-0">
+                                <FileText className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold truncate text-white">{att.fileName}</p>
+                                <p className="text-[10px] text-slate-300">{formatBytes(att.fileSize)}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
+                              className="p-1.5 hover:bg-white/10 rounded-lg text-slate-200 hover:text-white transition-colors"
+                              title="Dosyayı İndir"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
                           </div>
                         );
                       })}
@@ -561,7 +753,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                   {/* Message Content */}
                   {msg.content && <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>}
 
-                  {/* Timestamp & Status */}
+                  {/* Timestamp & Truthful Status Checkmarks */}
                   <div
                     className={`flex items-center justify-end gap-1 mt-1 text-[10px] font-mono select-none ${
                       isMe ? 'text-purple-200' : 'text-slate-400'
@@ -569,13 +761,59 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                   >
                     <span>{formatMessageTime(msg.createdAt)}</span>
                     {isMe && (
-                      <span>
-                        {msg.status === 'read' ? (
+                      <span
+                        className="cursor-pointer relative inline-flex items-center"
+                        onClick={() => {
+                          if (msg.readBy && msg.readBy.length > 0) {
+                            setSelectedReadByMsg(selectedReadByMsg?.id === msg.id ? null : msg);
+                          }
+                        }}
+                        title={
+                          msg.readBy && msg.readBy.length > 0
+                            ? `${msg.readBy.length} kişi okudu (Detaylar için tıklayın)`
+                            : msg.status === 'read'
+                            ? 'Okundu'
+                            : msg.status === 'delivered'
+                            ? 'İletildi'
+                            : 'Gönderildi'
+                        }
+                      >
+                        {msg.status === 'read' || (msg.readBy && msg.readBy.length > 0) ? (
                           <CheckCheck className="w-3.5 h-3.5 text-purple-200" />
-                        ) : msg.status === 'sent' || msg.status === 'delivered' ? (
-                          <Check className="w-3.5 h-3.5 text-purple-300" />
+                        ) : msg.status === 'delivered' ? (
+                          <CheckCheck className="w-3.5 h-3.5 text-slate-400" />
+                        ) : msg.status === 'sent' ? (
+                          <Check className="w-3.5 h-3.5 text-slate-400" />
                         ) : (
                           <Clock className="w-3 h-3 text-purple-300" />
+                        )}
+
+                        {/* Read By Popover */}
+                        {selectedReadByMsg?.id === msg.id && msg.readBy && msg.readBy.length > 0 && (
+                          <div className="absolute bottom-6 right-0 z-30 p-3 bg-[#120f20] border border-[#2e2448] rounded-2xl shadow-2xl min-w-[200px] text-xs animate-fade-in select-none">
+                            <div className="flex items-center justify-between pb-1.5 border-b border-[#251c38] mb-1.5 font-bold text-[11px] text-purple-300">
+                              <span>Okuyanlar ({msg.readBy.length})</span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedReadByMsg(null);
+                                }}
+                                className="text-slate-400 hover:text-white"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                              {msg.readBy.map((rb, rIdx) => (
+                                <div key={rIdx} className="flex items-center justify-between text-[11px] text-slate-200">
+                                  <span className="truncate font-semibold">{rb.displayName}</span>
+                                  <span className="text-slate-400 font-mono text-[9px] shrink-0 ml-2">
+                                    {formatMessageTime(rb.readAt)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         )}
                       </span>
                     )}
@@ -710,39 +948,81 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
               {isUploading ? <Loader2 className="w-5 h-5 animate-spin text-purple-400" /> : <Paperclip className="w-5 h-5" />}
             </button>
 
-            <textarea
-              value={inputText}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Bir mesaj yazın... (Göndermek için Enter, yeni satır için Shift+Enter)"
-              rows={1}
-              className="flex-1 bg-transparent border-0 text-slate-100 placeholder:text-slate-500 text-xs sm:text-sm focus:outline-none resize-none max-h-32 py-1.5 px-2 leading-relaxed"
-            />
+            {isRecordingVoice ? (
+              <div className="flex-1 flex items-center gap-2.5 px-3 py-1.5 animate-pulse bg-rose-950/40 border border-rose-800/50 rounded-xl">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+                <span className="text-xs font-semibold text-rose-300">
+                  Ses Kaydediliyor: {Math.floor(recordingDuration / 60).toString().padStart(2, '0')}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                </span>
+                <span className="text-[11px] text-slate-400 italic hidden sm:inline">(Göndermek için sağdaki butona tıklayın)</span>
+              </div>
+            ) : (
+              <textarea
+                value={inputText}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Bir mesaj yazın... (Göndermek için Enter, yeni satır için Shift+Enter)"
+                rows={1}
+                className="flex-1 bg-transparent border-0 text-slate-100 placeholder:text-slate-500 text-xs sm:text-sm focus:outline-none resize-none max-h-32 py-1.5 px-2 leading-relaxed"
+              />
+            )}
 
-            <button
-              type="button"
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className={`p-2 transition-colors rounded-xl ${
-                showEmojiPicker ? 'text-purple-400 bg-purple-950/60' : 'text-slate-400 hover:text-slate-200 hover:bg-[#26203b]'
-              }`}
-              title="Emoji Ekle"
-            >
-              <Smile className="w-5 h-5" />
-            </button>
+            {!isRecordingVoice && (
+              <button
+                type="button"
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                className={`p-2 transition-colors rounded-xl ${
+                  showEmojiPicker ? 'text-purple-400 bg-purple-950/60' : 'text-slate-400 hover:text-slate-200 hover:bg-[#26203b]'
+                }`}
+                title="Emoji Ekle"
+              >
+                <Smile className="w-5 h-5" />
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={(!inputText.trim() && pendingAttachments.length === 0) || sending || isUploading}
-              className={`p-2.5 rounded-xl transition-all shadow-md shrink-0 ${
-                (inputText.trim() || pendingAttachments.length > 0) && !sending && !isUploading
-                  ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30 active:scale-95'
-                  : 'bg-slate-800 text-slate-600 cursor-not-allowed'
-              }`}
-              title="Mesajı Gönder"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+            {isRecordingVoice ? (
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={cancelVoiceRecording}
+                  className="p-2 text-rose-400 hover:bg-rose-950/60 rounded-xl transition-colors"
+                  title="Ses Kaydını İptal Et"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={stopAndSendVoiceRecording}
+                  className="p-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-md transition-all active:scale-95"
+                  title="Sesli Mesajı Gönder"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            ) : !inputText.trim() && pendingAttachments.length === 0 ? (
+              <button
+                type="button"
+                onClick={startVoiceRecording}
+                className="p-2.5 text-purple-400 hover:text-white hover:bg-purple-600/30 border border-purple-500/30 rounded-xl transition-all shrink-0 active:scale-95 shadow-sm"
+                title="Sesli Mesaj Kaydet"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={(!inputText.trim() && pendingAttachments.length === 0) || sending || isUploading}
+                className={`p-2.5 rounded-xl transition-all shadow-md shrink-0 ${
+                  (inputText.trim() || pendingAttachments.length > 0) && !sending && !isUploading
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30 active:scale-95'
+                    : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                }`}
+                title="Mesajı Gönder"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -834,6 +1114,74 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             onRefreshConversations?.();
           }}
         />
+      )}
+
+      {/* Server Invite Modal */}
+      {isServerInviteOpen && (conversation.serverId || conversation.id) && (
+        <ServerInviteModal
+          isOpen={isServerInviteOpen}
+          onClose={() => setIsServerInviteOpen(false)}
+          serverId={conversation.serverId || conversation.id}
+          serverName={conversation.name}
+        />
+      )}
+      {/* User Profile View Modal (Hakkımda, Rol, Katılım vb.) */}
+      {inspectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#120f1e] border border-[#2a2244] w-full max-w-sm rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center relative">
+            <button
+              onClick={() => setInspectedUser(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-xl bg-[#1b152d] hover:bg-[#251d3e] text-slate-400 hover:text-white transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-purple-500 shadow-xl shadow-purple-950/50 mb-3 bg-[#181329] flex items-center justify-center text-white font-bold text-2xl">
+              {inspectedUser.avatarUrl ? (
+                <img src={inspectedUser.avatarUrl} alt={inspectedUser.displayName} className="w-full h-full object-cover" />
+              ) : (
+                inspectedUser.displayName.slice(0, 2).toUpperCase()
+              )}
+            </div>
+
+            <h3 className="text-base font-bold text-white mb-1">{inspectedUser.displayName}</h3>
+
+            {/* Role badge */}
+            <div className="mb-3">
+              {inspectedUser.isAdmin ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60">
+                  Platform Yöneticisi
+                </span>
+              ) : inspectedUser.isFamily ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-pink-950/80 text-pink-300 border border-pink-700/60">
+                  Aile Üyesi
+                </span>
+              ) : inspectedUser.isModerator ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-700/60">
+                  Moderatör
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[#1e1732] text-slate-300 border border-[#31254e]">
+                  Kullanıcı
+                </span>
+              )}
+            </div>
+
+            {/* Hakkımda (Bio) */}
+            <div className="w-full p-3 bg-[#0c0a16] border border-[#231b36] rounded-2xl text-left mb-3">
+              <span className="text-[10px] font-bold text-purple-400 block mb-1 uppercase tracking-wider">Hakkımda</span>
+              <p className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
+                {inspectedUser.bio || 'Bu kullanıcı henüz hakkında bilgisi eklemedi.'}
+              </p>
+            </div>
+
+            {/* Account Metadata */}
+            <div className="w-full text-[11px] text-slate-400 flex items-center justify-between px-1">
+              <span>Kayıt Tarihi:</span>
+              <span className="font-mono text-slate-300">{inspectedUser.createdAt ? new Date(inspectedUser.createdAt).toLocaleDateString('tr-TR') : 'Bilinmiyor'}</span>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

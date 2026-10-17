@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, session, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -19,7 +19,41 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    // Media & Screen Sharing Permission Handlers
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      const allowed = ['media', 'audio', 'video', 'notifications', 'display-capture', 'camera', 'microphone'];
+      if (allowed.includes(permission)) {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    });
+
+    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+      const allowed = ['media', 'audio', 'video', 'notifications', 'display-capture', 'camera', 'microphone'];
+      return allowed.includes(permission);
+    });
+
+    if (session.defaultSession.setDisplayMediaRequestHandler) {
+      session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+        try {
+          const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+          const screenSource = sources.find((s) => s.id.startsWith('screen:')) || sources[0];
+          if (screenSource) {
+            callback({ video: screenSource, audio: 'loopback' });
+          } else {
+            callback({});
+          }
+        } catch (err) {
+          console.error('[Electron] Display media request error:', err);
+          callback({});
+        }
+      });
+    }
+
+    createWindow();
+  });
 }
 
 function createWindow() {

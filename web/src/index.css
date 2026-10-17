@@ -13,29 +13,37 @@
   }
 }
 
-/* Light Theme Overrides */
+/* Light Theme Comprehensive Redesign */
 html.light body {
-  background-color: #f8fafc !important;
+  background-color: #f7f6fc !important;
   color: #0f172a !important;
 }
 
 html.light * {
-  border-color: #e2e8f0;
+  border-color: #e2d9f3;
 }
 
+/* Background overrides: App root, backdrops, panels, sidebars, modals */
 html.light .bg-\[\#07050d\],
 html.light .bg-\[\#08070b\],
 html.light .bg-\[\#090710\],
 html.light .bg-\[\#0b0914\],
-html.light .bg-\[\#0c0a14\]\/90 {
-  background-color: #f8fafc !important;
+html.light .bg-\[\#0c0a14\]\/90,
+html.light .bg-slate-950,
+html.light .bg-slate-950\/80,
+html.light .bg-slate-950\/90 {
+  background-color: #f7f6fc !important;
 }
 
 html.light .bg-\[\#120f1e\],
 html.light .bg-\[\#0f0d15\],
 html.light .bg-\[\#110e1a\],
 html.light .bg-\[\#151124\],
-html.light .bg-\[\#151221\]\/90 {
+html.light .bg-\[\#151221\]\/90,
+html.light .bg-slate-900,
+html.light .bg-slate-900\/80,
+html.light .bg-slate-900\/90,
+html.light .bg-slate-900\/95 {
   background-color: #ffffff !important;
 }
 
@@ -44,17 +52,42 @@ html.light .bg-\[\#181329\],
 html.light .bg-\[\#1b152d\],
 html.light .bg-\[\#1c182b\],
 html.light .bg-\[\#1d1a29\],
-html.light .bg-\[\#201836\] {
-  background-color: #f1f5f9 !important;
+html.light .bg-\[\#201836\],
+html.light .bg-slate-800,
+html.light .bg-slate-800\/50,
+html.light .bg-slate-800\/60,
+html.light .bg-slate-800\/80 {
+  background-color: #f3f0fa !important;
 }
 
+/* Hover surfaces */
+html.light .hover\:bg-slate-800:hover,
+html.light .hover\:bg-slate-800\/60:hover,
+html.light .hover\:bg-slate-900:hover,
+html.light .hover\:bg-purple-950\/40:hover {
+  background-color: #ede9fe !important;
+}
+
+/* Light theme modal backdrops */
+html.light .bg-black\/85,
+html.light .bg-black\/80,
+html.light .bg-black\/70,
+html.light .bg-black\/60,
+html.light .bg-black\/50 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+}
+
+/* Text color overrides */
+html.light .text-white,
 html.light .text-slate-100,
-html.light .text-slate-200,
-html.light .text-white {
+html.light .text-slate-200 {
   color: #0f172a !important;
 }
 
-html.light .text-slate-300,
+html.light .text-slate-300 {
+  color: #334155 !important;
+}
+
 html.light .text-slate-400 {
   color: #475569 !important;
 }
@@ -63,14 +96,43 @@ html.light .text-slate-500 {
   color: #64748b !important;
 }
 
+/* Borders */
 html.light .border-\[\#241c38\],
 html.light .border-\[\#261e3d\],
 html.light .border-\[\#26203b\],
 html.light .border-\[\#2a2244\],
 html.light .border-\[\#2a2538\],
 html.light .border-\[\#2a2143\],
-html.light .border-\[\#2e2648\] {
-  border-color: #e2e8f0 !important;
+html.light .border-\[\#2e2648\],
+html.light .border-slate-800,
+html.light .border-slate-800\/80,
+html.light .border-slate-700,
+html.light .border-slate-700\/60 {
+  border-color: #e2d9f3 !important;
+}
+
+/* Input fields & textareas */
+html.light input,
+html.light textarea,
+html.light select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2d9f3 !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Soft purple badges & highlights */
+html.light .bg-purple-950\/40,
+html.light .bg-purple-950\/30,
+html.light .bg-purple-950\/20,
+html.light .bg-purple-900\/40,
+html.light .bg-purple-900\/50,
+html.light .bg-purple-900\/60 {
+  background-color: #ede9fe !important;
 }
 
 /* Custom Sleek Scrollbar */

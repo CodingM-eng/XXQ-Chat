@@ -44,6 +44,7 @@ import {
   Terminal,
   Layers,
   Server as ServerIcon,
+  Heart,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -72,9 +73,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'pending' | 'whitelist' | 'moderators' | 'groups_servers' | 'drive' | 'telegram' | 'audit' | 'reports'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'whitelist' | 'moderators' | 'groups_servers' | 'drive' | 'telegram' | 'bot_pool' | 'gemini' | 'audit' | 'reports'>('pending');
   const [pendingSubTab, setPendingSubTab] = useState<'active' | 'history'>('active');
   const [groupsServersSubTab, setGroupsServersSubTab] = useState<'groups' | 'servers'>('groups');
+
+  // Bot Pool state
+  const [botPool, setBotPool] = useState<any[]>([]);
+  const [newBotPoolToken, setNewBotPoolToken] = useState('');
+  const [isAddingBotPool, setIsAddingBotPool] = useState(false);
+
+  // Gemini state
+  const [geminiConfig, setGeminiConfig] = useState<any>(null);
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [geminiIsEnabled, setGeminiIsEnabled] = useState(false);
+  const [geminiModel, setGeminiModel] = useState('gemini-1.5-flash');
+  const [geminiPrompt, setGeminiPrompt] = useState('');
+  const [isSavingGemini, setIsSavingGemini] = useState(false);
 
   // Search & input states
   const [searchQuery, setSearchQuery] = useState('');
@@ -129,7 +143,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
     try {
       setLoading(true);
       setError(null);
-      const [statusRes, whitelistRes, pendingRes, resolvedRes, logsRes, modsRes, driveRes, botsRes, usersRes, reportsRes, driveStatusRes, groupsRes, serversRes] = await Promise.all([
+      const [statusRes, whitelistRes, pendingRes, resolvedRes, logsRes, modsRes, driveRes, botsRes, usersRes, reportsRes, driveStatusRes, groupsRes, serversRes, poolRes, geminiRes] = await Promise.all([
         api.getAdminStatus(),
         api.getWhitelist(),
         api.getPendingRequests().catch(() => ({ pendingRequests: [] })),
@@ -143,6 +157,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         api.getDriveStatus().catch(() => null),
         api.getAdminGroups().catch(() => ({ groups: [] })),
         api.getAdminServers().catch(() => ({ servers: [] })),
+        api.getBotPool().catch(() => ({ botPool: [] })),
+        api.getGeminiConfig().catch(() => ({ config: null })),
       ]);
 
       setStats(statusRes.stats);
@@ -159,6 +175,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setAllUsers(usersRes.users || []);
       setSupportReports(reportsRes.reports || []);
       setDriveStatus(driveStatusRes);
+      setBotPool(poolRes.botPool || []);
+      if (geminiRes.config) {
+        setGeminiConfig(geminiRes.config);
+        setGeminiIsEnabled(!!geminiRes.config.isEnabled);
+        setGeminiModel(geminiRes.config.model || 'gemini-1.5-flash');
+        setGeminiPrompt(geminiRes.config.defaultPrompt || '');
+      }
     } catch (err: any) {
       setError(err.message || 'Yönetim verileri yüklenemedi');
     } finally {
@@ -179,6 +202,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
       setError(err.message || 'Beyaz liste modu değiştirilemedi');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleToggleFamily = async (userId: string, isFamily: boolean) => {
+    try {
+      setIsSubmitting(true);
+      const res = await api.setUserFamily(userId, isFamily);
+      setSuccessMsg(res.message || 'Aile rolü güncellendi');
+      await loadAdminData();
+    } catch (err: any) {
+      setError(err.message || 'Aile rolü güncellenemedi');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAddBotToPool = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBotPoolToken.trim() || isAddingBotPool) return;
+    try {
+      setIsAddingBotPool(true);
+      setError(null);
+      const res = await api.addBotPoolToken(newBotPoolToken.trim());
+      setSuccessMsg(res.message || 'Bot havuzuna başarıyla eklendi');
+      setNewBotPoolToken('');
+      const poolRes = await api.getBotPool();
+      setBotPool(poolRes.botPool || []);
+    } catch (err: any) {
+      setError(err.message || 'Bot havuzuna eklenirken hata oluştu');
+    } finally {
+      setIsAddingBotPool(false);
+    }
+  };
+
+  const handleDeleteBotFromPool = async (poolId: string) => {
+    try {
+      setIsSubmitting(true);
+      const res = await api.deleteBotPoolToken(poolId);
+      setSuccessMsg(res.message || 'Bot havuzdan silindi');
+      const poolRes = await api.getBotPool();
+      setBotPool(poolRes.botPool || []);
+    } catch (err: any) {
+      setError(err.message || 'Bot silinemedi');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveGeminiConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setIsSavingGemini(true);
+      setError(null);
+      const res = await api.updateGeminiConfig({
+        apiKey: geminiApiKey.trim() || undefined,
+        isEnabled: geminiIsEnabled,
+        model: geminiModel,
+        defaultPrompt: geminiPrompt.trim(),
+      });
+      setSuccessMsg(res.message || 'Gemini AI ayarları başarıyla kaydedildi');
+      setGeminiConfig(res.config);
+      setGeminiApiKey('');
+    } catch (err: any) {
+      setError(err.message || 'Gemini ayarları kaydedilemedi');
+    } finally {
+      setIsSavingGemini(false);
     }
   };
 
@@ -697,6 +786,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
           </button>
 
           <button
+            onClick={() => setActiveTab('bot_pool')}
+            className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'bot_pool'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                : 'bg-[#120e20] text-slate-400 hover:text-white border border-[#241c38]'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Bot Havuzu ({botPool.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('gemini')}
+            className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'gemini'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                : 'bg-[#120e20] text-slate-400 hover:text-white border border-[#241c38]'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>Gemini AI</span>
+            {geminiIsEnabled && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            )}
+          </button>
+
+          <button
             onClick={() => setActiveTab('audit')}
             className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
               activeTab === 'audit'
@@ -934,7 +1050,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-xs text-white">{item.display_name || item.email}</span>
+                          <span className="font-semibold text-xs text-white">{item.display_name || item.displayName || item.email}</span>
                           {item.is_admin === 1 && (
                             <span className="px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 text-[10px] font-bold border border-purple-800">
                               Yönetici
@@ -945,12 +1061,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                               Moderatör
                             </span>
                           )}
+                          {(item.is_family === 1 || item.is_family === true || item.isFamily === true) && (
+                            <span className="px-1.5 py-0.5 rounded bg-pink-950 text-pink-300 text-[10px] font-bold border border-pink-800 flex items-center gap-1">
+                              <Heart className="w-2.5 h-2.5 fill-pink-300" />
+                              Aile
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-400">{item.email}</p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {item.userId && item.is_admin !== 1 && (
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => handleToggleFamily(item.userId!, !(item.is_family === 1 || item.is_family === true || item.isFamily === true))}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border flex items-center gap-1 ${
+                            item.is_family === 1 || item.is_family === true || item.isFamily === true
+                              ? 'bg-pink-950/60 text-pink-300 border-pink-700/60 hover:bg-pink-900/80 shadow-sm'
+                              : 'bg-[#1b152d] text-slate-400 border-[#2d2247] hover:text-white hover:border-purple-600'
+                          }`}
+                          title="Aile üyesi yetkisini değiştir (Yalnızca platform yöneticisi DM başlatabilir)"
+                        >
+                          <Heart className={`w-3 h-3 ${item.is_family === 1 || item.is_family === true || item.isFamily === true ? 'fill-pink-300' : ''}`} />
+                          <span>{item.is_family === 1 || item.is_family === true || item.isFamily === true ? 'Aileden Çıkar' : '+ Aile Yap'}</span>
+                        </button>
+                      )}
                       {item.is_admin !== 1 && (
                         <button
                           onClick={() => setUserToRevoke(item.email)}
@@ -1693,6 +1831,232 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* TAB 9: TELEGRAM BOT POOL */}
+        {activeTab === 'bot_pool' && (
+          <div className="bg-[#120e20] border border-[#261d3d] rounded-2xl p-6 shadow-xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#201834]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-white">Telegram Bot Havuzu</h2>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-900/60 text-indigo-300 border border-indigo-700/50">
+                    {botPool.length} Bot Mevcut
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  XXQ Chat yöneticisi tarafından eklenen doğrulanmış botlar. Tokenlar sunucuda şifrelenir ve asla istemciye açık olarak gönderilmez.
+                </p>
+              </div>
+
+              {/* Add Bot to Pool Form */}
+              <form onSubmit={handleAddBotToPool} className="flex items-center gap-2">
+                <input
+                  type="password"
+                  placeholder="BotFather Token'ı yapıştırın..."
+                  value={newBotPoolToken}
+                  onChange={(e) => setNewBotPoolToken(e.target.value)}
+                  className="px-3 py-2 bg-[#1b152d] border border-[#2d2247] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 w-64"
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={isAddingBotPool}
+                  className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-md shrink-0"
+                >
+                  {isAddingBotPool ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  <span>Havuza Ekle</span>
+                </button>
+              </form>
+            </div>
+
+            {/* Pool Instructions Banner */}
+            <div className="p-3.5 bg-indigo-950/20 border border-indigo-800/40 rounded-xl text-xs text-indigo-200/90 flex items-start gap-3">
+              <Bot className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-semibold text-indigo-300">Bot Havuzu Nasıl Çalışır?</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Telegram @BotFather ile oluşturulan botların tokenlarını havuza eklediğinizde, token anında Telegram getMe yöntemi ile doğrulanır, bot adı ve kullanıcı adı kaydedilir. Havuzdaki botlar gruplara, kanallara veya kullanıcılara atanabilir. Tokenlar sunucu veritabanında saklanır ve asla üçüncü şahıslara veya istemciye sızdırılmaz.
+                </p>
+              </div>
+            </div>
+
+            {/* Bot Pool List */}
+            <div className="divide-y divide-[#201834]">
+              {botPool.length === 0 ? (
+                <div className="py-12 text-center text-slate-500 text-xs">
+                  Henüz bot havuzuna eklenmiş bir Telegram botu bulunmuyor. Yukarıdaki formdan yeni bir bot ekleyebilirsiniz.
+                </div>
+              ) : (
+                botPool.map((bot) => (
+                  <div key={bot.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-10 h-10 rounded-2xl bg-indigo-950/80 border border-indigo-700/50 flex items-center justify-center font-bold text-indigo-300 text-sm shrink-0">
+                        <Bot className="w-5 h-5 text-indigo-400" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-white">{bot.name || 'Telegram Botu'}</span>
+                          {bot.username && (
+                            <a
+                              href={`https://t.me/${bot.username}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-0.5"
+                            >
+                              <span>@{bot.username}</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              bot.isAssigned
+                                ? 'bg-amber-950/40 text-amber-300 border-amber-800/50'
+                                : 'bg-emerald-950/40 text-emerald-300 border-emerald-800/50'
+                            }`}
+                          >
+                            {bot.isAssigned ? 'Atandı' : 'Kullanıma Hazır'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                          Token İpucu: {bot.tokenHint || '••••••••'} | Eklenme: {new Date(bot.createdAt).toLocaleDateString('tr-TR')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteBotFromPool(bot.id)}
+                        className="p-2 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 rounded-xl transition-colors border border-transparent hover:border-rose-900/50"
+                        title="Botu Havuzdan Sil"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 10: GEMINI AI CONFIG */}
+        {activeTab === 'gemini' && (
+          <div className="bg-[#120e20] border border-[#261d3d] rounded-2xl p-6 shadow-xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#201834]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-white">Google Gemini Yapay Zeka Ayarları</h2>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      geminiIsEnabled
+                        ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60'
+                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {geminiIsEnabled ? 'AI Aktif' : 'AI Devre Dışı'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  XXQ Chat sohbetlerinde ve Telegram botlarında (/ai komutu ile) yapay zeka desteğini yapılandırın.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveGeminiConfig} className="space-y-5 max-w-2xl">
+              {/* Enable / Disable Switch */}
+              <div className="p-4 bg-[#171126] border border-[#2a1f42] rounded-2xl flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-white">Gemini AI Yanıtlarını Etkinleştir</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Kullanıcılar /ai soru formatında mesaj gönderdiklerinde yapay zekanın yanıt üretmesini sağlar.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGeminiIsEnabled(!geminiIsEnabled)}
+                  className={`relative w-12 h-6 rounded-full transition-colors ${
+                    geminiIsEnabled ? 'bg-purple-600' : 'bg-slate-800'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                      geminiIsEnabled ? 'translate-x-6' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* API Key */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Google Gemini API Anahtarı
+                </label>
+                <input
+                  type="password"
+                  placeholder={geminiConfig?.hasApiKey ? '•••••••••••••••• (Kayıtlı, değiştirmek için yeni girin)' : 'AIzaSy...'}
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[#171126] border border-[#2a1f42] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  API anahtarı Render sunucusunda güvenle saklanır, istemciye veya loglara asla açık şekilde yazılmaz.
+                </p>
+              </div>
+
+              {/* Model Choice */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Model Seçimi</label>
+                <select
+                  value={geminiModel}
+                  onChange={(e) => setGeminiModel(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-[#171126] border border-[#2a1f42] rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (Önerilen - Ücretsiz & Çok Hızlı)</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Gelişmiş Akıl Yürütme)</option>
+                </select>
+              </div>
+
+              {/* Default Prompt / System Instruction */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Sistem Yönergesi (Default Prompt)
+                </label>
+                <textarea
+                  rows={4}
+                  value={geminiPrompt}
+                  onChange={(e) => setGeminiPrompt(e.target.value)}
+                  placeholder="Sen XXQ Chat asistanısın. Kullanıcılara Türkçe, samimi ve güvenli yanıtlar ver..."
+                  className="w-full px-3.5 py-2.5 bg-[#171126] border border-[#2a1f42] rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 resize-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Modelin yanıt verirken benimseyeceği kişilik ve kurallar.
+                </p>
+              </div>
+
+              {/* Submit */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingGemini}
+                  className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-lg shadow-purple-600/30 flex items-center gap-2 transition-all"
+                >
+                  {isSavingGemini ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Kaydediliyor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Ayarları Kaydet</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         )}
       </div>

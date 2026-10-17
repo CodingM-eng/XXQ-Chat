@@ -141,11 +141,17 @@ class ApiService {
     avatarUrl?: string | null;
     phoneNumber?: string;
     themePreference?: 'dark' | 'light';
+    bio?: string | null;
+    groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
   }): Promise<{ user: User }> {
     return this.request('/api/users/me', {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
+  }
+
+  async getUserProfile(id: string): Promise<{ user: User }> {
+    return this.request(`/api/users/${id}`);
   }
 
   async uploadAvatar(fileOrUrl: File | string): Promise<{ success: boolean; avatarUrl: string; user: User }> {
@@ -434,11 +440,12 @@ class ApiService {
     clientMessageId?: string,
     replyToMessageId?: string,
     forwardedFrom?: { senderName: string },
-    attachments?: Attachment[]
+    attachments?: Attachment[],
+    type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system'
   ): Promise<{ message: Message }> {
     return this.request(`/api/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, clientMessageId, replyToMessageId, forwardedFrom, attachments }),
+      body: JSON.stringify({ content, clientMessageId, replyToMessageId, forwardedFrom, attachments, type }),
     });
   }
 
@@ -736,6 +743,122 @@ class ApiService {
   async syncDriveAccountQuota(id: string): Promise<{ success: boolean; quota: { spaceUsed: number; spaceTotal: number }; message: string }> {
     return this.request(`/api/drive/accounts/${id}/sync`, {
       method: 'POST',
+    });
+  }
+
+  // Discoverable Groups Search
+  async searchDiscoverableGroups(query: string = ''): Promise<{ groups: Conversation[] }> {
+    return this.request(`/api/conversations/groups/search?q=${encodeURIComponent(query)}`);
+  }
+
+  // Server Invites
+  async createServerInvite(serverId: string, options?: { maxUses?: number | null; expiresAt?: string | null; expiresInHours?: number }): Promise<{ success: boolean; invite: any }> {
+    let expiresAt = options?.expiresAt;
+    if (!expiresAt && options?.expiresInHours) {
+      const expDate = new Date();
+      expDate.setHours(expDate.getHours() + options.expiresInHours);
+      expiresAt = expDate.toISOString();
+    }
+    return this.request(`/api/servers/${serverId}/invites`, {
+      method: 'POST',
+      body: JSON.stringify({ maxUses: options?.maxUses, expiresAt }),
+    });
+  }
+
+  async getServerInvites(serverId: string): Promise<{ invites: any[] }> {
+    return this.request(`/api/servers/${serverId}/invites`);
+  }
+
+  async revokeServerInvite(arg1: string, arg2?: string): Promise<{ success: boolean; message: string }> {
+    const inviteId = arg2 || arg1;
+    return this.request(`/api/servers/invites/${inviteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getServerInvite(code: string): Promise<{ invite: any }> {
+    return this.request(`/api/servers/invite/${code}`);
+  }
+
+  async acceptServerInvite(code: string): Promise<{ success: boolean; serverId: string; message: string }> {
+    return this.request(`/api/servers/invite/${code}/accept`, {
+      method: 'POST',
+    });
+  }
+
+  // Friends & Friend Requests
+  async getFriends(): Promise<{ friends: User[] }> {
+    return this.request('/api/friends');
+  }
+
+  async getFriendRequests(): Promise<{ incoming: any[]; outgoing: any[] }> {
+    return this.request('/api/friends/requests');
+  }
+
+  async sendFriendRequest(target: string | { recipientEmail?: string; recipientId?: string }): Promise<{ success: boolean; request: any; message: string }> {
+    const body = typeof target === 'string' ? { targetEmailOrId: target } : target;
+    return this.request('/api/friends/request', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async respondFriendRequest(requestId: string, action: 'accept' | 'decline' | 'accepted' | 'declined'): Promise<{ success: boolean; request: any; message: string }> {
+    const normAction = action === 'accepted' ? 'accept' : action === 'declined' ? 'decline' : action;
+    return this.request(`/api/friends/request/${requestId}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ action: normAction }),
+    });
+  }
+
+  async removeFriend(friendId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/friends/${friendId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Bot Pool (Admin)
+  async getBotPool(): Promise<{ botPool: any[] }> {
+    return this.request('/api/admin/bot-pool');
+  }
+
+  async addBotPoolToken(token: string): Promise<{ success: boolean; bot: any; message: string }> {
+    return this.request('/api/admin/bot-pool', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  async deleteBotPoolToken(id: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/admin/bot-pool/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async assignBotFromPool(poolId: string, conversationId: string, customName?: string): Promise<{ success: boolean; assigned: any }> {
+    return this.request(`/api/admin/bot-pool/${poolId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ conversationId, customName }),
+    });
+  }
+
+  // Gemini AI Config (Admin)
+  async getGeminiConfig(): Promise<{ config: any }> {
+    return this.request('/api/admin/gemini');
+  }
+
+  async updateGeminiConfig(updates: { apiKey?: string; isEnabled?: boolean; defaultPrompt?: string; model?: string }): Promise<{ success: boolean; config: any; message: string }> {
+    return this.request('/api/admin/gemini', {
+      method: 'POST',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  // Family Role (Admin)
+  async setUserFamily(userId: string, isFamily: boolean): Promise<{ success: boolean; user: User; message: string }> {
+    return this.request(`/api/admin/users/${userId}/family`, {
+      method: 'POST',
+      body: JSON.stringify({ isFamily }),
     });
   }
 }

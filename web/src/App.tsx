@@ -232,7 +232,8 @@ export const AppContent: React.FC = () => {
     clientMessageId?: string,
     replyToMessageId?: string,
     forwardedFrom?: { senderName: string },
-    attachments?: any[]
+    attachments?: any[],
+    type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system'
   ) => {
     if (!selectedConversationId) return;
 
@@ -243,6 +244,7 @@ export const AppContent: React.FC = () => {
 
     // Optimistic message update
     const replyTarget = replyToMessageId ? messages.find((m) => m.id === replyToMessageId) : null;
+    const msgType = type || (attachments && attachments.length > 0 ? (attachments[0].mimeType?.startsWith('image') ? 'image' : attachments[0].mimeType?.startsWith('video') ? 'video' : attachments[0].mimeType?.startsWith('audio') ? 'voice' : 'file') : 'text');
     const optimisticMsg: Message = {
       id: 'opt_' + Date.now(),
       conversationId: selectedConversationId,
@@ -251,6 +253,7 @@ export const AppContent: React.FC = () => {
       senderAvatar: user!.avatarUrl,
       clientMessageId: clientMsgId,
       content,
+      type: msgType,
       replyTo: replyTarget
         ? {
             id: replyTarget.id,
@@ -276,6 +279,7 @@ export const AppContent: React.FC = () => {
           replyToMessageId,
           forwardedFrom,
           attachments,
+          type: msgType,
         },
         (res: any) => {
           if (res?.success && res.message) {
@@ -293,7 +297,8 @@ export const AppContent: React.FC = () => {
         clientMsgId,
         replyToMessageId,
         forwardedFrom,
-        attachments
+        attachments,
+        msgType
       );
       setMessages((prev) =>
         prev.map((m) => (m.clientMessageId === clientMsgId || m.id === res.message.id ? res.message : m))

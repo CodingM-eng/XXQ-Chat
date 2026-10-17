@@ -8,6 +8,9 @@ export interface DbUser {
   phoneNumber?: string | null; // private, never returned to other users
   isAdmin: boolean;
   isModerator?: boolean;
+  isFamily?: boolean;
+  groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
+  bio?: string | null;
   themePreference?: 'dark' | 'light';
   onboarded: boolean;
   status: 'active' | 'pending' | 'blocked';
@@ -31,10 +34,12 @@ export interface DbWhitelistEntry {
   email: string;
   approvedBy: string;
   createdAt: string;
+  userId?: string | null;
   displayName?: string;
   avatarUrl?: string | null;
   isAdmin?: boolean;
   isModerator?: boolean;
+  isFamily?: boolean;
 }
 
 export interface DbAuditLog {
@@ -182,12 +187,58 @@ export interface DbMessage {
   senderAvatar?: string | null;
   clientMessageId?: string | null;
   content: string;
+  type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system';
+  isSystem?: boolean;
   replyTo?: DbMessageReply | null;
   forwardedFrom?: DbMessageForward | null;
   attachments?: DbAttachment[] | null;
   reactions?: Record<string, string[]>; // { "👍": ["userId1", "userId2"] }
   status: 'pending' | 'sent' | 'delivered' | 'read';
+  readBy?: { userId: string; displayName?: string; readAt: string }[];
   createdAt: string;
+}
+
+export interface DbServerInvite {
+  id: string;
+  serverId: string;
+  code: string;
+  createdById: string;
+  maxUses?: number | null;
+  usedCount: number;
+  expiresAt?: string | null;
+  isRevoked: boolean;
+  createdAt: string;
+}
+
+export interface DbFriendRequest {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string | null;
+  receiverId: string;
+  receiverName: string;
+  receiverAvatar?: string | null;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: string;
+}
+
+export interface DbBotPoolItem {
+  id: string;
+  tokenEncrypted: string;
+  botName: string;
+  username: string;
+  isAssigned: boolean;
+  assignedName?: string | null;
+  assignedConversationId?: string | null;
+  createdAt: string;
+}
+
+export interface DbGeminiConfig {
+  apiKeyEncrypted: string;
+  isEnabled: boolean;
+  defaultPrompt?: string | null;
+  model: string;
+  updatedAt: string;
 }
 
 export interface DbDriveAccount {
@@ -269,6 +320,8 @@ export interface DataStore {
       avatarUrl?: string | null;
       phoneNumber?: string | null;
       themePreference?: 'dark' | 'light';
+      bio?: string | null;
+      groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
     }
   ): Promise<DbUser | null>;
   completeOnboarding(
@@ -330,6 +383,8 @@ export interface DataStore {
     forwardedFrom?: DbMessageForward | null;
     attachments?: DbAttachment[] | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
+    type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system';
+    isSystem?: boolean;
   }): Promise<DbMessage>;
   markConversationRead(conversationId: string, userId: string, messageId: string): Promise<void>;
   toggleMessageReaction(conversationId: string, messageId: string, userId: string, emoji: string): Promise<Record<string, string[]>>;
@@ -395,4 +450,37 @@ export interface DataStore {
   getTargetJoinRequests(targetType: 'group' | 'server', targetId: string): Promise<DbMembershipInvitation[]>;
   resolveMembershipInvitation(id: string, status: 'accepted' | 'declined' | 'approved' | 'rejected', actorId: string): Promise<DbMembershipInvitation | null>;
   hasActiveInvitationOrRequest(targetId: string, userId: string): Promise<boolean>;
+
+  // Family Role & User Profile
+  setUserFamily(userId: string, isFamily: boolean): Promise<DbUser | null>;
+
+  // Group Discoverability Search
+  searchDiscoverableGroups(userId: string, query: string): Promise<DbConversationSummary[]>;
+
+  // Message Reads Tracking
+  recordMessageRead(messageId: string, conversationId: string, userId: string): Promise<void>;
+  getMessageReads(messageId: string): Promise<{ userId: string; displayName: string; readAt: string }[]>;
+
+  // Server Invites
+  createServerInvite(serverId: string, createdById: string, options?: { maxUses?: number | null; expiresAt?: string | null }): Promise<DbServerInvite>;
+  getServerInviteByCode(code: string): Promise<DbServerInvite | null>;
+  useServerInvite(code: string, userId: string): Promise<{ success: boolean; serverId: string; message: string }>;
+  revokeServerInvite(inviteId: string): Promise<boolean>;
+  getServerInvites(serverId: string): Promise<DbServerInvite[]>;
+
+  // Friends & Friend Requests
+  sendFriendRequest(senderId: string, targetEmailOrId: string): Promise<DbFriendRequest>;
+  getFriendRequests(userId: string): Promise<{ incoming: DbFriendRequest[]; outgoing: DbFriendRequest[] }>;
+  respondFriendRequest(requestId: string, userId: string, action: 'accept' | 'decline'): Promise<DbFriendRequest>;
+  getFriends(userId: string): Promise<DbUser[]>;
+  removeFriend(userId: string, friendId: string): Promise<boolean>;
+  areFriends(userId1: string, userId2: string): Promise<boolean>;
+
+  // Bot Pool & Gemini AI Configuration
+  addBotPoolToken(encryptedToken: string, botName: string, username: string): Promise<DbBotPoolItem>;
+  getBotPool(): Promise<DbBotPoolItem[]>;
+  removeBotPoolToken(id: string): Promise<boolean>;
+  assignBotFromPool(poolId: string, conversationId: string, customName?: string): Promise<DbBotPoolItem | null>;
+  getGeminiConfig(): Promise<DbGeminiConfig | null>;
+  updateGeminiConfig(config: { apiKeyEncrypted?: string; isEnabled?: boolean; defaultPrompt?: string | null; model?: string }): Promise<DbGeminiConfig>;
 }

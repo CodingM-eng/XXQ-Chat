@@ -19,6 +19,10 @@ import {
   DbServer,
   ServerPurpose,
   DbMembershipInvitation,
+  DbServerInvite,
+  DbFriendRequest,
+  DbBotPoolItem,
+  DbGeminiConfig,
 } from './types.js';
 
 export class FirestoreStore implements DataStore {
@@ -221,10 +225,12 @@ export class FirestoreStore implements DataStore {
         email,
         approvedBy: data.approvedBy || data.approved_by || 'admin',
         createdAt: data.createdAt || data.created_at || new Date().toISOString(),
+        userId: user?.id || null,
         displayName: user?.displayName || user?.display_name,
         avatarUrl: user?.avatarUrl || user?.avatar_url || null,
         isAdmin: user?.isAdmin || user?.is_admin === 1,
         isModerator: user?.isModerator === true,
+        isFamily: user?.isFamily === true || user?.is_family === 1,
       });
     });
 
@@ -351,6 +357,8 @@ export class FirestoreStore implements DataStore {
     const doc = await this.getFirestore().collection('users').doc(id).get();
     if (!doc.exists) return null;
     const d = doc.data()!;
+    const isAdmin = d.isAdmin === true || d.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && d.email?.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+    const isModerator = !isAdmin && (d.isModerator === true || d.is_moderator === 1);
     return {
       id: d.id || doc.id,
       email: d.email,
@@ -359,8 +367,11 @@ export class FirestoreStore implements DataStore {
       displayName: d.displayName || d.display_name,
       avatarUrl: d.avatarUrl || d.avatar_url || null,
       phoneNumber: d.phoneNumber || d.phone_number || null,
-      isAdmin: d.isAdmin === true || d.is_admin === 1,
-      isModerator: d.isModerator === true || d.is_moderator === 1,
+      isAdmin,
+      isModerator,
+      bio: d.bio || null,
+      isFamily: d.isFamily === true || d.is_family === 1,
+      groupAddPrivacy: d.groupAddPrivacy || d.group_add_privacy || 'everyone',
       themePreference: d.themePreference === 'light' || d.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
       status: d.status || 'active',
@@ -375,6 +386,8 @@ export class FirestoreStore implements DataStore {
     if (snap.empty) return null;
     const doc = snap.docs[0];
     const d = doc.data();
+    const isAdmin = d.isAdmin === true || d.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && d.email?.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+    const isModerator = !isAdmin && (d.isModerator === true || d.is_moderator === 1);
     return {
       id: d.id || doc.id,
       email: d.email,
@@ -383,8 +396,11 @@ export class FirestoreStore implements DataStore {
       displayName: d.displayName || d.display_name,
       avatarUrl: d.avatarUrl || d.avatar_url || null,
       phoneNumber: d.phoneNumber || d.phone_number || null,
-      isAdmin: d.isAdmin === true || d.is_admin === 1,
-      isModerator: d.isModerator === true || d.is_moderator === 1,
+      isAdmin,
+      isModerator,
+      bio: d.bio || null,
+      isFamily: d.isFamily === true || d.is_family === 1,
+      groupAddPrivacy: d.groupAddPrivacy || d.group_add_privacy || 'everyone',
       themePreference: d.themePreference === 'light' || d.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
       status: d.status || 'active',
@@ -468,6 +484,8 @@ export class FirestoreStore implements DataStore {
       avatarUrl?: string | null;
       phoneNumber?: string | null;
       themePreference?: 'dark' | 'light';
+      bio?: string | null;
+      groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
     }
   ): Promise<DbUser | null> {
     const docRef = this.getFirestore().collection('users').doc(id);
@@ -481,6 +499,8 @@ export class FirestoreStore implements DataStore {
     if (updates.avatarUrl !== undefined) dataToUpdate.avatarUrl = updates.avatarUrl;
     if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber;
     if (updates.themePreference !== undefined) dataToUpdate.themePreference = updates.themePreference;
+    if (updates.bio !== undefined) dataToUpdate.bio = updates.bio;
+    if (updates.groupAddPrivacy !== undefined) dataToUpdate.groupAddPrivacy = updates.groupAddPrivacy;
 
     await docRef.set(dataToUpdate, { merge: true });
     return this.getUserById(id);
@@ -535,6 +555,8 @@ export class FirestoreStore implements DataStore {
     snap.forEach((doc) => {
       const d = doc.data();
       if (d.status === 'active' || !d.status) {
+        const isAdmin = d.isAdmin === true || d.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && d.email?.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+        const isModerator = !isAdmin && (d.isModerator === true || d.is_moderator === 1);
         users.push({
           id: d.id || doc.id,
           email: d.email,
@@ -542,8 +564,13 @@ export class FirestoreStore implements DataStore {
           lastName: d.lastName || null,
           displayName: d.displayName || d.display_name,
           avatarUrl: d.avatarUrl || d.avatar_url || null,
-          isAdmin: d.isAdmin === true || d.is_admin === 1,
-          isModerator: d.isModerator === true || d.is_moderator === 1,
+          phoneNumber: d.phoneNumber || d.phone_number || null,
+          isAdmin,
+          isModerator,
+          bio: d.bio || null,
+          isFamily: d.isFamily === true || d.is_family === 1,
+          groupAddPrivacy: d.groupAddPrivacy || d.group_add_privacy || 'everyone',
+          themePreference: d.themePreference === 'light' || d.theme_preference === 'light' ? 'light' : 'dark',
           onboarded: d.onboarded !== undefined ? !!d.onboarded : true,
           status: 'active',
           createdAt: d.createdAt || d.created_at || new Date().toISOString(),
@@ -1005,6 +1032,8 @@ export class FirestoreStore implements DataStore {
     forwardedFrom?: DbMessageForward | null;
     attachments?: DbAttachment[] | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
+    type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system';
+    isSystem?: boolean;
   }): Promise<DbMessage> {
     const msgId = message.id || 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     const now = new Date().toISOString();
@@ -1018,6 +1047,8 @@ export class FirestoreStore implements DataStore {
       senderAvatar: message.senderAvatar || null,
       clientMessageId: message.clientMessageId || null,
       content: message.content,
+      type: message.type || 'text',
+      isSystem: !!message.isSystem,
       replyTo: message.replyTo || null,
       forwardedFrom: message.forwardedFrom || null,
       attachments: message.attachments || null,
@@ -1149,7 +1180,7 @@ export class FirestoreStore implements DataStore {
 
   async getModerators(): Promise<DbUser[]> {
     const all = await this.getAllUsers();
-    return all.filter((u) => u.isAdmin || u.isModerator);
+    return all.filter((u) => !u.isAdmin && u.isModerator);
   }
 
   // Google Drive Accounts
@@ -2023,5 +2054,356 @@ export class FirestoreStore implements DataStore {
       .get();
 
     return !snap.empty;
+  }
+
+  // Family Role & User Profile
+  async setUserFamily(userId: string, isFamily: boolean): Promise<DbUser | null> {
+    await this.getFirestore().collection('users').doc(userId).set({ isFamily }, { merge: true });
+    return this.getUserById(userId);
+  }
+
+  // Group Discoverability Search
+  async searchDiscoverableGroups(userId: string, query: string): Promise<DbConversationSummary[]> {
+    const q = (query || '').toLowerCase().trim();
+    const allGroups = await this.getAllGroups();
+
+    return allGroups.filter((g) => {
+      const match = g.name.toLowerCase().includes(q) || (g.description || '').toLowerCase().includes(q);
+      if (!match) return false;
+      const isMember = (g.participants || []).some((p) => p.id === userId);
+      const isDiscoverable = g.joinPolicy === 'auto' || g.joinPolicy === 'request' || isMember;
+      return isDiscoverable;
+    });
+  }
+
+  // Message Reads Tracking
+  async recordMessageRead(messageId: string, conversationId: string, userId: string): Promise<void> {
+    const user = await this.getUserById(userId);
+    const displayName = user?.displayName || 'User';
+    const readAt = new Date().toISOString();
+
+    const readDocId = `${messageId}_${userId}`;
+    await this.getFirestore().collection('message_reads').doc(readDocId).set({
+      messageId,
+      conversationId,
+      userId,
+      displayName,
+      readAt,
+    }, { merge: true });
+
+    // Update message status if needed
+    try {
+      const msgRef = this.getFirestore().collection('conversations').doc(conversationId).collection('messages').doc(messageId);
+      const msgDoc = await msgRef.get();
+      if (msgDoc.exists && msgDoc.data()?.senderId !== userId) {
+        await msgRef.set({ status: 'read' }, { merge: true });
+      }
+    } catch (_) {}
+  }
+
+  async getMessageReads(messageId: string): Promise<{ userId: string; displayName: string; readAt: string }[]> {
+    const snap = await this.getFirestore().collection('message_reads')
+      .where('messageId', '==', messageId)
+      .get();
+
+    const list: { userId: string; displayName: string; readAt: string }[] = [];
+    snap.forEach((doc) => {
+      const d = doc.data();
+      list.push({
+        userId: d.userId,
+        displayName: d.displayName,
+        readAt: d.readAt,
+      });
+    });
+
+    return list.sort((a, b) => a.readAt.localeCompare(b.readAt));
+  }
+
+  // Server Invites
+  async createServerInvite(serverId: string, createdById: string, options?: { maxUses?: number | null; expiresAt?: string | null }): Promise<DbServerInvite> {
+    const id = 'sinv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    const now = new Date().toISOString();
+
+    const invite: DbServerInvite = {
+      id,
+      serverId,
+      code,
+      createdById,
+      maxUses: options?.maxUses ?? null,
+      usedCount: 0,
+      expiresAt: options?.expiresAt ?? null,
+      isRevoked: false,
+      createdAt: now,
+    };
+
+    await this.getFirestore().collection('server_invites').doc(id).set(invite);
+    return invite;
+  }
+
+  async getServerInviteByCode(code: string): Promise<DbServerInvite | null> {
+    const snap = await this.getFirestore().collection('server_invites')
+      .where('code', '==', code.toUpperCase())
+      .where('isRevoked', '==', false)
+      .limit(1)
+      .get();
+
+    if (snap.empty) return null;
+    return snap.docs[0].data() as DbServerInvite;
+  }
+
+  async useServerInvite(code: string, userId: string): Promise<{ success: boolean; serverId: string; message: string }> {
+    const invite = await this.getServerInviteByCode(code);
+    if (!invite) {
+      return { success: false, serverId: '', message: 'Davet linki geçersiz veya iptal edilmiş.' };
+    }
+    if (invite.isRevoked) {
+      return { success: false, serverId: invite.serverId, message: 'Bu davet linki iptal edilmiş.' };
+    }
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+      return { success: false, serverId: invite.serverId, message: 'Bu davet linkinin süresi dolmuş.' };
+    }
+    if (invite.maxUses && invite.usedCount >= invite.maxUses) {
+      return { success: false, serverId: invite.serverId, message: 'Bu davet linkinin kullanım limiti dolmuş.' };
+    }
+
+    const isMember = await this.isServerMember(invite.serverId, userId);
+    if (isMember) {
+      return { success: true, serverId: invite.serverId, message: 'Zaten bu sunucunun üyesisiniz.' };
+    }
+
+    await this.addServerMember(invite.serverId, userId, 'member');
+
+    await this.getFirestore().collection('server_invites').doc(invite.id).set({
+      usedCount: (invite.usedCount || 0) + 1,
+    }, { merge: true });
+
+    return { success: true, serverId: invite.serverId, message: 'Sunucuya başarıyla katıldınız!' };
+  }
+
+  async revokeServerInvite(inviteId: string): Promise<boolean> {
+    await this.getFirestore().collection('server_invites').doc(inviteId).set({
+      isRevoked: true,
+    }, { merge: true });
+    return true;
+  }
+
+  async getServerInvites(serverId: string): Promise<DbServerInvite[]> {
+    const snap = await this.getFirestore().collection('server_invites')
+      .where('serverId', '==', serverId)
+      .get();
+
+    const list: DbServerInvite[] = [];
+    snap.forEach((doc) => {
+      list.push(doc.data() as DbServerInvite);
+    });
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  // Friends & Friend Requests
+  async sendFriendRequest(senderId: string, targetEmailOrId: string): Promise<DbFriendRequest> {
+    const target = targetEmailOrId.trim();
+    let receiver = await this.getUserById(target);
+    if (!receiver) {
+      receiver = await this.getUserByEmail(target);
+    }
+    if (!receiver) {
+      throw new Error('Kullanıcı bulunamadı.');
+    }
+    if (receiver.id === senderId) {
+      throw new Error('Kendinize arkadaşlık isteği gönderemezsiniz.');
+    }
+
+    const alreadyFriends = await this.areFriends(senderId, receiver.id);
+    if (alreadyFriends) {
+      throw new Error('Bu kullanıcıyla zaten arkadaşsınız.');
+    }
+
+    const sender = await this.getUserById(senderId);
+    if (!sender) throw new Error('Gönderen kullanıcı bulunamadı.');
+
+    const snap = await this.getFirestore().collection('friend_requests')
+      .where('senderId', 'in', [senderId, receiver.id])
+      .get();
+
+    const pending = snap.docs.find((d) => {
+      const data = d.data();
+      return (
+        data.status === 'pending' &&
+        ((data.senderId === senderId && data.receiverId === receiver!.id) ||
+         (data.senderId === receiver!.id && data.receiverId === senderId))
+      );
+    });
+
+    if (pending) {
+      throw new Error('Zaten bekleyen bir arkadaşlık isteği mevcut.');
+    }
+
+    const id = 'freq_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    const req: DbFriendRequest = {
+      id,
+      senderId,
+      senderName: sender.displayName,
+      senderAvatar: sender.avatarUrl || null,
+      receiverId: receiver.id,
+      receiverName: receiver.displayName,
+      receiverAvatar: receiver.avatarUrl || null,
+      status: 'pending',
+      createdAt: now,
+    };
+
+    await this.getFirestore().collection('friend_requests').doc(id).set(req);
+    return req;
+  }
+
+  async getFriendRequests(userId: string): Promise<{ incoming: DbFriendRequest[]; outgoing: DbFriendRequest[] }> {
+    const incomingSnap = await this.getFirestore().collection('friend_requests')
+      .where('receiverId', '==', userId)
+      .where('status', '==', 'pending')
+      .get();
+
+    const outgoingSnap = await this.getFirestore().collection('friend_requests')
+      .where('senderId', '==', userId)
+      .where('status', '==', 'pending')
+      .get();
+
+    const incoming: DbFriendRequest[] = [];
+    incomingSnap.forEach((d) => incoming.push(d.data() as DbFriendRequest));
+
+    const outgoing: DbFriendRequest[] = [];
+    outgoingSnap.forEach((d) => outgoing.push(d.data() as DbFriendRequest));
+
+    incoming.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    outgoing.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    return { incoming, outgoing };
+  }
+
+  async respondFriendRequest(requestId: string, userId: string, action: 'accept' | 'decline'): Promise<DbFriendRequest> {
+    const ref = this.getFirestore().collection('friend_requests').doc(requestId);
+    const doc = await ref.get();
+    if (!doc.exists) throw new Error('İstek bulunamadı.');
+
+    const data = doc.data() as DbFriendRequest;
+    if (data.receiverId !== userId) throw new Error('Bu isteği yanıtlama yetkiniz yok.');
+    if (data.status !== 'pending') throw new Error('Bu istek zaten yanıtlanmış.');
+
+    const newStatus = action === 'accept' ? 'accepted' : 'declined';
+    await ref.set({ status: newStatus }, { merge: true });
+
+    if (action === 'accept') {
+      const now = new Date().toISOString();
+      await this.getFirestore().collection('user_friends').doc(`${data.senderId}_${data.receiverId}`).set({
+        userId: data.senderId,
+        friendId: data.receiverId,
+        createdAt: now,
+      });
+      await this.getFirestore().collection('user_friends').doc(`${data.receiverId}_${data.senderId}`).set({
+        userId: data.receiverId,
+        friendId: data.senderId,
+        createdAt: now,
+      });
+    }
+
+    return { ...data, status: newStatus };
+  }
+
+  async getFriends(userId: string): Promise<DbUser[]> {
+    const snap = await this.getFirestore().collection('user_friends')
+      .where('userId', '==', userId)
+      .get();
+
+    const friendIds: string[] = [];
+    snap.forEach((d) => friendIds.push(d.data().friendId));
+
+    const friends: DbUser[] = [];
+    for (const fid of friendIds) {
+      const u = await this.getUserById(fid);
+      if (u && u.status === 'active') friends.push(u);
+    }
+
+    return friends.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  async removeFriend(userId: string, friendId: string): Promise<boolean> {
+    await this.getFirestore().collection('user_friends').doc(`${userId}_${friendId}`).delete();
+    await this.getFirestore().collection('user_friends').doc(`${friendId}_${userId}`).delete();
+    return true;
+  }
+
+  async areFriends(userId1: string, userId2: string): Promise<boolean> {
+    const doc = await this.getFirestore().collection('user_friends').doc(`${userId1}_${userId2}`).get();
+    return doc.exists;
+  }
+
+  // Bot Pool & Gemini AI Configuration
+  async addBotPoolToken(tokenEncrypted: string, botName: string, username: string): Promise<DbBotPoolItem> {
+    const id = 'pool_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    const item: DbBotPoolItem = {
+      id,
+      tokenEncrypted,
+      botName,
+      username,
+      isAssigned: false,
+      assignedName: null,
+      assignedConversationId: null,
+      createdAt: now,
+    };
+
+    await this.getFirestore().collection('bot_pool').doc(id).set(item);
+    return item;
+  }
+
+  async getBotPool(): Promise<DbBotPoolItem[]> {
+    const snap = await this.getFirestore().collection('bot_pool').get();
+    const list: DbBotPoolItem[] = [];
+    snap.forEach((d) => list.push(d.data() as DbBotPoolItem));
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async removeBotPoolToken(id: string): Promise<boolean> {
+    await this.getFirestore().collection('bot_pool').doc(id).delete();
+    return true;
+  }
+
+  async assignBotFromPool(poolId: string, conversationId: string, customName?: string): Promise<DbBotPoolItem | null> {
+    const ref = this.getFirestore().collection('bot_pool').doc(poolId);
+    const doc = await ref.get();
+    if (!doc.exists) return null;
+
+    await ref.set({
+      isAssigned: true,
+      assignedConversationId: conversationId,
+      assignedName: customName || null,
+    }, { merge: true });
+
+    const updated = await ref.get();
+    return updated.data() as DbBotPoolItem;
+  }
+
+  async getGeminiConfig(): Promise<DbGeminiConfig | null> {
+    const doc = await this.getFirestore().collection('system_settings').doc('gemini_config').get();
+    if (!doc.exists) return null;
+    return doc.data() as DbGeminiConfig;
+  }
+
+  async updateGeminiConfig(configData: { apiKeyEncrypted?: string; isEnabled?: boolean; defaultPrompt?: string | null; model?: string }): Promise<DbGeminiConfig> {
+    const existing = await this.getGeminiConfig();
+    const now = new Date().toISOString();
+
+    const data: DbGeminiConfig = {
+      apiKeyEncrypted: configData.apiKeyEncrypted ?? existing?.apiKeyEncrypted ?? '',
+      isEnabled: configData.isEnabled !== undefined ? configData.isEnabled : (existing?.isEnabled ?? false),
+      defaultPrompt: configData.defaultPrompt !== undefined ? configData.defaultPrompt : (existing?.defaultPrompt ?? null),
+      model: configData.model ?? existing?.model ?? 'gemini-1.5-flash',
+      updatedAt: now,
+    };
+
+    await this.getFirestore().collection('system_settings').doc('gemini_config').set(data, { merge: true });
+    return data;
   }
 }

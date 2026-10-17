@@ -4,6 +4,8 @@ import { requireAuth, requireAdmin } from '../auth/index.js';
 import { dataStore, isWhitelistModeEnabled } from '../db/index.js';
 import { config } from '../config.js';
 import { onWhitelistRevoked, onWhitelistModeChanged } from '../sockets/index.js';
+import { TelegramBotService } from '../services/telegram.js';
+import { encryptSecret } from '../utils/crypto.js';
 
 const router = Router();
 
@@ -411,6 +413,198 @@ router.post('/servers/:id/members', async (req, res) => {
   res.json({
     success: true,
     message: `${targetUser.displayName || targetUser.email} sunucuya başarıyla eklendi.`,
+  });
+});
+
+// POST /api/admin/users/:userId/family - toggle Aile role (Admin only)
+const toggleFamilySchema = z.object({
+  isFamily: z.boolean(),
+});
+
+router.post('/users/:userId/family', async (req, res) => {
+  const { userId } = req.params;
+  const parseResult = toggleFamilySchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', message: 'Geçersiz parametre.' });
+    return;
+  }
+
+  const { isFamily } = parseResult.data;
+  const targetUser = await dataStore.getUserById(userId);
+  if (!targetUser) {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  const updated = await dataStore.setUserFamily(userId, isFamily);
+
+  await dataStore.recordAuditLog({
+    actorId: req.user!.id,
+    actorEmail: req.user!.email,
+    action: isFamily ? 'USER_FAMILY_ROLE_GRANTED' : 'USER_FAMILY_ROLE_REVOKED',
+    target: targetUser.email,
+    details: `${targetUser.displayName || targetUser.email} için Aile rolü ${isFamily ? 'verildi' : 'kaldırıldı'}`,
+    ipAddress: req.ip,
+  });
+
+  res.json({
+    success: true,
+    user: updated,
+    message: `${targetUser.displayName} için Aile rolü ${isFamily ? 'etkinleştirildi' : 'kaldırıldı'}.`,
+  });
+});
+
+// GET /api/admin/bot-pool - get bot pool
+router.get('/bot-pool', async (req, res) => {
+  const pool = await dataStore.getBotPool();
+  const mapped = pool.map((item) => ({
+    id: item.id,
+    botName: item.botName,
+    username: item.username,
+    isAssigned: item.isAssigned,
+    assignedName: item.assignedName,
+    assignedConversationId: item.assignedConversationId,
+    createdAt: item.createdAt,
+  }));
+  res.json({
+    pool: mapped,
+    botPool: mapped,
+  });
+});
+
+// POST /api/admin/bot-pool - add bot to pool
+const addBotPoolSchema = z.object({
+  token: z.string().min(10, 'Geçerli bir bot belirteci gereklidir.'),
+});
+
+router.post('/bot-pool', async (req, res) => {
+  const parseResult = addBotPoolSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', message: 'Geçerli bir bot belirteci giriniz.' });
+    return;
+  }
+
+  const { token } = parseResult.data;
+  try {
+    const { botName, username } = await TelegramBotService.validateToken(token);
+    const encrypted = encryptSecret(token.trim());
+    const item = await dataStore.addBotPoolToken(encrypted, botName, username);
+
+    await dataStore.recordAuditLog({
+      actorId: req.user!.id,
+      actorEmail: req.user!.email,
+      action: 'BOT_POOL_TOKEN_ADDED',
+      target: `@${username}`,
+      details: `${botName} (@${username}) bot havuzuna eklendi`,
+      ipAddress: req.ip,
+    });
+
+    res.json({
+      success: true,
+      bot: {
+        id: item.id,
+        botName: item.botName,
+        username: item.username,
+        isAssigned: false,
+        createdAt: item.createdAt,
+      },
+      message: `${botName} (@${username}) başarıyla bot havuzuna eklendi.`,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: 'VALIDATION_FAILED', message: err.message || 'Bot belirteci doğrulanamadı.' });
+  }
+});
+
+// DELETE /api/admin/bot-pool/:id - remove bot from pool
+router.delete('/bot-pool/:id', async (req, res) => {
+  const { id } = req.params;
+  const removed = await dataStore.removeBotPoolToken(id);
+  if (!removed) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Bot havuzunda kayıt bulunamadı.' });
+    return;
+  }
+  res.json({ success: true, message: 'Bot havuzdan kaldırıldı.' });
+});
+
+// POST /api/admin/bot-pool/:id/assign - assign bot to conversation
+const assignBotSchema = z.object({
+  conversationId: z.string().min(1),
+  customName: z.string().optional(),
+});
+
+router.post('/bot-pool/:id/assign', async (req, res) => {
+  const parseResult = assignBotSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', message: 'Geçersiz parametre.' });
+    return;
+  }
+  const { conversationId, customName } = parseResult.data;
+  const assigned = await dataStore.assignBotFromPool(req.params.id, conversationId, customName);
+  if (!assigned) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Bot bulunamadı.' });
+    return;
+  }
+  res.json({ success: true, bot: assigned });
+});
+
+// GET /api/admin/gemini - get Gemini configuration (never reveals key)
+router.get('/gemini', async (req, res) => {
+  const geminiConfig = await dataStore.getGeminiConfig();
+  res.json({
+    config: {
+      isConfigured: !!geminiConfig?.apiKeyEncrypted,
+      isEnabled: !!geminiConfig?.isEnabled,
+      defaultPrompt: geminiConfig?.defaultPrompt || null,
+      model: geminiConfig?.model || 'gemini-1.5-flash',
+      updatedAt: geminiConfig?.updatedAt || null,
+    },
+  });
+});
+
+// POST /api/admin/gemini - update Gemini configuration
+const updateGeminiSchema = z.object({
+  apiKey: z.string().optional(),
+  isEnabled: z.boolean().optional(),
+  defaultPrompt: z.string().optional().nullable(),
+  model: z.string().optional(),
+});
+
+router.post('/gemini', async (req, res) => {
+  const parseResult = updateGeminiSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_INPUT', message: 'Geçersiz parametreler.' });
+    return;
+  }
+
+  const { apiKey, isEnabled, defaultPrompt, model } = parseResult.data;
+  const updateData: any = {};
+  if (apiKey !== undefined && apiKey.trim().length > 0) {
+    updateData.apiKeyEncrypted = encryptSecret(apiKey.trim());
+  }
+  if (isEnabled !== undefined) updateData.isEnabled = isEnabled;
+  if (defaultPrompt !== undefined) updateData.defaultPrompt = defaultPrompt;
+  if (model !== undefined) updateData.model = model;
+
+  const saved = await dataStore.updateGeminiConfig(updateData);
+
+  await dataStore.recordAuditLog({
+    actorId: req.user!.id,
+    actorEmail: req.user!.email,
+    action: 'GEMINI_CONFIG_UPDATED',
+    details: `Gemini AI yapılandırması güncellendi (Etkin: ${saved.isEnabled})`,
+    ipAddress: req.ip,
+  });
+
+  res.json({
+    success: true,
+    config: {
+      isConfigured: !!saved.apiKeyEncrypted,
+      isEnabled: saved.isEnabled,
+      defaultPrompt: saved.defaultPrompt,
+      model: saved.model,
+      updatedAt: saved.updatedAt,
+    },
+    message: 'Gemini AI ayarları başarıyla kaydedildi.',
   });
 });
 

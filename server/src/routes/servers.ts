@@ -385,4 +385,107 @@ router.patch('/:id/members/:userId/role', async (req, res) => {
   res.json({ success: true, server: updatedServer });
 });
 
+// POST /api/servers/:id/invites - create a server invite link
+const createInviteSchema = z.object({
+  maxUses: z.number().int().positive().nullable().optional(),
+  expiresInHours: z.number().positive().nullable().optional(),
+});
+
+router.post('/:id/invites', async (req, res) => {
+  const serverId = req.params.id as string;
+  const user = req.user!;
+
+  const isAdmin = await dataStore.isServerAdmin(serverId, user.id);
+  if (!isAdmin && !user.isAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Yalnızca sunucu yöneticileri davet linki oluşturabilir.' });
+    return;
+  }
+
+  const parseResult = createInviteSchema.safeParse(req.body);
+  const maxUses = parseResult.success ? parseResult.data.maxUses : null;
+  const expiresInHours = parseResult.success ? parseResult.data.expiresInHours : null;
+
+  let expiresAt: string | null = null;
+  if (expiresInHours) {
+    expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
+  }
+
+  const invite = await dataStore.createServerInvite(serverId, user.id, {
+    maxUses: maxUses || null,
+    expiresAt,
+  });
+
+  res.status(201).json({ success: true, invite });
+});
+
+// GET /api/servers/:id/invites - list invites for a server
+router.get('/:id/invites', async (req, res) => {
+  const serverId = req.params.id as string;
+  const user = req.user!;
+
+  const isAdmin = await dataStore.isServerAdmin(serverId, user.id);
+  if (!isAdmin && !user.isAdmin) {
+    res.status(403).json({ error: 'FORBIDDEN', message: 'Davet listesini görüntüleme yetkiniz yok.' });
+    return;
+  }
+
+  const invites = await dataStore.getServerInvites(serverId);
+  res.json({ invites });
+});
+
+// DELETE /api/servers/invites/:inviteId - revoke invite link
+router.delete('/invites/:inviteId', async (req, res) => {
+  const { inviteId } = req.params;
+  const revoked = await dataStore.revokeServerInvite(inviteId);
+  res.json({ success: revoked, message: revoked ? 'Davet linki iptal edildi.' : 'Davet bulunamadı.' });
+});
+
+// GET /api/servers/invite/:code - preview invite info
+router.get('/invite/:code', async (req, res) => {
+  const { code } = req.params;
+  const invite = await dataStore.getServerInviteByCode(code);
+  if (!invite) {
+    res.status(404).json({ error: 'NOT_FOUND', message: 'Davet linki geçersiz veya süresi dolmuş.' });
+    return;
+  }
+
+  const server = await dataStore.getServer(invite.serverId, req.user!.id);
+  res.json({
+    invite: {
+      code: invite.code,
+      serverId: invite.serverId,
+      serverName: server?.name || 'Sunucu',
+      serverAvatar: server?.avatarUrl || null,
+      serverDescription: server?.description || null,
+      memberCount: server?.memberIds?.length || 0,
+      expiresAt: invite.expiresAt,
+    },
+  });
+});
+
+// POST /api/servers/invite/:code/accept or /api/servers/join/:code - accept invite and join server
+router.post(['/invite/:code/accept', '/join/:code'], async (req, res) => {
+  const code = Array.isArray(req.params.code) ? req.params.code[0] : req.params.code;
+  const user = req.user!;
+
+  const result = await dataStore.useServerInvite(code, user.id);
+  if (!result.success) {
+    res.status(400).json({ error: 'INVITE_ERROR', message: result.message });
+    return;
+  }
+
+  const server = await dataStore.getServer(result.serverId, user.id);
+  const io = getSocketServer();
+  if (io && server) {
+    for (const ch of server.channels || []) {
+      io.in(`user:${user.id}`).socketsJoin(`conversation:${ch.id}`);
+    }
+    for (const mId of server.memberIds) {
+      io.to(`user:${mId}`).emit('server:updated', server);
+    }
+  }
+
+  res.json({ success: true, server, serverId: result.serverId, message: result.message });
+});
+
 export const serversRouter = router;

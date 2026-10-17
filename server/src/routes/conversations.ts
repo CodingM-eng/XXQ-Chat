@@ -24,6 +24,13 @@ router.get('/', async (req, res) => {
   res.json({ conversations });
 });
 
+// GET /api/conversations/groups/search - search discoverable groups
+router.get('/groups/search', async (req, res) => {
+  const query = (req.query.q as string || '').trim();
+  const groups = await dataStore.searchDiscoverableGroups(req.user!.id, query);
+  res.json({ groups });
+});
+
 // GET /api/conversations/:id - get single conversation summary
 router.get('/:id', async (req, res) => {
   const convId = req.params.id;
@@ -42,7 +49,9 @@ router.get('/:id', async (req, res) => {
 const directChatSchema = z.object({
   peerId: z.string().optional(),
   peerEmail: z.string().email().optional(),
-}).refine((data) => data.peerId || data.peerEmail, {
+  targetUserId: z.string().optional(),
+  targetEmail: z.string().email().optional(),
+}).refine((data) => data.peerId || data.peerEmail || data.targetUserId || data.targetEmail, {
   message: 'Either peerId or peerEmail must be provided',
 });
 
@@ -54,7 +63,8 @@ router.post('/direct', async (req, res) => {
   }
 
   const currentUserId = req.user!.id;
-  const { peerId, peerEmail } = parseResult.data;
+  const peerId = parseResult.data.peerId || parseResult.data.targetUserId;
+  const peerEmail = parseResult.data.peerEmail || parseResult.data.targetEmail;
 
   // Find target peer user
   let peer = null;
@@ -71,6 +81,15 @@ router.post('/direct', async (req, res) => {
 
   if (peer.id === currentUserId) {
     res.status(400).json({ error: 'INVALID_OPERATION', message: 'Kendinizle sohbet oluşturamazsınız.' });
+    return;
+  }
+
+  // Aile role protection: Only platform Admin may initiate direct messages to them
+  if (peer.isFamily && !req.user!.isAdmin) {
+    res.status(403).json({
+      error: 'FAMILY_ROLE_PROTECTED',
+      message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi doğrudan mesaj başlatabilir.',
+    });
     return;
   }
 
@@ -136,7 +155,7 @@ const groupChatSchema = z.object({
   joinPolicy: z.enum(['auto', 'invite', 'request']).optional().default('auto'),
 });
 
-router.post('/group', async (req, res) => {
+router.post(['/group', '/groups'], async (req, res) => {
   const parseResult = groupChatSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_INPUT', details: parseResult.error.format() });
@@ -167,6 +186,32 @@ router.post('/group', async (req, res) => {
   });
 
   const participantIds = await dataStore.getConversationParticipantIds(convId);
+
+  // Save system message for group creation
+  await dataStore.saveMessage({
+    conversationId: convId,
+    senderId: currentUser.id,
+    senderName: 'Sistem',
+    content: `"${name}" grubu oluşturuldu.`,
+    type: 'system',
+    isSystem: true,
+    status: 'delivered',
+  });
+
+  // System welcome message for each initial member added
+  for (const mId of rawMemberIds) {
+    if (mId === currentUser.id) continue;
+    const mUser = await dataStore.getUserById(mId);
+    await dataStore.saveMessage({
+      conversationId: convId,
+      senderId: mId,
+      senderName: 'Sistem',
+      content: `Aramıza hoş geldin, ${mUser?.displayName || 'Yeni Üye'}! 🎉`,
+      type: 'system',
+      isSystem: true,
+      status: 'delivered',
+    });
+  }
 
   // Notify all participants via Socket.IO
   const io = getSocketServer();
@@ -227,6 +272,28 @@ router.post('/:id/participants', async (req, res) => {
         return;
       }
     }
+
+    // Check user's group add privacy preference
+    if (!user.isAdmin) {
+      if (targetUser.groupAddPrivacy === 'invite_only') {
+        res.status(403).json({
+          error: 'PRIVACY_RESTRICTION',
+          message: `${targetUser.displayName} gizlilik ayarları nedeniyle doğrudan gruba eklenemez (Yalnızca davet linkiyle katılabilir).`,
+        });
+        return;
+      }
+      if (targetUser.groupAddPrivacy === 'friends') {
+        const isFriend = await dataStore.areFriends(user.id, targetUser.id);
+        if (!isFriend) {
+          res.status(403).json({
+            error: 'PRIVACY_RESTRICTION',
+            message: `${targetUser.displayName} yalnızca arkadaşları tarafından gruplara eklenebilir.`,
+          });
+          return;
+        }
+      }
+    }
+
     toAdd.push(uid);
   }
 
@@ -254,17 +321,31 @@ router.post('/:id/participants', async (req, res) => {
       const summary = await dataStore.getConversation(convId, pId);
       if (summary) io.to(`user:${pId}`).emit('conversation:updated', summary);
     }
+
+    // System welcome message for each newly joined member: "Aramıza hoş geldin, {Kullanıcı adı}! 🎉"
+    for (const addedId of toAdd) {
+      const addedUser = await dataStore.getUserById(addedId);
+      const welcomeMsg = await dataStore.saveMessage({
+        conversationId: convId,
+        senderId: addedId,
+        senderName: 'Sistem',
+        content: `Aramıza hoş geldin, ${addedUser?.displayName || 'Yeni Üye'}! 🎉`,
+        type: 'system',
+        isSystem: true,
+        status: 'delivered',
+      });
+      io.to(`conversation:${convId}`).emit('message:new', welcomeMsg);
+    }
   }
 
   const updatedConv = await dataStore.getConversation(convId, user.id);
   res.json({ conversation: updatedConv });
 });
 
-// DELETE /api/conversations/:id/participants/:userId - remove member or leave group
-router.delete('/:id/participants/:userId', async (req, res) => {
+const handleRemoveParticipant = async (req: any, res: any) => {
   const convId = req.params.id as string;
   const user = req.user!;
-  const targetUserId = req.params.userId as string;
+  const targetUserId = req.params.userId || user.id;
 
   const isSelf = user.id === targetUserId;
   const isAdmin = await dataStore.isConversationAdmin(convId, user.id);
@@ -275,12 +356,25 @@ router.delete('/:id/participants/:userId', async (req, res) => {
     return;
   }
 
-  // Prevent removing owner unless self-leaving or platform admin
   const targetRole = await dataStore.getConversationRole(convId, targetUserId);
+  const currentParticipants = await dataStore.getConversationParticipantIds(convId);
+
+  // Ownership transfer rule: if owner is leaving and other participants remain
+  if (targetRole === 'owner' && isSelf && currentParticipants.length > 1) {
+    res.status(400).json({
+      error: 'OWNERSHIP_TRANSFER_REQUIRED',
+      message: 'Grup sahibi gruptan ayrılmadan önce grup sahipliğini başka bir üyeye devretmelidir.',
+    });
+    return;
+  }
+
   if (targetRole === 'owner' && !isSelf && !isPlatformAdmin) {
     res.status(403).json({ error: 'FORBIDDEN', message: 'Grup sahibi gruptan çıkarılamaz.' });
     return;
   }
+
+  const targetUser = await dataStore.getUserById(targetUserId);
+  const conv = await dataStore.getConversation(convId, user.id);
 
   await dataStore.removeConversationParticipant(convId, targetUserId);
 
@@ -293,10 +387,26 @@ router.delete('/:id/participants/:userId', async (req, res) => {
     ipAddress: req.ip,
   });
 
+  // System leave message: "{Kullanıcı adı}, {Grup adı} grubundan ayrıldı. Seni özleyeceğiz."
+  const leaveMessageContent = isSelf
+    ? `${targetUser?.displayName || 'Bir üye'}, ${conv?.name || 'Grup'} grubundan ayrıldı. Seni özleyeceğiz.`
+    : `${targetUser?.displayName || 'Bir üye'}, yöneticiler tarafından gruptan çıkarıldı.`;
+
+  const leaveMsg = await dataStore.saveMessage({
+    conversationId: convId,
+    senderId: targetUserId,
+    senderName: 'Sistem',
+    content: leaveMessageContent,
+    type: 'system',
+    isSystem: true,
+    status: 'delivered',
+  });
+
   const io = getSocketServer();
   if (io) {
     io.in(`user:${targetUserId}`).socketsLeave(`conversation:${convId}`);
     io.to(`user:${targetUserId}`).emit('conversation:removed', { conversationId: convId });
+    io.to(`conversation:${convId}`).emit('message:new', leaveMsg);
 
     const remainingParticipants = await dataStore.getConversationParticipantIds(convId);
     for (const pId of remainingParticipants) {
@@ -306,6 +416,12 @@ router.delete('/:id/participants/:userId', async (req, res) => {
   }
 
   res.json({ success: true, message: isSelf ? 'Gruptan ayrıldınız.' : 'Üye gruptan çıkarıldı.' });
+};
+
+router.delete('/:id/participants/:userId', handleRemoveParticipant);
+router.post('/:id/leave', (req, res) => {
+  (req.params as any).userId = req.user!.id;
+  return handleRemoveParticipant(req, res);
 });
 
 // PATCH /api/conversations/:id/settings or PATCH /api/conversations/:id - update group settings
@@ -724,6 +840,7 @@ const sendMessageSchema = z
     clientMessageId: z.string().max(100).optional(),
     replyToMessageId: z.string().optional(),
     forwardedFrom: z.object({ senderName: z.string() }).optional(),
+    type: z.enum(['text', 'image', 'video', 'voice', 'file', 'system']).optional(),
     attachments: z
       .array(
         z.object({
@@ -741,7 +858,7 @@ const sendMessageSchema = z
       )
       .optional(),
   })
-  .refine((data) => data.content.trim().length > 0 || (data.attachments && data.attachments.length > 0), {
+  .refine((data) => data.content.trim().length > 0 || (data.attachments && data.attachments.length > 0) || data.type === 'voice', {
     message: 'Mesaj içeriği veya dosya eki zorunludur.',
   });
 
@@ -763,8 +880,25 @@ router.post('/:id/messages', async (req, res) => {
     return;
   }
 
-  // Check announcement-only channel permission
   const conv = await dataStore.getConversation(convId, user.id);
+
+  // Aile role messaging guard: only platform admin can send direct messages to Aile users
+  if (conv && conv.type === 'direct' && !user.isAdmin) {
+    const participants = await dataStore.getConversationParticipantIds(convId);
+    const peerId = participants.find((id) => id !== user.id);
+    if (peerId) {
+      const peer = await dataStore.getUserById(peerId);
+      if (peer && peer.isFamily) {
+        res.status(403).json({
+          error: 'FAMILY_ROLE_PROTECTED',
+          message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi mesaj gönderebilir.',
+        });
+        return;
+      }
+    }
+  }
+
+  // Check announcement-only channel permission
   if (conv && conv.isAnnouncementOnly) {
     const role = await dataStore.getConversationRole(convId, user.id);
     const isOwnerOrAdmin = role === 'owner' || role === 'admin' || user.isAdmin;
@@ -777,7 +911,7 @@ router.post('/:id/messages', async (req, res) => {
     }
   }
 
-  const { content, clientMessageId, replyToMessageId, forwardedFrom, attachments } = parseResult.data;
+  const { content, clientMessageId, replyToMessageId, forwardedFrom, attachments, type } = parseResult.data;
 
   // Deduplication check
   if (clientMessageId) {
@@ -809,6 +943,8 @@ router.post('/:id/messages', async (req, res) => {
     senderAvatar: user.avatarUrl || null,
     clientMessageId: clientMessageId || null,
     content: content || '',
+    type: type || 'text',
+    isSystem: type === 'system',
     replyTo,
     forwardedFrom: forwardedFrom || null,
     attachments: attachments || null,

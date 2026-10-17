@@ -20,6 +20,10 @@ import {
   DbServer,
   ServerPurpose,
   DbMembershipInvitation,
+  DbServerInvite,
+  DbFriendRequest,
+  DbBotPoolItem,
+  DbGeminiConfig,
 } from './types.js';
 
 export class SqliteStore implements DataStore {
@@ -236,6 +240,70 @@ export class SqliteStore implements DataStore {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS server_invites (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL,
+        code TEXT UNIQUE NOT NULL,
+        created_by_id TEXT NOT NULL,
+        max_uses INTEGER,
+        used_count INTEGER NOT NULL DEFAULT 0,
+        expires_at DATETIME,
+        is_revoked INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS friend_requests (
+        id TEXT PRIMARY KEY,
+        sender_id TEXT NOT NULL,
+        receiver_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'declined')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS user_friends (
+        user_id TEXT NOT NULL,
+        friend_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, friend_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (friend_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS message_reads (
+        message_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (message_id, user_id),
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS bot_pool (
+        id TEXT PRIMARY KEY,
+        token_encrypted TEXT NOT NULL,
+        bot_name TEXT NOT NULL,
+        username TEXT NOT NULL,
+        is_assigned INTEGER NOT NULL DEFAULT 0,
+        assigned_name TEXT,
+        assigned_conversation_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS gemini_config (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        api_key_encrypted TEXT NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 0,
+        default_prompt TEXT,
+        model TEXT NOT NULL DEFAULT 'gemini-1.5-flash',
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(client_message_id);
       CREATE INDEX IF NOT EXISTS idx_participants_user ON conversation_participants(user_id);
@@ -243,6 +311,9 @@ export class SqliteStore implements DataStore {
       CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_support_reports_created ON support_reports(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_server_invites_code ON server_invites(code);
+      CREATE INDEX IF NOT EXISTS idx_friend_requests_user ON friend_requests(sender_id, receiver_id);
+      CREATE INDEX IF NOT EXISTS idx_message_reads_msg ON message_reads(message_id);
     `);
 
     // Safe schema migrations for existing SQLite databases
@@ -253,6 +324,11 @@ export class SqliteStore implements DataStore {
     try { sqlite.exec('ALTER TABLE users ADD COLUMN onboarded INTEGER DEFAULT 1;'); } catch (_) {}
     try { sqlite.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active';"); } catch (_) {}
     try { sqlite.exec("ALTER TABLE users ADD COLUMN theme_preference TEXT DEFAULT 'dark';"); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE users ADD COLUMN bio TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE users ADD COLUMN is_family INTEGER DEFAULT 0;'); } catch (_) {}
+    try { sqlite.exec("ALTER TABLE users ADD COLUMN group_add_privacy TEXT DEFAULT 'everyone';"); } catch (_) {}
+    try { sqlite.exec("ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'text';"); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE messages ADD COLUMN is_system INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE whitelist ADD COLUMN is_moderator INTEGER DEFAULT 0;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN avatar_url TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE conversations ADD COLUMN creator_id TEXT;'); } catch (_) {}
@@ -428,7 +504,7 @@ export class SqliteStore implements DataStore {
   async getWhitelist(): Promise<DbWhitelistEntry[]> {
     const items = this.getSqlite()
       .prepare(`
-        SELECT w.email, w.approved_by, w.created_at, u.display_name, u.avatar_url, u.is_admin, u.is_moderator
+        SELECT w.email, w.approved_by, w.created_at, u.id as user_id, u.display_name, u.avatar_url, u.is_admin, u.is_moderator, u.is_family
         FROM whitelist w
         LEFT JOIN users u ON LOWER(u.email) = LOWER(w.email)
         ORDER BY w.created_at DESC
@@ -439,10 +515,12 @@ export class SqliteStore implements DataStore {
       email: row.email,
       approvedBy: row.approved_by,
       createdAt: row.created_at,
+      userId: row.user_id || null,
       displayName: row.display_name || undefined,
       avatarUrl: row.avatar_url || null,
       isAdmin: row.is_admin === 1,
       isModerator: row.is_moderator === 1,
+      isFamily: row.is_family === 1,
     }));
   }
 
@@ -558,9 +636,12 @@ export class SqliteStore implements DataStore {
   // Users
   async getUserById(id: string): Promise<DbUser | null> {
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, created_at, last_active_at FROM users WHERE id = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE id = ?')
       .get(id) as any;
     if (!row) return null;
+
+    const isAdmin = row.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && row.email.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+    const isModerator = !isAdmin && row.is_moderator === 1;
 
     return {
       id: row.id,
@@ -570,8 +651,11 @@ export class SqliteStore implements DataStore {
       displayName: row.display_name,
       avatarUrl: row.avatar_url || null,
       phoneNumber: row.phone_number || null,
-      isAdmin: row.is_admin === 1,
-      isModerator: row.is_moderator === 1,
+      isAdmin,
+      isModerator,
+      bio: row.bio || null,
+      isFamily: row.is_family === 1,
+      groupAddPrivacy: row.group_add_privacy || 'everyone',
       themePreference: row.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: row.onboarded === 1,
       status: row.status || 'active',
@@ -583,9 +667,12 @@ export class SqliteStore implements DataStore {
   async getUserByEmail(email: string): Promise<DbUser | null> {
     const normalized = email.toLowerCase().trim();
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
       .get(normalized) as any;
     if (!row) return null;
+
+    const isAdmin = row.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && row.email.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+    const isModerator = !isAdmin && row.is_moderator === 1;
 
     return {
       id: row.id,
@@ -595,8 +682,11 @@ export class SqliteStore implements DataStore {
       displayName: row.display_name,
       avatarUrl: row.avatar_url || null,
       phoneNumber: row.phone_number || null,
-      isAdmin: row.is_admin === 1,
-      isModerator: row.is_moderator === 1,
+      isAdmin,
+      isModerator,
+      bio: row.bio || null,
+      isFamily: row.is_family === 1,
+      groupAddPrivacy: row.group_add_privacy || 'everyone',
       themePreference: row.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: row.onboarded === 1,
       status: row.status || 'active',
@@ -713,6 +803,8 @@ export class SqliteStore implements DataStore {
       avatarUrl?: string | null;
       phoneNumber?: string | null;
       themePreference?: 'dark' | 'light';
+      bio?: string | null;
+      groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
     }
   ): Promise<DbUser | null> {
     const updateParts: string[] = [];
@@ -741,6 +833,14 @@ export class SqliteStore implements DataStore {
     if (updates.themePreference !== undefined) {
       updateParts.push('theme_preference = ?');
       params.push(updates.themePreference);
+    }
+    if (updates.bio !== undefined) {
+      updateParts.push('bio = ?');
+      params.push(updates.bio);
+    }
+    if (updates.groupAddPrivacy !== undefined) {
+      updateParts.push('group_add_privacy = ?');
+      params.push(updates.groupAddPrivacy);
     }
 
     if (updateParts.length > 0) {
@@ -804,27 +904,36 @@ export class SqliteStore implements DataStore {
   async getAllUsers(): Promise<DbUser[]> {
     const rows = this.getSqlite()
       .prepare(`
-        SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, is_moderator, onboarded, status, created_at, last_active_at
+        SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at
         FROM users
         WHERE status = 'active'
         ORDER BY created_at DESC
       `)
       .all() as any[];
 
-    return rows.map((r) => ({
-      id: r.id,
-      email: r.email,
-      firstName: r.first_name || null,
-      lastName: r.last_name || null,
-      displayName: r.display_name,
-      avatarUrl: r.avatar_url || null,
-      isAdmin: r.is_admin === 1,
-      isModerator: r.is_moderator === 1,
-      onboarded: r.onboarded === 1,
-      status: r.status,
-      createdAt: r.created_at,
-      lastActiveAt: r.last_active_at,
-    }));
+    return rows.map((r) => {
+      const isAdmin = r.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && r.email.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+      const isModerator = !isAdmin && r.is_moderator === 1;
+      return {
+        id: r.id,
+        email: r.email,
+        firstName: r.first_name || null,
+        lastName: r.last_name || null,
+        displayName: r.display_name,
+        avatarUrl: r.avatar_url || null,
+        phoneNumber: r.phone_number || null,
+        isAdmin,
+        isModerator,
+        bio: r.bio || null,
+        isFamily: r.is_family === 1,
+        groupAddPrivacy: r.group_add_privacy || 'everyone',
+        themePreference: r.theme_preference === 'light' ? 'light' : 'dark',
+        onboarded: r.onboarded === 1,
+        status: r.status,
+        createdAt: r.created_at,
+        lastActiveAt: r.last_active_at,
+      };
+    });
   }
 
   async searchUsers(excludeUserId: string, query?: string): Promise<DbUser[]> {
@@ -834,7 +943,7 @@ export class SqliteStore implements DataStore {
     if (q) {
       rows = this.getSqlite()
         .prepare(`
-          SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, is_moderator, onboarded, status, created_at, last_active_at
+          SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at
           FROM users
           WHERE id != ? AND status = 'active' AND (LOWER(display_name) LIKE ? OR LOWER(email) LIKE ?)
           ORDER BY display_name ASC
@@ -844,7 +953,7 @@ export class SqliteStore implements DataStore {
     } else {
       rows = this.getSqlite()
         .prepare(`
-          SELECT id, email, first_name, last_name, display_name, avatar_url, is_admin, is_moderator, onboarded, status, created_at, last_active_at
+          SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at
           FROM users
           WHERE id != ? AND status = 'active'
           ORDER BY last_active_at DESC
@@ -853,20 +962,29 @@ export class SqliteStore implements DataStore {
         .all(excludeUserId) as any[];
     }
 
-    return rows.map((r) => ({
-      id: r.id,
-      email: r.email,
-      firstName: r.first_name || null,
-      lastName: r.last_name || null,
-      displayName: r.display_name,
-      avatarUrl: r.avatar_url || null,
-      isAdmin: r.is_admin === 1,
-      isModerator: r.is_moderator === 1,
-      onboarded: r.onboarded === 1,
-      status: r.status,
-      createdAt: r.created_at,
-      lastActiveAt: r.last_active_at,
-    }));
+    return rows.map((r) => {
+      const isAdmin = r.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && r.email.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+      const isModerator = !isAdmin && r.is_moderator === 1;
+      return {
+        id: r.id,
+        email: r.email,
+        firstName: r.first_name || null,
+        lastName: r.last_name || null,
+        displayName: r.display_name,
+        avatarUrl: r.avatar_url || null,
+        phoneNumber: r.phone_number || null,
+        isAdmin,
+        isModerator,
+        bio: r.bio || null,
+        isFamily: r.is_family === 1,
+        groupAddPrivacy: r.group_add_privacy || 'everyone',
+        themePreference: r.theme_preference === 'light' ? 'light' : 'dark',
+        onboarded: r.onboarded === 1,
+        status: r.status,
+        createdAt: r.created_at,
+        lastActiveAt: r.last_active_at,
+      };
+    });
   }
 
   // Audit Logs
@@ -1268,11 +1386,14 @@ export class SqliteStore implements DataStore {
     const boundedLimit = Math.min(Math.max(limit, 1), 100);
     const rows = this.getSqlite()
       .prepare(`
-        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
-        FROM messages
-        WHERE conversation_id = ?
+        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, type, is_system, created_at
+        FROM (
+          SELECT * FROM messages
+          WHERE conversation_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
         ORDER BY created_at ASC
-        LIMIT ?
       `)
       .all(conversationId, boundedLimit) as any[];
 
@@ -1296,6 +1417,28 @@ export class SqliteStore implements DataStore {
       }
       msgReactions[r.emoji].push(r.user_id);
     }
+
+    // Fetch read receipts
+    let readMap = new Map<string, Array<{ userId: string; displayName?: string; readAt: string }>>();
+    try {
+      const readRows = this.getSqlite().prepare(`
+        SELECT mr.message_id, mr.user_id, u.display_name, mr.read_at
+        FROM message_reads mr
+        JOIN users u ON mr.user_id = u.id
+        WHERE mr.conversation_id = ?
+      `).all(conversationId) as any[];
+
+      for (const r of readRows) {
+        if (!readMap.has(r.message_id)) {
+          readMap.set(r.message_id, []);
+        }
+        readMap.get(r.message_id)!.push({
+          userId: r.user_id,
+          displayName: r.display_name,
+          readAt: r.read_at,
+        });
+      }
+    } catch (_) {}
 
     return rows.map((m) => {
       let replyTo: DbMessageReply | null = null;
@@ -1327,11 +1470,14 @@ export class SqliteStore implements DataStore {
         senderAvatar: m.sender_avatar || null,
         clientMessageId: m.client_message_id || null,
         content: m.content,
+        type: m.type || 'text',
+        isSystem: m.is_system === 1,
         replyTo,
         forwardedFrom,
         attachments,
         reactions: reactionsMap.get(m.id) || undefined,
         status: m.status,
+        readBy: readMap.get(m.id) || undefined,
         createdAt: m.created_at,
       };
     });
@@ -1339,10 +1485,10 @@ export class SqliteStore implements DataStore {
 
   async findMessageByClientId(clientMessageId: string, senderId: string, conversationId?: string): Promise<DbMessage | null> {
     const query = conversationId
-      ? `SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
+      ? `SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, type, is_system, created_at
          FROM messages
          WHERE client_message_id = ? AND sender_id = ? AND conversation_id = ?`
-      : `SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
+      : `SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, type, is_system, created_at
          FROM messages
          WHERE client_message_id = ? AND sender_id = ?`;
     const params = conversationId ? [clientMessageId, senderId, conversationId] : [clientMessageId, senderId];
@@ -1379,6 +1525,8 @@ export class SqliteStore implements DataStore {
       senderAvatar: row.sender_avatar || null,
       clientMessageId: row.client_message_id || null,
       content: row.content,
+      type: row.type || 'text',
+      isSystem: row.is_system === 1,
       replyTo,
       forwardedFrom,
       attachments,
@@ -1399,9 +1547,13 @@ export class SqliteStore implements DataStore {
     forwardedFrom?: DbMessageForward | null;
     attachments?: DbAttachment[] | null;
     status?: 'pending' | 'sent' | 'delivered' | 'read';
+    type?: 'text' | 'image' | 'video' | 'voice' | 'file' | 'system';
+    isSystem?: boolean;
   }): Promise<DbMessage> {
     const msgId = message.id || 'msg_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     const status = message.status || 'sent';
+    const msgType = message.type || 'text';
+    const isSystem = message.isSystem ? 1 : 0;
 
     const replyToJson = message.replyTo ? JSON.stringify(message.replyTo) : null;
     const forwardedFromJson = message.forwardedFrom ? JSON.stringify(message.forwardedFrom) : null;
@@ -1412,8 +1564,8 @@ export class SqliteStore implements DataStore {
     try {
       sqlite
         .prepare(`
-          INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO messages (id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, type, is_system)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           msgId,
@@ -1426,10 +1578,11 @@ export class SqliteStore implements DataStore {
           replyToJson,
           forwardedFromJson,
           attachmentsJson,
-          status
+          status,
+          msgType,
+          isSystem
         );
 
-      // If attachments exist, associate them with this messageId in attachments table
       if (message.attachments && message.attachments.length > 0) {
         for (const att of message.attachments) {
           sqlite
@@ -1454,7 +1607,7 @@ export class SqliteStore implements DataStore {
 
     const saved = this.getSqlite()
       .prepare(`
-        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
+        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, type, is_system, created_at
         FROM messages WHERE id = ?
       `)
       .get(msgId) as any;
@@ -1474,6 +1627,8 @@ export class SqliteStore implements DataStore {
       senderAvatar: saved.sender_avatar || null,
       clientMessageId: saved.client_message_id || null,
       content: saved.content,
+      type: saved.type || msgType,
+      isSystem: saved.is_system === 1,
       replyTo: message.replyTo || null,
       forwardedFrom: message.forwardedFrom || null,
       attachments: savedAttachments || message.attachments || null,
@@ -1558,9 +1713,10 @@ export class SqliteStore implements DataStore {
   }
 
   async getModerators(): Promise<DbUser[]> {
+    const adminEmail = (config.INITIAL_ADMIN_EMAIL || '').toLowerCase().trim();
     const rows = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, created_at, last_active_at FROM users WHERE is_moderator = 1 OR is_admin = 1 ORDER BY display_name ASC')
-      .all() as any[];
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE is_moderator = 1 AND is_admin = 0 AND LOWER(email) != ? ORDER BY display_name ASC')
+      .all(adminEmail) as any[];
 
     return rows.map((r) => ({
       id: r.id,
@@ -1570,8 +1726,12 @@ export class SqliteStore implements DataStore {
       displayName: r.display_name,
       avatarUrl: r.avatar_url || null,
       phoneNumber: r.phone_number || null,
-      isAdmin: r.is_admin === 1,
-      isModerator: r.is_moderator === 1,
+      isAdmin: false,
+      isModerator: true,
+      bio: r.bio || null,
+      isFamily: r.is_family === 1,
+      groupAddPrivacy: r.group_add_privacy || 'everyone',
+      themePreference: r.theme_preference === 'light' ? 'light' : 'dark',
       onboarded: r.onboarded === 1,
       status: r.status || 'active',
       createdAt: r.created_at,
@@ -2583,5 +2743,494 @@ export class SqliteStore implements DataStore {
       WHERE target_id = ? AND user_id = ? AND status = 'pending'
     `).get(targetId, userId);
     return !!row;
+  }
+
+  // Family Role & User Profile
+  async setUserFamily(userId: string, isFamily: boolean): Promise<DbUser | null> {
+    this.getSqlite()
+      .prepare('UPDATE users SET is_family = ? WHERE id = ?')
+      .run(isFamily ? 1 : 0, userId);
+    return this.getUserById(userId);
+  }
+
+  // Group Discoverability Search
+  async searchDiscoverableGroups(userId: string, query: string): Promise<DbConversationSummary[]> {
+    const q = (query || '').toLowerCase().trim();
+    const rows = this.getSqlite().prepare(`
+      SELECT DISTINCT c.id
+      FROM conversations c
+      LEFT JOIN conversation_participants cp ON c.id = cp.conversation_id AND cp.user_id = ?
+      WHERE c.type = 'group'
+        AND (cp.user_id IS NOT NULL OR c.join_policy IN ('auto', 'request'))
+        AND (LOWER(c.name) LIKE ? OR LOWER(COALESCE(c.description, '')) LIKE ?)
+      ORDER BY c.updated_at DESC
+      LIMIT 20
+    `).all(userId, `%${q}%`, `%${q}%`) as any[];
+
+    const result: DbConversationSummary[] = [];
+    for (const r of rows) {
+      const summary = await this.getConversation(r.id, userId);
+      if (summary) result.push(summary);
+    }
+    return result;
+  }
+
+  // Message Reads Tracking
+  async recordMessageRead(messageId: string, conversationId: string, userId: string): Promise<void> {
+    const now = new Date().toISOString();
+    try {
+      this.getSqlite().prepare(`
+        INSERT OR IGNORE INTO message_reads (message_id, conversation_id, user_id, read_at)
+        VALUES (?, ?, ?, ?)
+      `).run(messageId, conversationId, userId, now);
+    } catch (_) {}
+
+    try {
+      this.getSqlite().prepare(`
+        UPDATE conversation_participants
+        SET last_read_message_id = ?
+        WHERE conversation_id = ? AND user_id = ?
+      `).run(messageId, conversationId, userId);
+    } catch (_) {}
+
+    try {
+      this.getSqlite().prepare(`
+        UPDATE messages
+        SET status = 'read'
+        WHERE id = ? AND sender_id != ?
+      `).run(messageId, userId);
+    } catch (_) {}
+  }
+
+  async getMessageReads(messageId: string): Promise<{ userId: string; displayName: string; readAt: string }[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT mr.user_id, u.display_name, mr.read_at
+      FROM message_reads mr
+      JOIN users u ON mr.user_id = u.id
+      WHERE mr.message_id = ?
+      ORDER BY mr.read_at ASC
+    `).all(messageId) as any[];
+
+    return rows.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      readAt: r.read_at,
+    }));
+  }
+
+  // Server Invites
+  async createServerInvite(serverId: string, createdById: string, options?: { maxUses?: number | null; expiresAt?: string | null }): Promise<DbServerInvite> {
+    const id = 'sinv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    const now = new Date().toISOString();
+
+    this.getSqlite().prepare(`
+      INSERT INTO server_invites (id, server_id, code, created_by_id, max_uses, used_count, expires_at, is_revoked, created_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?)
+    `).run(id, serverId, code, createdById, options?.maxUses ?? null, options?.expiresAt ?? null, now);
+
+    return {
+      id,
+      serverId,
+      code,
+      createdById,
+      maxUses: options?.maxUses ?? null,
+      usedCount: 0,
+      expiresAt: options?.expiresAt ?? null,
+      isRevoked: false,
+      createdAt: now,
+    };
+  }
+
+  async getServerInviteByCode(code: string): Promise<DbServerInvite | null> {
+    const row = this.getSqlite().prepare(`
+      SELECT id, server_id, code, created_by_id, max_uses, used_count, expires_at, is_revoked, created_at
+      FROM server_invites
+      WHERE UPPER(code) = UPPER(?) AND is_revoked = 0
+    `).get(code) as any;
+
+    if (!row) return null;
+    return {
+      id: row.id,
+      serverId: row.server_id,
+      code: row.code,
+      createdById: row.created_by_id,
+      maxUses: row.max_uses,
+      usedCount: row.used_count,
+      expiresAt: row.expires_at,
+      isRevoked: row.is_revoked === 1,
+      createdAt: row.created_at,
+    };
+  }
+
+  async useServerInvite(code: string, userId: string): Promise<{ success: boolean; serverId: string; message: string }> {
+    const invite = await this.getServerInviteByCode(code);
+    if (!invite) {
+      return { success: false, serverId: '', message: 'Davet linki geçersiz veya iptal edilmiş.' };
+    }
+    if (invite.isRevoked) {
+      return { success: false, serverId: invite.serverId, message: 'Bu davet linki iptal edilmiş.' };
+    }
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+      return { success: false, serverId: invite.serverId, message: 'Bu davet linkinin süresi dolmuş.' };
+    }
+    if (invite.maxUses && invite.usedCount >= invite.maxUses) {
+      return { success: false, serverId: invite.serverId, message: 'Bu davet linkinin kullanım limiti dolmuş.' };
+    }
+
+    const isMember = await this.isServerMember(invite.serverId, userId);
+    if (isMember) {
+      return { success: true, serverId: invite.serverId, message: 'Zaten bu sunucunun üyesisiniz.' };
+    }
+
+    await this.addServerMember(invite.serverId, userId, 'member');
+
+    this.getSqlite().prepare(`
+      UPDATE server_invites
+      SET used_count = used_count + 1
+      WHERE id = ?
+    `).run(invite.id);
+
+    return { success: true, serverId: invite.serverId, message: 'Sunucuya başarıyla katıldınız!' };
+  }
+
+  async revokeServerInvite(inviteId: string): Promise<boolean> {
+    const res = this.getSqlite().prepare(`
+      UPDATE server_invites
+      SET is_revoked = 1
+      WHERE id = ?
+    `).run(inviteId);
+    return res.changes > 0;
+  }
+
+  async getServerInvites(serverId: string): Promise<DbServerInvite[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, server_id, code, created_by_id, max_uses, used_count, expires_at, is_revoked, created_at
+      FROM server_invites
+      WHERE server_id = ?
+      ORDER BY created_at DESC
+    `).all(serverId) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      serverId: r.server_id,
+      code: r.code,
+      createdById: r.created_by_id,
+      maxUses: r.max_uses,
+      usedCount: r.used_count,
+      expiresAt: r.expires_at,
+      isRevoked: r.is_revoked === 1,
+      createdAt: r.created_at,
+    }));
+  }
+
+  // Friends & Friend Requests
+  async sendFriendRequest(senderId: string, targetEmailOrId: string): Promise<DbFriendRequest> {
+    const target = targetEmailOrId.trim();
+    let receiver = await this.getUserById(target);
+    if (!receiver) {
+      receiver = await this.getUserByEmail(target);
+    }
+    if (!receiver) {
+      throw new Error('Kullanıcı bulunamadı.');
+    }
+    if (receiver.id === senderId) {
+      throw new Error('Kendinize arkadaşlık isteği gönderemezsiniz.');
+    }
+
+    const alreadyFriends = await this.areFriends(senderId, receiver.id);
+    if (alreadyFriends) {
+      throw new Error('Bu kullanıcıyla zaten arkadaşsınız.');
+    }
+
+    const sender = await this.getUserById(senderId);
+    if (!sender) throw new Error('Gönderen kullanıcı bulunamadı.');
+
+    const existing = this.getSqlite().prepare(`
+      SELECT id, sender_id, receiver_id, status, created_at
+      FROM friend_requests
+      WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
+        AND status = 'pending'
+    `).get(senderId, receiver.id, receiver.id, senderId) as any;
+
+    if (existing) {
+      throw new Error('Zaten bekleyen bir arkadaşlık isteği mevcut.');
+    }
+
+    const id = 'freq_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    this.getSqlite().prepare(`
+      INSERT INTO friend_requests (id, sender_id, receiver_id, status, created_at)
+      VALUES (?, ?, ?, 'pending', ?)
+    `).run(id, senderId, receiver.id, now);
+
+    return {
+      id,
+      senderId,
+      senderName: sender.displayName,
+      senderAvatar: sender.avatarUrl || null,
+      receiverId: receiver.id,
+      receiverName: receiver.displayName,
+      receiverAvatar: receiver.avatarUrl || null,
+      status: 'pending',
+      createdAt: now,
+    };
+  }
+
+  async getFriendRequests(userId: string): Promise<{ incoming: DbFriendRequest[]; outgoing: DbFriendRequest[] }> {
+    const incomingRows = this.getSqlite().prepare(`
+      SELECT fr.id, fr.sender_id, u.display_name AS sender_name, u.avatar_url AS sender_avatar,
+             fr.receiver_id, ru.display_name AS receiver_name, ru.avatar_url AS receiver_avatar,
+             fr.status, fr.created_at
+      FROM friend_requests fr
+      JOIN users u ON fr.sender_id = u.id
+      JOIN users ru ON fr.receiver_id = ru.id
+      WHERE fr.receiver_id = ? AND fr.status = 'pending'
+      ORDER BY fr.created_at DESC
+    `).all(userId) as any[];
+
+    const outgoingRows = this.getSqlite().prepare(`
+      SELECT fr.id, fr.sender_id, u.display_name AS sender_name, u.avatar_url AS sender_avatar,
+             fr.receiver_id, ru.display_name AS receiver_name, ru.avatar_url AS receiver_avatar,
+             fr.status, fr.created_at
+      FROM friend_requests fr
+      JOIN users u ON fr.sender_id = u.id
+      JOIN users ru ON fr.receiver_id = ru.id
+      WHERE fr.sender_id = ? AND fr.status = 'pending'
+      ORDER BY fr.created_at DESC
+    `).all(userId) as any[];
+
+    const mapRow = (r: any): DbFriendRequest => ({
+      id: r.id,
+      senderId: r.sender_id,
+      senderName: r.sender_name,
+      senderAvatar: r.sender_avatar || null,
+      receiverId: r.receiver_id,
+      receiverName: r.receiver_name,
+      receiverAvatar: r.receiver_avatar || null,
+      status: r.status,
+      createdAt: r.created_at,
+    });
+
+    return {
+      incoming: incomingRows.map(mapRow),
+      outgoing: outgoingRows.map(mapRow),
+    };
+  }
+
+  async respondFriendRequest(requestId: string, userId: string, action: 'accept' | 'decline'): Promise<DbFriendRequest> {
+    const row = this.getSqlite().prepare(`
+      SELECT fr.id, fr.sender_id, u.display_name AS sender_name, u.avatar_url AS sender_avatar,
+             fr.receiver_id, ru.display_name AS receiver_name, ru.avatar_url AS receiver_avatar,
+             fr.status, fr.created_at
+      FROM friend_requests fr
+      JOIN users u ON fr.sender_id = u.id
+      JOIN users ru ON fr.receiver_id = ru.id
+      WHERE fr.id = ?
+    `).get(requestId) as any;
+
+    if (!row) throw new Error('İstek bulunamadı.');
+    if (row.receiver_id !== userId) throw new Error('Bu isteği yanıtlama yetkiniz yok.');
+    if (row.status !== 'pending') throw new Error('Bu istek zaten yanıtlanmış.');
+
+    const newStatus = action === 'accept' ? 'accepted' : 'declined';
+    this.getSqlite().prepare(`
+      UPDATE friend_requests
+      SET status = ?
+      WHERE id = ?
+    `).run(newStatus, requestId);
+
+    if (action === 'accept') {
+      const now = new Date().toISOString();
+      this.getSqlite().prepare(`
+        INSERT OR IGNORE INTO user_friends (user_id, friend_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(row.sender_id, row.receiver_id, now);
+
+      this.getSqlite().prepare(`
+        INSERT OR IGNORE INTO user_friends (user_id, friend_id, created_at)
+        VALUES (?, ?, ?)
+      `).run(row.receiver_id, row.sender_id, now);
+    }
+
+    return {
+      id: row.id,
+      senderId: row.sender_id,
+      senderName: row.sender_name,
+      senderAvatar: row.sender_avatar || null,
+      receiverId: row.receiver_id,
+      receiverName: row.receiver_name,
+      receiverAvatar: row.receiver_avatar || null,
+      status: newStatus,
+      createdAt: row.created_at,
+    };
+  }
+
+  async getFriends(userId: string): Promise<DbUser[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT u.id, u.email, u.first_name, u.last_name, u.display_name, u.avatar_url, u.phone_number,
+             u.is_admin, u.is_moderator, u.onboarded, u.status, u.theme_preference, u.bio, u.is_family,
+             u.group_add_privacy, u.created_at, u.last_active_at
+      FROM user_friends uf
+      JOIN users u ON uf.friend_id = u.id
+      WHERE uf.user_id = ? AND u.status = 'active'
+      ORDER BY u.display_name ASC
+    `).all(userId) as any[];
+
+    return rows.map((r) => {
+      const isAdmin = r.is_admin === 1 || (!!config.INITIAL_ADMIN_EMAIL && r.email.toLowerCase() === config.INITIAL_ADMIN_EMAIL.toLowerCase().trim());
+      const isModerator = !isAdmin && r.is_moderator === 1;
+      return {
+        id: r.id,
+        email: r.email,
+        firstName: r.first_name || null,
+        lastName: r.last_name || null,
+        displayName: r.display_name,
+        avatarUrl: r.avatar_url || null,
+        phoneNumber: r.phone_number || null,
+        isAdmin,
+        isModerator,
+        bio: r.bio || null,
+        isFamily: r.is_family === 1,
+        groupAddPrivacy: r.group_add_privacy || 'everyone',
+        themePreference: r.theme_preference === 'light' ? 'light' : 'dark',
+        onboarded: r.onboarded === 1,
+        status: r.status,
+        createdAt: r.created_at,
+        lastActiveAt: r.last_active_at,
+      };
+    });
+  }
+
+  async removeFriend(userId: string, friendId: string): Promise<boolean> {
+    const res = this.getSqlite().prepare(`
+      DELETE FROM user_friends
+      WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)
+    `).run(userId, friendId, friendId, userId);
+    return res.changes > 0;
+  }
+
+  async areFriends(userId1: string, userId2: string): Promise<boolean> {
+    const row = this.getSqlite().prepare(`
+      SELECT 1 FROM user_friends
+      WHERE user_id = ? AND friend_id = ?
+    `).get(userId1, userId2);
+    return !!row;
+  }
+
+  // Bot Pool & Gemini AI Configuration
+  async addBotPoolToken(tokenEncrypted: string, botName: string, username: string): Promise<DbBotPoolItem> {
+    const id = 'pool_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+
+    this.getSqlite().prepare(`
+      INSERT INTO bot_pool (id, token_encrypted, bot_name, username, is_assigned, created_at)
+      VALUES (?, ?, ?, ?, 0, ?)
+    `).run(id, tokenEncrypted, botName, username, now);
+
+    return {
+      id,
+      tokenEncrypted,
+      botName,
+      username,
+      isAssigned: false,
+      assignedName: null,
+      assignedConversationId: null,
+      createdAt: now,
+    };
+  }
+
+  async getBotPool(): Promise<DbBotPoolItem[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, token_encrypted, bot_name, username, is_assigned, assigned_name, assigned_conversation_id, created_at
+      FROM bot_pool
+      ORDER BY created_at DESC
+    `).all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      tokenEncrypted: r.token_encrypted,
+      botName: r.bot_name,
+      username: r.username,
+      isAssigned: r.is_assigned === 1,
+      assignedName: r.assigned_name || null,
+      assignedConversationId: r.assigned_conversation_id || null,
+      createdAt: r.created_at,
+    }));
+  }
+
+  async removeBotPoolToken(id: string): Promise<boolean> {
+    const res = this.getSqlite().prepare('DELETE FROM bot_pool WHERE id = ?').run(id);
+    return res.changes > 0;
+  }
+
+  async assignBotFromPool(poolId: string, conversationId: string, customName?: string): Promise<DbBotPoolItem | null> {
+    const res = this.getSqlite().prepare(`
+      UPDATE bot_pool
+      SET is_assigned = 1, assigned_conversation_id = ?, assigned_name = ?
+      WHERE id = ?
+    `).run(conversationId, customName || null, poolId);
+
+    if (res.changes === 0) return null;
+    const item = this.getSqlite().prepare('SELECT * FROM bot_pool WHERE id = ?').get(poolId) as any;
+    if (!item) return null;
+
+    return {
+      id: item.id,
+      tokenEncrypted: item.token_encrypted,
+      botName: item.bot_name,
+      username: item.username,
+      isAssigned: item.is_assigned === 1,
+      assignedName: item.assigned_name || null,
+      assignedConversationId: item.assigned_conversation_id || null,
+      createdAt: item.created_at,
+    };
+  }
+
+  async getGeminiConfig(): Promise<DbGeminiConfig | null> {
+    const row = this.getSqlite().prepare(`
+      SELECT api_key_encrypted, is_enabled, default_prompt, model, updated_at
+      FROM gemini_config
+      WHERE id = 'default'
+    `).get() as any;
+
+    if (!row) return null;
+    return {
+      apiKeyEncrypted: row.api_key_encrypted,
+      isEnabled: row.is_enabled === 1,
+      defaultPrompt: row.default_prompt || null,
+      model: row.model || 'gemini-1.5-flash',
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async updateGeminiConfig(configData: { apiKeyEncrypted?: string; isEnabled?: boolean; defaultPrompt?: string | null; model?: string }): Promise<DbGeminiConfig> {
+    const now = new Date().toISOString();
+    const existing = await this.getGeminiConfig();
+
+    const apiKeyEncrypted = configData.apiKeyEncrypted ?? existing?.apiKeyEncrypted ?? '';
+    const isEnabled = configData.isEnabled !== undefined ? (configData.isEnabled ? 1 : 0) : (existing?.isEnabled ? 1 : 0);
+    const defaultPrompt = configData.defaultPrompt !== undefined ? configData.defaultPrompt : (existing?.defaultPrompt ?? null);
+    const model = configData.model ?? existing?.model ?? 'gemini-1.5-flash';
+
+    this.getSqlite().prepare(`
+      INSERT INTO gemini_config (id, api_key_encrypted, is_enabled, default_prompt, model, updated_at)
+      VALUES ('default', ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        api_key_encrypted = excluded.api_key_encrypted,
+        is_enabled = excluded.is_enabled,
+        default_prompt = excluded.default_prompt,
+        model = excluded.model,
+        updated_at = excluded.updated_at
+    `).run(apiKeyEncrypted, isEnabled, defaultPrompt, model, now);
+
+    return {
+      apiKeyEncrypted,
+      isEnabled: isEnabled === 1,
+      defaultPrompt,
+      model,
+      updatedAt: now,
+    };
   }
 }

@@ -41,6 +41,9 @@ router.get('/me', async (req, res) => {
       phoneNumber: userRow.phoneNumber, // Returned only to the user themselves
       isAdmin: userRow.isAdmin,
       isModerator: userRow.isModerator,
+      isFamily: !!userRow.isFamily,
+      groupAddPrivacy: userRow.groupAddPrivacy || 'everyone',
+      bio: userRow.bio || null,
       themePreference: userRow.themePreference || 'dark',
       onboarded: userRow.onboarded,
       status: userRow.status,
@@ -56,6 +59,7 @@ const onboardingSchema = z.object({
   displayName: z.string().min(1, 'Görünen isim gereklidir.').max(50),
   avatarUrl: z.string().optional(),
   phoneNumber: z.string().max(30).optional(),
+  bio: z.string().max(500).optional(),
 });
 
 router.post('/onboarding', async (req, res) => {
@@ -66,7 +70,7 @@ router.post('/onboarding', async (req, res) => {
   }
 
   const user = req.user!;
-  const { firstName, lastName, displayName, avatarUrl, phoneNumber } = parseResult.data;
+  const { firstName, lastName, displayName, avatarUrl, phoneNumber, bio } = parseResult.data;
 
   const completed = await dataStore.completeOnboarding(user.id, {
     firstName: firstName?.trim() || null,
@@ -76,21 +80,14 @@ router.post('/onboarding', async (req, res) => {
     phoneNumber: phoneNumber?.trim() || null,
   });
 
+  if (bio !== undefined) {
+    await dataStore.updateUserProfile(user.id, { bio: bio.trim() || null });
+  }
+
+  const freshUser = await dataStore.getUserById(user.id);
+
   res.json({
-    user: {
-      id: completed.id,
-      email: completed.email,
-      firstName: completed.firstName,
-      lastName: completed.lastName,
-      displayName: completed.displayName,
-      avatarUrl: completed.avatarUrl,
-      phoneNumber: completed.phoneNumber,
-      isAdmin: completed.isAdmin,
-      isModerator: completed.isModerator,
-      themePreference: completed.themePreference || 'dark',
-      onboarded: completed.onboarded,
-      status: completed.status,
-    },
+    user: freshUser,
   });
 });
 
@@ -102,6 +99,8 @@ const updateProfileSchema = z.object({
   avatarUrl: z.string().optional(),
   phoneNumber: z.string().max(30).optional(),
   themePreference: z.enum(['dark', 'light']).optional(),
+  bio: z.string().max(500).optional().nullable(),
+  groupAddPrivacy: z.enum(['everyone', 'friends', 'invite_only']).optional(),
 });
 
 router.patch('/me', async (req, res) => {
@@ -112,7 +111,7 @@ router.patch('/me', async (req, res) => {
   }
 
   const user = req.user!;
-  const { firstName, lastName, displayName, avatarUrl, phoneNumber, themePreference } = parseResult.data;
+  const { firstName, lastName, displayName, avatarUrl, phoneNumber, themePreference, bio, groupAddPrivacy } = parseResult.data;
 
   const updated = await dataStore.updateUserProfile(user.id, {
     firstName: firstName?.trim(),
@@ -121,6 +120,8 @@ router.patch('/me', async (req, res) => {
     avatarUrl: avatarUrl !== undefined ? (avatarUrl.trim() || null) : undefined,
     phoneNumber: phoneNumber !== undefined ? (phoneNumber.trim() || null) : undefined,
     themePreference,
+    bio: bio !== undefined ? (bio?.trim() || null) : undefined,
+    groupAddPrivacy,
   });
 
   if (!updated) {
@@ -139,6 +140,9 @@ router.patch('/me', async (req, res) => {
       phoneNumber: updated.phoneNumber,
       isAdmin: updated.isAdmin,
       isModerator: updated.isModerator,
+      isFamily: !!updated.isFamily,
+      groupAddPrivacy: updated.groupAddPrivacy || 'everyone',
+      bio: updated.bio || null,
       themePreference: updated.themePreference || 'dark',
       onboarded: updated.onboarded,
     },
@@ -204,6 +208,32 @@ router.get('/', async (req, res) => {
       avatarUrl: u.avatarUrl,
       isAdmin: u.isAdmin,
     })),
+  });
+});
+
+// GET /api/users/:id - get another user's public profile (bio, displayName, avatar, roles)
+router.get('/:id', async (req, res) => {
+  const targetId = req.params.id;
+  const user = await dataStore.getUserById(targetId);
+
+  if (!user || user.status === 'blocked') {
+    res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Kullanıcı bulunamadı.' });
+    return;
+  }
+
+  res.json({
+    user: {
+      id: user.id,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio || null,
+      isAdmin: user.isAdmin,
+      isModerator: user.isModerator,
+      isFamily: !!user.isFamily,
+      groupAddPrivacy: user.groupAddPrivacy || 'everyone',
+      createdAt: user.createdAt,
+      lastActiveAt: user.lastActiveAt,
+    },
   });
 });
 

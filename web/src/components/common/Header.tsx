@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle, Mail } from 'lucide-react';
+import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle, Mail, Users, UserPlus } from 'lucide-react';
 import { ProfileEditModal } from './ProfileEditModal';
 import { SearchModal } from '../chat/SearchModal';
 import { SupportModal } from './SupportModal';
 import { InvitationsModal } from '../chat/InvitationsModal';
+import { FriendsModal } from '../chat/FriendsModal';
 import { api } from '../../services/api';
 
 interface HeaderProps {
@@ -29,13 +30,19 @@ export const Header: React.FC<HeaderProps> = ({
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
   const [isInvitationsOpen, setIsInvitationsOpen] = useState(false);
   const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
+  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
+  const [pendingFriendRequestsCount, setPendingFriendRequestsCount] = useState(0);
 
   const loadInvitationsCount = async () => {
     if (!user) return;
     try {
-      const res = await api.getMyInvitations();
-      const count = res.invitations?.filter((i) => i.status === 'pending').length || 0;
+      const [invRes, friendsRes] = await Promise.all([
+        api.getMyInvitations().catch(() => ({ invitations: [] })),
+        api.getFriendRequests().catch(() => ({ incoming: [] })),
+      ]);
+      const count = invRes.invitations?.filter((i: any) => i.status === 'pending').length || 0;
       setPendingInvitationsCount(count);
+      setPendingFriendRequestsCount(friendsRes.incoming?.length || 0);
     } catch {
       // Ignore background error
     }
@@ -107,6 +114,22 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Search className="w-3.5 h-3.5 text-purple-400" />
               <span className="hidden md:inline">Ara...</span>
+            </button>
+          )}
+
+          {/* Friends & Connections Button */}
+          {user && (
+            <button
+              onClick={() => setIsFriendsOpen(true)}
+              className="relative p-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-slate-300 hover:text-purple-300 transition-colors"
+              title="Arkadaşlar ve Bağlantılar"
+            >
+              <Users className="w-4 h-4 text-purple-400" />
+              {pendingFriendRequestsCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-pink-600 text-white text-[9px] font-bold flex items-center justify-center animate-pulse shadow-sm">
+                  {pendingFriendRequestsCount}
+                </span>
+              )}
             </button>
           )}
 
@@ -249,6 +272,20 @@ export const Header: React.FC<HeaderProps> = ({
           setIsInvitationsOpen(false);
           loadInvitationsCount();
           onSelectConversation?.(targetId);
+        }}
+      />
+
+      {/* Friends Modal */}
+      <FriendsModal
+        isOpen={isFriendsOpen}
+        onClose={() => {
+          setIsFriendsOpen(false);
+          loadInvitationsCount();
+        }}
+        onStartDirectChat={(targetUser) => {
+          if (targetUser.email && onStartDirectChat) {
+            onStartDirectChat(targetUser.email);
+          }
         }}
       />
     </>

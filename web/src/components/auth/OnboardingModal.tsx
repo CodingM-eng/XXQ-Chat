@@ -21,6 +21,10 @@ export const OnboardingModal: React.FC = () => {
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [selectedAvatar, setSelectedAvatar] = useState<string>(user?.avatarUrl || PRESET_AVATARS[0]);
   const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || '');
+  const [bio, setBio] = useState(user?.bio || '');
+  const [groupAddPrivacy, setGroupAddPrivacy] = useState<'everyone' | 'friends' | 'invite_only'>(
+    user?.groupAddPrivacy || 'everyone'
+  );
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
   const [useCustomUrl, setUseCustomUrl] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,6 +49,11 @@ export const OnboardingModal: React.FC = () => {
         displayName: displayName.trim(),
         avatarUrl: finalAvatar || undefined,
         phoneNumber: phoneNumber.trim() || undefined,
+      });
+
+      await api.updateMe({
+        bio: bio.trim() || null,
+        groupAddPrivacy,
       });
 
       await refreshSession();
@@ -187,6 +196,40 @@ export const OnboardingModal: React.FC = () => {
             </div>
           </div>
 
+          {/* Bio / Hakkımda */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-300">
+                Hakkımda <span className="text-slate-500 font-normal">(İsteğe Bağlı)</span>
+              </label>
+              <span className="text-[10px] text-slate-500">{bio.length}/500</span>
+            </div>
+            <textarea
+              maxLength={500}
+              rows={3}
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              placeholder="Kendinizden bahsedin (hobiler, ilgi alanları, durum vb.)..."
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:border-purple-500 transition-colors resize-none"
+            />
+          </div>
+
+          {/* Group Add Privacy */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Beni Gruplara Kimler Ekleyebilir?
+            </label>
+            <select
+              value={groupAddPrivacy}
+              onChange={(e) => setGroupAddPrivacy(e.target.value as any)}
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500 transition-colors"
+            >
+              <option value="everyone">Herkes doğrudan ekleyebilir</option>
+              <option value="friends">Yalnızca Arkadaşlarım ekleyebilir</option>
+              <option value="invite_only">Yalnızca Davet Bağlantısıyla katılırım</option>
+            </select>
+          </div>
+
           {/* Private Phone Number */}
           <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
             <div className="flex items-center gap-2 mb-1.5">
@@ -206,6 +249,17 @@ export const OnboardingModal: React.FC = () => {
               <Shield className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
               <span>Gizlilik Güvencesi: Numaranız diğer kullanıcılara asla gösterilmez.</span>
             </div>
+          </div>
+
+          {/* Community Rules & Etiquette Card */}
+          <div className="p-3.5 rounded-2xl bg-purple-950/20 border border-purple-800/40 text-xs text-purple-200/90 space-y-1">
+            <div className="flex items-center gap-1.5 font-bold text-purple-300">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>XXQ Chat Topluluk İlkeleri</span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Topluluk Kuralları: Saygılı iletişim, gizliliğe özen, spam veya rahatsız edici içerik paylaşmama ilkesine bağlı kalmayı kabul etmiş sayılırsınız.
+            </p>
           </div>
 
           {/* Submit */}

@@ -14,6 +14,7 @@ import { searchRouter } from './routes/search.js';
 import { supportRouter } from './routes/support.js';
 import { serversRouter } from './routes/servers.js';
 import { invitationsRouter } from './routes/invitations.js';
+import { friendsRouter } from './routes/friends.js';
 import { isAllowedOrigin } from './utils/cors.js';
 
 // Asynchronously initialize database
@@ -112,6 +113,7 @@ app.use('/api/users', usersRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/servers', serversRouter);
 app.use('/api/invitations', invitationsRouter);
+app.use('/api/friends', friendsRouter);
 app.use('/api/drive', driveRouter);
 app.use('/api/telegram', telegramRouter);
 app.use('/api/search', searchRouter);
