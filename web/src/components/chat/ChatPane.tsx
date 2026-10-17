@@ -24,6 +24,9 @@ import {
   Image as ImageIcon,
   Monitor,
   Camera,
+  Phone,
+  Video,
+  ChevronDown,
 } from 'lucide-react';
 import { ScreenShareModal } from './ScreenShareModal';
 import { GroupAvatarModal } from './GroupAvatarModal';
@@ -45,6 +48,7 @@ interface ChatPaneProps {
   onBackMobile: () => void;
   typingUser: string | null;
   onRefreshConversations?: () => void;
+  onStartCall?: (mode: 'audio' | 'video' | 'screen') => void;
 }
 
 export const ChatPane: React.FC<ChatPaneProps> = ({
@@ -58,6 +62,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   onBackMobile,
   typingUser,
   onRefreshConversations,
+  onStartCall,
 }) => {
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
@@ -68,6 +73,8 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [showGroupMembersModal, setShowGroupMembersModal] = useState(false);
   const [isScreenShareOpen, setIsScreenShareOpen] = useState(false);
   const [isGroupAvatarOpen, setIsGroupAvatarOpen] = useState(false);
+  const [isCallMenuOpen, setIsCallMenuOpen] = useState(false);
+  const callMenuRef = useRef<HTMLDivElement>(null);
 
   // File upload state
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -82,6 +89,21 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typingUser]);
+
+  // Close call dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (callMenuRef.current && !callMenuRef.current.contains(e.target as Node)) {
+        setIsCallMenuOpen(false);
+      }
+    };
+    if (isCallMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isCallMenuOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -238,39 +260,126 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
 
         {/* Header Actions */}
         <div className="flex items-center gap-2">
-          {/* Screen Share Button */}
-          <button
-            type="button"
-            onClick={() => setIsScreenShareOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
-            title="Canlı Ekran Paylaşımı"
-          >
-            <Monitor className="w-4 h-4 text-purple-400" />
-            <span className="hidden sm:inline">Ekran Paylaş</span>
-          </button>
+          {!isGroup ? (
+            <div className="relative" ref={callMenuRef}>
+              <div className="flex items-center bg-[#1c182b] border border-[#2e2648] rounded-xl overflow-hidden p-0.5 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => onStartCall?.('audio')}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-[#28223d] text-xs font-semibold text-slate-300 hover:text-purple-300 rounded-lg transition-colors"
+                  title="Sesli Arama"
+                >
+                  <Phone className="w-4 h-4 text-purple-400" />
+                  <span className="hidden sm:inline">Sesli</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onStartCall?.('video')}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-[#28223d] text-xs font-semibold text-slate-300 hover:text-purple-300 rounded-lg transition-colors"
+                  title="Görüntülü Arama"
+                >
+                  <Video className="w-4 h-4 text-purple-400" />
+                  <span className="hidden sm:inline">Görüntülü</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCallMenuOpen(!isCallMenuOpen)}
+                  className="px-1.5 py-1.5 hover:bg-[#28223d] text-slate-400 hover:text-white rounded-lg transition-colors"
+                  title="Arama Seçenekleri"
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isCallMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
 
-          {/* Group Logo Button for Groups */}
-          {isGroup && (
-            <button
-              type="button"
-              onClick={() => setIsGroupAvatarOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
-              title="Grup Logosunu Değiştir"
-            >
-              <Camera className="w-4 h-4 text-purple-400" />
-              <span className="hidden sm:inline">Grup Logosu</span>
-            </button>
-          )}
+              {/* Call Options Dropdown (1. Sesli arama, 2. Görüntülü arama, 3. Ekran paylaşımı) */}
+              {isCallMenuOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-[#151221] border border-[#2b2444] rounded-2xl shadow-2xl z-30 p-1.5 space-y-1 animate-fade-in backdrop-blur-md">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCallMenuOpen(false);
+                      onStartCall?.('audio');
+                    }}
+                    className="w-full flex items-start gap-3 p-2.5 rounded-xl hover:bg-[#201a35] text-left transition-colors group"
+                  >
+                    <div className="p-2 rounded-lg bg-purple-950/80 border border-purple-800 text-purple-400 group-hover:text-purple-300">
+                      <Phone className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-200 group-hover:text-white">1. Sesli arama</div>
+                      <div className="text-[11px] text-slate-400">Yalnızca sesli iletişim</div>
+                    </div>
+                  </button>
 
-          {isGroup && (
-            <button
-              type="button"
-              onClick={() => setShowGroupMembersModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-white transition-colors"
-            >
-              <Users className="w-4 h-4 text-purple-400" />
-              <span className="hidden sm:inline">Üyeler</span>
-            </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCallMenuOpen(false);
+                      onStartCall?.('video');
+                    }}
+                    className="w-full flex items-start gap-3 p-2.5 rounded-xl hover:bg-[#201a35] text-left transition-colors group"
+                  >
+                    <div className="p-2 rounded-lg bg-blue-950/80 border border-blue-800 text-blue-400 group-hover:text-blue-300">
+                      <Video className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-200 group-hover:text-white">2. Görüntülü arama</div>
+                      <div className="text-[11px] text-slate-400">Kamera ve mikrofon ile görüşme</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCallMenuOpen(false);
+                      onStartCall?.('screen');
+                    }}
+                    className="w-full flex items-start gap-3 p-2.5 rounded-xl hover:bg-[#201a35] text-left transition-colors group"
+                  >
+                    <div className="p-2 rounded-lg bg-emerald-950/80 border border-emerald-800 text-emerald-400 group-hover:text-emerald-300">
+                      <Monitor className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-200 group-hover:text-white">3. Ekran paylaşımı</div>
+                      <div className="text-[11px] text-slate-400">Ekranınızı paylaşarak arama başlatın</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Screen Share Button for Group */}
+              <button
+                type="button"
+                onClick={() => setIsScreenShareOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
+                title="Canlı Ekran Paylaşımı"
+              >
+                <Monitor className="w-4 h-4 text-purple-400" />
+                <span className="hidden sm:inline">Ekran Paylaş</span>
+              </button>
+
+              {/* Group Logo Button for Groups */}
+              <button
+                type="button"
+                onClick={() => setIsGroupAvatarOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-purple-300 transition-colors"
+                title="Grup Logosunu Değiştir"
+              >
+                <Camera className="w-4 h-4 text-purple-400" />
+                <span className="hidden sm:inline">Grup Logosu</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowGroupMembersModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c182b] hover:bg-[#26203b] border border-[#2e2648] text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+              >
+                <Users className="w-4 h-4 text-purple-400" />
+                <span className="hidden sm:inline">Üyeler</span>
+              </button>
+            </>
           )}
         </div>
       </div>

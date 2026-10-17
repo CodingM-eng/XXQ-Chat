@@ -98,6 +98,38 @@ This deployment uses strictly zero-cost tiers:
 
 ---
 
+## 📞 Birebir Sesli, Görüntülü ve Ekran Paylaşımlı Aramalar (WebRTC)
+
+XXQ Chat, birebir sohbetlerde katılımcıların doğrudan tarayıcı üzerinden yüksek kaliteli ve kesintisiz iletişim kurabilmesi için üç farklı arama modunu destekler:
+
+1. 📞 **Sesli Arama**: Yalnızca mikrofon üzerinden sesli iletişim. Düşük bant genişliği tüketir.
+2. 📹 **Görüntülü Arama**: Ön/arka kamera ve mikrofon ile gerçek zamanlı görüntülü görüşme.
+3. 🖥️ **Ekran Paylaşımı**: Doğrudan ekran paylaşılarak başlatılan arama; sunumlar, kod incelemeleri ve teknik destek için idealdir.
+
+### Görüşme Özellikleri ve Kontrolleri
+- **Gerçek Zamanlı Çağrı Bildirimi**: Arayan kişinin adı, avatarı ve arama türü (Sesli / Görüntülü / Ekran Paylaşımı) anlık olarak ekranda belirir.
+- **Çağrı Yönetimi**: "Yanıtla", "Reddet" ve aranan kişi meşgulken otomatik "Meşgul" bildirimleri.
+- **Dinamik Medya Değişimi**: Aktif görüntülü arama esnasında aramayı sonlandırmadan ekran paylaşımına geçilebilir (`replaceTrack`) ve istenildiğinde tekrar kameraya dönülebilir.
+- **Aktif Kontroller**: Mikrofon susturma/açma, kamera açma/kapatma, tam ekran modu ve canlı görüşme süresi (MM:SS) sayacı.
+- **Otomatik Temizlik**: Taraflardan biri görüşmeyi kapattığında veya bağlantı koptuğunda kamera, mikrofon ve WebRTC bağlantıları (`RTCPeerConnection`) bellek sızıntısı olmadan kapatılır.
+
+### STUN / TURN Ağ Mimarisi ve NAT Bilgilendirmesi
+- **Sıfır Maliyetli STUN Altyapısı**: Aramalar varsayılan olarak Google'ın genel STUN sunucuları (`stun:stun.l.google.com:19302`) üzerinden çalışır. İlave hiçbir ücretli sunucu gerektirmez.
+- **Doğrudan P2P Akışı**: Ev, mobil (4G/5G) ve standart NAT ağlarında ses ve görüntü doğrudan kullanıcılar arasında (Peer-to-Peer) aktarılır, sunucuya yük bindirmez.
+- **Simetrik NAT Sınırlaması**: Katı kurumsal güvenlik duvarlarında (Symmetric NAT) doğrudan UDP delme engellenebilir. Bu tür kısıtlı ağlarda röle gerekirse, isteğe bağlı olarak `VITE_TURN_CONFIG` ortam değişkeni ile harici bir TURN sunucusu tanımlanabilir.
+
+---
+
+## 🚀 Canlı Mesajlaşma ve Anlık Teslimat Garantisi
+
+Mesaj teslimatının kesintisiz ve güvenli gerçekleşmesi için uygulanan çekirdek mimari ilkeler:
+1. **İndeks Bağımsız Çift Mesaj Doğrulaması**: `clientMessageId` tekilleştirmesi sohbet düzeyinde (`conversations/{id}/messages`) doğrudan tek alanlı dizinle sorgulanır. Firestore konsolunda manuel bileşik dizin açma zorunluluğu ortadan kaldırılmıştır.
+2. **Önce Veritabanı, Sonra Yayın**: Mesajlar Socket.IO üzerinden yayınlanmadan önce Firestore/SQLite veritabanına yazılır; veritabanı kaydı onaylanmadan odaya yayın yapılmaz.
+3. **Yeniden Bağlantı ve Uyku Kurtarma**: Render Free sunucusu uykudan uyandığında veya internet kesilip geri geldiğinde istemci otomatik olarak `conversation:join` yayını yapar ve okunmamış/yeni mesajları senkronize eder.
+4. **Akıllı Backend Tespiti**: Render statik sitesi üzerinde `VITE_API_URL` build zamanında tanımlanmamış olsa dahi `xxq-chat-backend.onrender.com` otomatik olarak hedeflenir.
+
+---
+
 ## ⚙️ Initial Configuration & Deployment
 
 ### Step 1: Firebase Project Setup (Spark Plan)

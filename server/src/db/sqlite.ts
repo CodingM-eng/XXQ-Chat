@@ -1185,14 +1185,16 @@ export class SqliteStore implements DataStore {
     });
   }
 
-  async findMessageByClientId(clientMessageId: string, senderId: string): Promise<DbMessage | null> {
-    const row = this.getSqlite()
-      .prepare(`
-        SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
-        FROM messages
-        WHERE client_message_id = ? AND sender_id = ?
-      `)
-      .get(clientMessageId, senderId) as any;
+  async findMessageByClientId(clientMessageId: string, senderId: string, conversationId?: string): Promise<DbMessage | null> {
+    const query = conversationId
+      ? `SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
+         FROM messages
+         WHERE client_message_id = ? AND sender_id = ? AND conversation_id = ?`
+      : `SELECT id, conversation_id, sender_id, sender_name, sender_avatar, client_message_id, content, reply_to, forwarded_from, attachments, status, created_at
+         FROM messages
+         WHERE client_message_id = ? AND sender_id = ?`;
+    const params = conversationId ? [clientMessageId, senderId, conversationId] : [clientMessageId, senderId];
+    const row = this.getSqlite().prepare(query).get(...params) as any;
 
     if (!row) return null;
 

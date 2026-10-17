@@ -441,7 +441,7 @@ router.post('/:id/messages', async (req, res) => {
 
   // Deduplication check
   if (clientMessageId) {
-    const existing = await dataStore.findMessageByClientId(clientMessageId, user.id);
+    const existing = await dataStore.findMessageByClientId(clientMessageId, user.id, convId);
     if (existing) {
       res.json({ message: formatMessage(existing), deduplicated: true });
       return;

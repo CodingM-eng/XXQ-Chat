@@ -14,6 +14,8 @@ import { AccessRestricted } from './components/auth/AccessRestricted';
 import { OnboardingModal } from './components/auth/OnboardingModal';
 import { BrandLogo } from './components/common/BrandLogo';
 import { Loader2 } from 'lucide-react';
+import { IncomingCallModal, IncomingCallData } from './components/chat/IncomingCallModal';
+import { ActiveCallModal, ActiveCallState } from './components/chat/ActiveCallModal';
 
 export const AppContent: React.FC = () => {
   const { user, whitelist, isLoading, refreshSession } = useAuth();
@@ -24,6 +26,14 @@ export const AppContent: React.FC = () => {
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
+
+  // Call states
+  const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
+  const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
+  const activeCallRef = useRef<ActiveCallState | null>(null);
+  useEffect(() => {
+    activeCallRef.current = activeCall;
+  }, [activeCall]);
 
   // Keep a ref to the selected conversation so socket listeners always see the current ID
   const selectedConvIdRef = useRef<string | null>(null);
@@ -103,8 +113,31 @@ export const AppContent: React.FC = () => {
       });
     });
 
-    socket.on('connect', () => setIsConnected(true));
+    socket.on('connect', () => {
+      setIsConnected(true);
+      if (selectedConvIdRef.current) {
+        socket.emit('conversation:join', { conversationId: selectedConvIdRef.current });
+        loadMessages(selectedConvIdRef.current);
+      }
+    });
     socket.on('disconnect', () => setIsConnected(false));
+
+    socket.on('call:incoming', (data: IncomingCallData) => {
+      if (activeCallRef.current) {
+        socket.emit('call:reject', {
+          conversationId: data.conversationId,
+          callerId: data.callerId,
+          reason: 'busy',
+        });
+        return;
+      }
+      setIncomingCall(data);
+    });
+
+    socket.on('call:ended', () => {
+      setIncomingCall(null);
+      setActiveCall(null);
+    });
 
     socket.on('typing:status', (data: { conversationId: string; userName: string; isTyping: boolean }) => {
       if (data.conversationId === selectedConvIdRef.current) {
@@ -158,6 +191,11 @@ export const AppContent: React.FC = () => {
     if (selectedConversationId) {
       loadMessages(selectedConversationId);
       setTypingUser(null);
+
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        socket.emit('conversation:join', { conversationId: selectedConversationId });
+      }
 
       // Reset unread count locally in conversation list
       setConversations((prev) =>
@@ -297,6 +335,51 @@ export const AppContent: React.FC = () => {
     }
   };
 
+  // Call Handlers
+  const handleStartCall = (mode: 'audio' | 'video' | 'screen') => {
+    const selectedConv = conversations.find((c) => c.id === selectedConversationId);
+    if (!selectedConv || selectedConv.type === 'group') return;
+    const peer = selectedConv.peer || selectedConv.participants?.find((p) => p.id !== user?.id);
+    if (!peer) return;
+
+    setActiveCall({
+      conversationId: selectedConv.id,
+      targetUser: {
+        id: peer.id,
+        displayName: peer.displayName || selectedConv.name,
+        avatarUrl: peer.avatarUrl,
+      },
+      mode,
+      isInitiator: true,
+    });
+  };
+
+  const handleAcceptIncomingCall = (call: IncomingCallData) => {
+    setIncomingCall(null);
+    setActiveCall({
+      conversationId: call.conversationId,
+      targetUser: {
+        id: call.callerId,
+        displayName: call.callerName,
+        avatarUrl: call.callerAvatar,
+      },
+      mode: call.mode,
+      isInitiator: false,
+    });
+  };
+
+  const handleRejectIncomingCall = (call: IncomingCallData) => {
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('call:reject', {
+        conversationId: call.conversationId,
+        callerId: call.callerId,
+        reason: 'declined',
+      });
+    }
+    setIncomingCall(null);
+  };
+
   // 1. Loading screen
   if (isLoading) {
     return (
@@ -378,6 +461,7 @@ export const AppContent: React.FC = () => {
                 onBackMobile={() => setSelectedConversationId(null)}
                 typingUser={typingUser}
                 onRefreshConversations={loadConversations}
+                onStartCall={handleStartCall}
               />
             ) : (
               <EmptyState onOpenNewChat={() => setIsNewChatOpen(true)} />
@@ -394,6 +478,20 @@ export const AppContent: React.FC = () => {
           loadConversations();
           setSelectedConversationId(id);
         }}
+      />
+
+      {/* Incoming Call Overlay */}
+      <IncomingCallModal
+        incomingCall={incomingCall}
+        onAccept={handleAcceptIncomingCall}
+        onReject={handleRejectIncomingCall}
+      />
+
+      {/* Active Call Modal */}
+      <ActiveCallModal
+        callState={activeCall}
+        currentUser={user}
+        onEndCall={() => setActiveCall(null)}
       />
     </div>
   );

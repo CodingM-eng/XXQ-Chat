@@ -14,6 +14,8 @@ export function getSocketServer(): Server | null {
 
 // Track active connections per user
 const activeUsers = new Map<string, Set<string>>();
+// Track active 1-to-1 WebRTC calls per user
+const activeCalls = new Map<string, { conversationId: string; peerId: string }>();
 
 export async function onWhitelistRevoked(email: string): Promise<void> {
   if (!ioInstance) return;
@@ -131,6 +133,28 @@ export function setupSocketServer(httpServer: HttpServer): Server {
       console.error('Failed to join user conversations on socket connect:', err);
     }
 
+    // Explicitly join a conversation room
+    socket.on('conversation:join', async (data: { conversationId: string }, callback) => {
+      try {
+        const { conversationId } = data || {};
+        if (!conversationId) {
+          if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
+          return;
+        }
+
+        const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+        if (!isParticipant) {
+          if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
+          return;
+        }
+
+        socket.join(`conversation:${conversationId}`);
+        if (typeof callback === 'function') callback({ success: true, conversationId });
+      } catch (err: any) {
+        if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+      }
+    });
+
     // Handle sending a message
     socket.on(
       'message:send',
@@ -184,7 +208,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
 
           // Deduplication check
           if (clientMessageId) {
-            const existing = await dataStore.findMessageByClientId(clientMessageId, user.id);
+            const existing = await dataStore.findMessageByClientId(clientMessageId, user.id, conversationId);
             if (existing) {
               const formattedExisting = formatMessage(existing);
               if (typeof callback === 'function') callback({ success: true, message: formattedExisting, deduplicated: true });
@@ -359,7 +383,237 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     });
 
     // =========================================================================
-    // WebRTC Screen Sharing Signaling Handlers
+    // One-to-One Call Signaling (Audio, Video, Screen Sharing)
+    // =========================================================================
+    socket.on(
+      'call:initiate',
+      async (
+        data: {
+          conversationId: string;
+          mode: 'audio' | 'video' | 'screen';
+          targetUserId?: string;
+        },
+        callback
+      ) => {
+        try {
+          const { conversationId, mode, targetUserId } = data || {};
+          if (!conversationId || !mode || !['audio', 'video', 'screen'].includes(mode)) {
+            if (typeof callback === 'function') callback({ error: 'INVALID_DATA', message: 'Geçersiz arama parametreleri.' });
+            return;
+          }
+
+          // Authorize: caller must be a conversation participant
+          const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+          if (!isParticipant) {
+            if (typeof callback === 'function') callback({ error: 'FORBIDDEN', message: 'Bu sohbette arama yapma yetkiniz yok.' });
+            return;
+          }
+
+          // Determine recipient
+          const participantIds = await dataStore.getConversationParticipantIds(conversationId);
+          let peerId = targetUserId;
+          if (!peerId) {
+            peerId = participantIds.find((id) => id !== user.id);
+          }
+
+          if (!peerId) {
+            if (typeof callback === 'function') callback({ error: 'NO_PEER', message: 'Arama yapılacak katılımcı bulunamadı.' });
+            return;
+          }
+
+          // Check if peer is online
+          const isPeerOnline = activeUsers.has(peerId) && activeUsers.get(peerId)!.size > 0;
+          if (!isPeerOnline) {
+            if (typeof callback === 'function') {
+              callback({ error: 'USER_OFFLINE', message: 'Kullanıcı şu anda çevrimdışı.' });
+            }
+            return;
+          }
+
+          // Check if peer is already in an active call
+          if (activeCalls.has(peerId)) {
+            if (typeof callback === 'function') {
+              callback({ error: 'USER_BUSY', message: 'Kullanıcı şu anda başka bir aramada meşgul.' });
+            }
+            return;
+          }
+
+          // Record call state
+          activeCalls.set(user.id, { conversationId, peerId });
+
+          // Emit incoming call to the recipient's user room
+          io.to(`user:${peerId}`).emit('call:incoming', {
+            conversationId,
+            callerId: user.id,
+            callerName: user.displayName,
+            callerAvatar: user.avatarUrl || null,
+            mode,
+            createdAt: new Date().toISOString(),
+          });
+
+          if (typeof callback === 'function') {
+            callback({ success: true, targetUserId: peerId });
+          }
+        } catch (err: any) {
+          console.error('Socket call:initiate error:', err);
+          if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+        }
+      }
+    );
+
+    socket.on(
+      'call:accept',
+      async (
+        data: {
+          conversationId: string;
+          callerId: string;
+          mode: 'audio' | 'video' | 'screen';
+        },
+        callback
+      ) => {
+        try {
+          const { conversationId, callerId, mode } = data || {};
+          if (!conversationId || !callerId) {
+            if (typeof callback === 'function') callback({ error: 'INVALID_DATA' });
+            return;
+          }
+
+          const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+          if (!isParticipant) {
+            if (typeof callback === 'function') callback({ error: 'FORBIDDEN' });
+            return;
+          }
+
+          activeCalls.set(user.id, { conversationId, peerId: callerId });
+          activeCalls.set(callerId, { conversationId, peerId: user.id });
+
+          // Notify caller that call was accepted
+          io.to(`user:${callerId}`).emit('call:accepted', {
+            conversationId,
+            responderId: user.id,
+            responderName: user.displayName,
+            responderAvatar: user.avatarUrl || null,
+            mode,
+          });
+
+          if (typeof callback === 'function') callback({ success: true });
+        } catch (err: any) {
+          console.error('Socket call:accept error:', err);
+          if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+        }
+      }
+    );
+
+    socket.on(
+      'call:reject',
+      async (
+        data: {
+          conversationId: string;
+          callerId: string;
+          reason?: string;
+        },
+        callback
+      ) => {
+        try {
+          const { conversationId, callerId, reason } = data || {};
+          if (!conversationId || !callerId) return;
+
+          activeCalls.delete(user.id);
+          activeCalls.delete(callerId);
+
+          io.to(`user:${callerId}`).emit('call:rejected', {
+            conversationId,
+            responderId: user.id,
+            reason: reason || 'declined',
+          });
+
+          if (typeof callback === 'function') callback({ success: true });
+        } catch (err: any) {
+          console.error('Socket call:reject error:', err);
+          if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+        }
+      }
+    );
+
+    socket.on(
+      'call:end',
+      async (
+        data: {
+          conversationId: string;
+          targetUserId?: string;
+        },
+        callback
+      ) => {
+        try {
+          const { conversationId, targetUserId } = data || {};
+          const currentCall = activeCalls.get(user.id);
+          const peerId = targetUserId || currentCall?.peerId;
+
+          activeCalls.delete(user.id);
+          if (peerId) {
+            activeCalls.delete(peerId);
+            io.to(`user:${peerId}`).emit('call:ended', {
+              conversationId,
+              senderId: user.id,
+              reason: 'ended_by_user',
+            });
+          }
+
+          if (conversationId) {
+            socket.to(`conversation:${conversationId}`).emit('call:ended', {
+              conversationId,
+              senderId: user.id,
+              reason: 'ended_by_user',
+            });
+          }
+
+          if (typeof callback === 'function') callback({ success: true });
+        } catch (err: any) {
+          console.error('Socket call:end error:', err);
+          if (typeof callback === 'function') callback({ error: 'SERVER_ERROR', message: err.message });
+        }
+      }
+    );
+
+    socket.on(
+      'call:mode-change',
+      async (data: {
+        conversationId: string;
+        targetUserId?: string;
+        mode: 'audio' | 'video' | 'screen';
+        isScreenSharing?: boolean;
+        isVideoMuted?: boolean;
+        isAudioMuted?: boolean;
+      }) => {
+        try {
+          const { conversationId, targetUserId, mode, isScreenSharing, isVideoMuted, isAudioMuted } = data || {};
+          if (!conversationId) return;
+
+          const isParticipant = await dataStore.isConversationParticipant(conversationId, user.id);
+          if (!isParticipant) return;
+
+          const payload = {
+            conversationId,
+            senderId: user.id,
+            mode,
+            isScreenSharing: !!isScreenSharing,
+            isVideoMuted: !!isVideoMuted,
+            isAudioMuted: !!isAudioMuted,
+          };
+
+          if (targetUserId) {
+            io.to(`user:${targetUserId}`).emit('call:mode-changed', payload);
+          } else {
+            socket.to(`conversation:${conversationId}`).emit('call:mode-changed', payload);
+          }
+        } catch (err) {
+          console.error('Socket call:mode-change error:', err);
+        }
+      }
+    );
+
+    // =========================================================================
+    // WebRTC Screen Sharing & Call Media Signaling Handlers
     // =========================================================================
     socket.on('screen:start', async (data: { conversationId: string }, callback) => {
       try {
@@ -472,6 +726,20 @@ export function setupSocketServer(httpServer: HttpServer): Server {
 
     // Disconnect
     socket.on('disconnect', async () => {
+      // Clean up any active call that this user was engaged in
+      if (activeCalls.has(user.id)) {
+        const callInfo = activeCalls.get(user.id);
+        activeCalls.delete(user.id);
+        if (callInfo) {
+          activeCalls.delete(callInfo.peerId);
+          io.to(`user:${callInfo.peerId}`).emit('call:ended', {
+            conversationId: callInfo.conversationId,
+            senderId: user.id,
+            reason: 'disconnected',
+          });
+        }
+      }
+
       const userSockets = activeUsers.get(user.id);
       if (userSockets) {
         userSockets.delete(socket.id);

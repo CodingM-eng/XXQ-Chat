@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { api } from './api';
+import { api, getBackendBaseUrl } from './api';
 
 let socket: Socket | null = null;
 
@@ -9,7 +9,7 @@ export function getSocket(): Socket | null {
 
 export function connectSocket(): Socket {
   const token = api.getToken();
-  const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
+  const socketUrl = getBackendBaseUrl();
 
   // If already connected with valid socket, reuse it
   if (socket && socket.connected) {

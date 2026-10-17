@@ -852,32 +852,69 @@ export class FirestoreStore implements DataStore {
     return messages;
   }
 
-  async findMessageByClientId(clientMessageId: string, senderId: string): Promise<DbMessage | null> {
-    const snap = await this.getFirestore()
-      .collectionGroup('messages')
-      .where('clientMessageId', '==', clientMessageId)
-      .where('senderId', '==', senderId)
-      .limit(1)
-      .get();
+  async findMessageByClientId(clientMessageId: string, senderId: string, conversationId?: string): Promise<DbMessage | null> {
+    try {
+      if (conversationId) {
+        const snap = await this.getFirestore()
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .where('clientMessageId', '==', clientMessageId)
+          .limit(1)
+          .get();
 
-    if (snap.empty) return null;
-    const doc = snap.docs[0];
-    const d = doc.data();
-    return {
-      id: d.id || doc.id,
-      conversationId: d.conversationId || d.conversation_id,
-      senderId: d.senderId || d.sender_id,
-      senderName: d.senderName || d.sender_name,
-      senderAvatar: d.senderAvatar || d.sender_avatar || null,
-      clientMessageId: d.clientMessageId || d.client_message_id || null,
-      content: d.content,
-      replyTo: d.replyTo || null,
-      forwardedFrom: d.forwardedFrom || null,
-      attachments: d.attachments || null,
-      reactions: d.reactions || {},
-      status: d.status || 'sent',
-      createdAt: d.createdAt || d.created_at || new Date().toISOString(),
-    };
+        if (!snap.empty) {
+          const doc = snap.docs[0];
+          const d = doc.data();
+          if (d.senderId && d.senderId !== senderId) return null;
+          return {
+            id: d.id || doc.id,
+            conversationId: d.conversationId || conversationId,
+            senderId: d.senderId || d.sender_id,
+            senderName: d.senderName || d.sender_name,
+            senderAvatar: d.senderAvatar || d.sender_avatar || null,
+            clientMessageId: d.clientMessageId || d.client_message_id || null,
+            content: d.content,
+            replyTo: d.replyTo || null,
+            forwardedFrom: d.forwardedFrom || null,
+            attachments: d.attachments || null,
+            reactions: d.reactions || {},
+            status: d.status || 'sent',
+            createdAt: d.createdAt || d.created_at || new Date().toISOString(),
+          };
+        }
+      }
+
+      // Fallback single-field query across collectionGroup without composite index requirement
+      const snap = await this.getFirestore()
+        .collectionGroup('messages')
+        .where('clientMessageId', '==', clientMessageId)
+        .limit(1)
+        .get();
+
+      if (snap.empty) return null;
+      const doc = snap.docs[0];
+      const d = doc.data();
+      if (d.senderId && d.senderId !== senderId) return null;
+      return {
+        id: d.id || doc.id,
+        conversationId: d.conversationId || d.conversation_id,
+        senderId: d.senderId || d.sender_id,
+        senderName: d.senderName || d.sender_name,
+        senderAvatar: d.senderAvatar || d.sender_avatar || null,
+        clientMessageId: d.clientMessageId || d.client_message_id || null,
+        content: d.content,
+        replyTo: d.replyTo || null,
+        forwardedFrom: d.forwardedFrom || null,
+        attachments: d.attachments || null,
+        reactions: d.reactions || {},
+        status: d.status || 'sent',
+        createdAt: d.createdAt || d.created_at || new Date().toISOString(),
+      };
+    } catch (err) {
+      console.warn('[FIRESTORE] findMessageByClientId lookup warning (bypassing deduplication):', err);
+      return null;
+    }
   }
 
   async saveMessage(message: {
@@ -926,25 +963,36 @@ export class FirestoreStore implements DataStore {
       }
     }
 
-    // Update conversation metadata
-    const convDoc = await convRef.get();
-    if (convDoc.exists) {
-      const convData = convDoc.data()!;
-      const participants = (convData.participantIds as string[]) || [];
-      const unreadUpdates: Record<string, any> = {};
+    // Update conversation metadata safely without failing message persistence
+    try {
+      const convDoc = await convRef.get();
+      if (convDoc.exists) {
+        const convData = convDoc.data()!;
+        const participants = (convData.participantIds as string[]) || [];
+        const existingUnreads = (convData.unreadCounts as Record<string, number>) || {};
+        const newUnreads: Record<string, number> = { ...existingUnreads };
 
-      for (const p of participants) {
-        if (p !== message.senderId) {
-          unreadUpdates[`unreadCounts.${p}`] = FieldValue.increment(1);
+        for (const p of participants) {
+          if (p !== message.senderId) {
+            newUnreads[p] = (newUnreads[p] || 0) + 1;
+          }
         }
-      }
 
-      await convRef.update({
-        updatedAt: now,
-        messageCount: FieldValue.increment(1),
-        [`lastReadMessageIds.${message.senderId}`]: msgId,
-        ...unreadUpdates,
-      });
+        await convRef.set(
+          {
+            updatedAt: now,
+            messageCount: FieldValue.increment(1),
+            lastReadMessageIds: {
+              ...(convData.lastReadMessageIds || {}),
+              [message.senderId]: msgId,
+            },
+            unreadCounts: newUnreads,
+          },
+          { merge: true }
+        );
+      }
+    } catch (metaErr) {
+      console.warn('[FIRESTORE] update conversation metadata warning (non-fatal):', metaErr);
     }
 
     return msgData;

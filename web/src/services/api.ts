@@ -16,7 +16,26 @@ import {
   SearchResults,
 } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+export function getBackendBaseUrl(): string {
+  const envUrl = (import.meta.env.VITE_API_URL || '').trim();
+  if (envUrl) {
+    return envUrl.replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    // If running on Render frontend domain (*.onrender.com), point to Render backend domain
+    if (window.location.hostname.endsWith('.onrender.com')) {
+      return 'https://xxq-chat-backend.onrender.com';
+    }
+    // If running locally in Vite dev server (port 5173, etc.)
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:4000';
+    }
+    return window.location.origin.replace(/\/$/, '');
+  }
+  return 'http://localhost:4000';
+}
+
+const API_BASE = getBackendBaseUrl();
 
 class ApiService {
   private token: string | null = null;

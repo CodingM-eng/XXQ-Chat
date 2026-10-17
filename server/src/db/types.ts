@@ -267,7 +267,7 @@ export interface DataStore {
   isConversationAdmin(conversationId: string, userId: string): Promise<boolean>;
   getConversationParticipantIds(conversationId: string): Promise<string[]>;
   getConversationMessages(conversationId: string, limit?: number): Promise<DbMessage[]>;
-  findMessageByClientId(clientMessageId: string, senderId: string): Promise<DbMessage | null>;
+  findMessageByClientId(clientMessageId: string, senderId: string, conversationId?: string): Promise<DbMessage | null>;
   saveMessage(message: {
     id?: string;
     conversationId: string;
