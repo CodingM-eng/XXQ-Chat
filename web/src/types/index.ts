@@ -11,6 +11,8 @@ export interface User {
   isFamily?: boolean;
   groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
   bio?: string | null;
+  bannerUrl?: string | null;
+  accentColor?: string | null;
   themePreference?: 'dark' | 'light';
   onboarded?: boolean;
   status?: 'active' | 'pending' | 'blocked';
@@ -126,11 +128,46 @@ export interface ConversationParticipant {
 
 export type ServerPurpose = 'gaming' | 'chat' | 'community' | 'business' | 'other';
 
+export type ServerPermission =
+  | 'manage_server'
+  | 'manage_roles'
+  | 'manage_channels'
+  | 'manage_messages'
+  | 'send_announcements'
+  | 'kick_members'
+  | 'view_audit_logs';
+
+export interface ServerCustomRole {
+  id: string;
+  serverId: string;
+  name: string;
+  color: string;
+  permissions: ServerPermission[];
+  order: number;
+  createdAt: string;
+}
+
+export interface ServerJoinQuestion {
+  id: string;
+  question: string;
+  required: boolean;
+  order: number;
+}
+
+export interface UserRelationship {
+  isFriend: boolean;
+  isBlocked: boolean;
+  isBlockedBy: boolean;
+  friendRequestStatus: 'none' | 'sent' | 'received';
+  friendRequestId: string | null;
+}
+
 export interface ServerMember {
   id: string;
   displayName: string;
   avatarUrl?: string | null;
   role: 'owner' | 'admin' | 'moderator' | 'member';
+  roleIds?: string[];
   customTag?: string | null;
   joinedAt: string;
 }
@@ -141,7 +178,12 @@ export interface Server {
   description?: string | null;
   purpose: ServerPurpose;
   avatarUrl?: string | null;
+  bannerUrl?: string | null;
+  welcomeMessage?: string | null;
   rules?: string | null;
+  requiresApproval?: boolean;
+  joinQuestions?: ServerJoinQuestion[];
+  roles?: ServerCustomRole[];
   ownerId: string;
   memberIds: string[];
   members?: ServerMember[];
@@ -159,6 +201,7 @@ export interface MembershipInvitation {
   userDisplayName: string;
   type: 'invite' | 'request';
   status: 'pending' | 'accepted' | 'declined' | 'approved' | 'rejected' | 'expired';
+  answers?: Record<string, string>;
   createdById: string;
   inviterName?: string | null;
   createdAt: string;

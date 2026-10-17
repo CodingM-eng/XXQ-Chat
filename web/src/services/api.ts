@@ -16,6 +16,10 @@ import {
   SearchResults,
   Server,
   ServerPurpose,
+  ServerCustomRole,
+  ServerPermission,
+  ServerJoinQuestion,
+  UserRelationship,
   MembershipInvitation,
 } from '../types';
 
@@ -147,6 +151,8 @@ class ApiService {
     lastName?: string;
     displayName?: string;
     avatarUrl?: string | null;
+    bannerUrl?: string | null;
+    accentColor?: string | null;
     phoneNumber?: string;
     themePreference?: 'dark' | 'light';
     bio?: string | null;
@@ -186,6 +192,58 @@ class ApiService {
       throw new Error(err.message || 'Resim yükleme başarısız');
     }
     return res.json();
+  }
+
+  async uploadBanner(fileOrUrl: File | string): Promise<{ success: boolean; bannerUrl: string; user: User }> {
+    if (typeof fileOrUrl === 'string') {
+      return this.request('/api/users/banner', {
+        method: 'POST',
+        body: JSON.stringify({ bannerUrl: fileOrUrl }),
+      });
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileOrUrl);
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/users/banner`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Afiş yüklenemedi' }));
+      throw new Error(err.message || 'Afiş yükleme başarısız');
+    }
+    return res.json();
+  }
+
+  async removeBanner(): Promise<{ success: boolean; user: User; message: string }> {
+    return this.request('/api/users/banner', {
+      method: 'DELETE',
+    });
+  }
+
+  async getUserRelationship(targetId: string): Promise<{ success: boolean; relationship: UserRelationship }> {
+    return this.request(`/api/users/${targetId}/relationship`);
+  }
+
+  async blockUser(targetId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/users/${targetId}/block`, {
+      method: 'POST',
+    });
+  }
+
+  async unblockUser(targetId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/users/${targetId}/unblock`, {
+      method: 'POST',
+    });
+  }
+
+  async getBlockedUsers(): Promise<{ success: boolean; blockedUsers: User[] }> {
+    return this.request('/api/users/me/blocked');
   }
 
   async searchUsers(query: string = ''): Promise<{ users: User[] }> {
@@ -318,7 +376,11 @@ class ApiService {
     description?: string | null;
     purpose: ServerPurpose;
     avatarUrl?: string | null;
+    bannerUrl?: string | null;
+    welcomeMessage?: string | null;
     rules?: string | null;
+    requiresApproval?: boolean;
+    joinQuestions?: ServerJoinQuestion[];
   }): Promise<{ server: Server; channels: Conversation[] }> {
     return this.request('/api/servers', {
       method: 'POST',
@@ -333,12 +395,151 @@ class ApiService {
       description?: string | null;
       purpose?: ServerPurpose;
       avatarUrl?: string | null;
+      bannerUrl?: string | null;
+      welcomeMessage?: string | null;
       rules?: string | null;
+      requiresApproval?: boolean;
     }
   ): Promise<{ success: boolean; server: Server }> {
     return this.request(`/api/servers/${serverId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
+    });
+  }
+
+  async uploadServerLogo(serverId: string, fileOrUrl: File | string): Promise<{ success: boolean; avatarUrl: string; server: Server }> {
+    if (typeof fileOrUrl === 'string') {
+      return this.request(`/api/servers/${serverId}/logo`, {
+        method: 'POST',
+        body: JSON.stringify({ logoUrl: fileOrUrl }),
+      });
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileOrUrl);
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/servers/${serverId}/logo`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Sunucu logosu yüklenemedi' }));
+      throw new Error(err.message || 'Sunucu logosu yükleme başarısız');
+    }
+    return res.json();
+  }
+
+  async removeServerLogo(serverId: string): Promise<{ success: boolean; server: Server }> {
+    return this.request(`/api/servers/${serverId}/logo`, {
+      method: 'DELETE',
+    });
+  }
+
+  async uploadServerBanner(serverId: string, fileOrUrl: File | string): Promise<{ success: boolean; bannerUrl: string; server: Server }> {
+    if (typeof fileOrUrl === 'string') {
+      return this.request(`/api/servers/${serverId}/banner`, {
+        method: 'POST',
+        body: JSON.stringify({ bannerUrl: fileOrUrl }),
+      });
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileOrUrl);
+    const headers: Record<string, string> = {};
+    const token = this.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/servers/${serverId}/banner`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Sunucu afişi yüklenemedi' }));
+      throw new Error(err.message || 'Sunucu afişi yükleme başarısız');
+    }
+    return res.json();
+  }
+
+  async removeServerBanner(serverId: string): Promise<{ success: boolean; server: Server }> {
+    return this.request(`/api/servers/${serverId}/banner`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getServerQuestions(serverId: string): Promise<{ success: boolean; questions: ServerJoinQuestion[] }> {
+    return this.request(`/api/servers/${serverId}/questions`);
+  }
+
+  async setServerQuestions(
+    serverId: string,
+    questions: ServerJoinQuestion[],
+    requiresApproval?: boolean
+  ): Promise<{ success: boolean; questions: ServerJoinQuestion[]; server: Server; message: string }> {
+    return this.request(`/api/servers/${serverId}/questions`, {
+      method: 'PUT',
+      body: JSON.stringify({ questions, requiresApproval }),
+    });
+  }
+
+  async getServerJoinRequests(serverId: string): Promise<{ success: boolean; requests: MembershipInvitation[] }> {
+    return this.request(`/api/servers/${serverId}/join-requests`);
+  }
+
+  async resolveServerJoinRequest(
+    serverId: string,
+    requestId: string,
+    action: 'approve' | 'reject'
+  ): Promise<{ success: boolean; request: MembershipInvitation; message: string }> {
+    return this.request(`/api/servers/${serverId}/join-requests/${requestId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+  }
+
+  async getServerRoles(serverId: string): Promise<{ success: boolean; roles: ServerCustomRole[] }> {
+    return this.request(`/api/servers/${serverId}/roles`);
+  }
+
+  async createServerRole(
+    serverId: string,
+    data: { name: string; color: string; permissions: ServerPermission[]; order?: number }
+  ): Promise<{ success: boolean; role: ServerCustomRole }> {
+    return this.request(`/api/servers/${serverId}/roles`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateServerRole(
+    serverId: string,
+    roleId: string,
+    data: { name?: string; color?: string; permissions?: ServerPermission[]; order?: number }
+  ): Promise<{ success: boolean; role: ServerCustomRole }> {
+    return this.request(`/api/servers/${serverId}/roles/${roleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteServerRole(serverId: string, roleId: string): Promise<{ success: boolean; message: string }> {
+    return this.request(`/api/servers/${serverId}/roles/${roleId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async assignServerMemberRoles(
+    serverId: string,
+    userId: string,
+    roleIds: string[]
+  ): Promise<{ success: boolean; server: Server; message: string }> {
+    return this.request(`/api/servers/${serverId}/members/${userId}/roles`, {
+      method: 'POST',
+      body: JSON.stringify({ roleIds }),
     });
   }
 
@@ -805,9 +1006,13 @@ class ApiService {
     return this.request(`/api/servers/invite/${code}`);
   }
 
-  async acceptServerInvite(code: string): Promise<{ success: boolean; serverId: string; message: string }> {
+  async acceptServerInvite(
+    code: string,
+    answers?: Record<string, string>
+  ): Promise<{ success: boolean; serverId?: string; pendingApproval?: boolean; message: string; server?: Server }> {
     return this.request(`/api/servers/invite/${code}/accept`, {
       method: 'POST',
+      body: JSON.stringify({ answers: answers || {} }),
     });
   }
 

@@ -208,20 +208,33 @@ export function setupSocketServer(httpServer: HttpServer): Server {
 
           const conv = await dataStore.getConversation(conversationId, user.id);
 
-          // Aile role messaging guard: only platform admin can send direct messages to Aile users
-          if (conv && conv.type === 'direct' && !user.isAdmin) {
+          // Aile role & block guard for direct messaging
+          if (conv && conv.type === 'direct') {
             const participants = await dataStore.getConversationParticipantIds(conversationId);
             const peerId = participants.find((id) => id !== user.id);
             if (peerId) {
-              const peer = await dataStore.getUserById(peerId);
-              if (peer && peer.isFamily) {
+              const areBlocked = await dataStore.areUsersBlocked(user.id, peerId);
+              if (areBlocked) {
                 if (typeof callback === 'function') {
                   callback({
-                    error: 'FAMILY_ROLE_PROTECTED',
-                    message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi mesaj gönderebilir.',
+                    error: 'USER_BLOCKED',
+                    message: 'Engellenen veya sizi engelleyen bir kullanıcıya mesaj gönderemezsiniz.',
                   });
                 }
                 return;
+              }
+
+              if (!user.isAdmin) {
+                const peer = await dataStore.getUserById(peerId);
+                if (peer && peer.isFamily) {
+                  if (typeof callback === 'function') {
+                    callback({
+                      error: 'FAMILY_ROLE_PROTECTED',
+                      message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi mesaj gönderebilir.',
+                    });
+                  }
+                  return;
+                }
               }
             }
           }
@@ -229,8 +242,11 @@ export function setupSocketServer(httpServer: HttpServer): Server {
           // Check announcement-only channel permission
           if (conv && conv.isAnnouncementOnly) {
             const role = await dataStore.getConversationRole(conversationId, user.id);
-            const isOwnerOrAdmin = role === 'owner' || role === 'admin' || user.isAdmin;
-            if (!isOwnerOrAdmin) {
+            let canSend = role === 'owner' || role === 'admin' || user.isAdmin;
+            if (!canSend && conv.serverId) {
+              canSend = await dataStore.hasServerPermission(conv.serverId, user.id, 'send_announcements');
+            }
+            if (!canSend) {
               if (typeof callback === 'function') callback({ error: 'ANNOUNCEMENT_ONLY', message: 'Bu kanal salt okunur duyuru kanalıdır.' });
               return;
             }

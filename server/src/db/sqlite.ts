@@ -19,6 +19,9 @@ import {
   DbSupportReport,
   DbServer,
   ServerPurpose,
+  ServerPermission,
+  ServerCustomRole,
+  ServerJoinQuestion,
   DbMembershipInvitation,
   DbServerInvite,
   DbFriendRequest,
@@ -304,6 +307,37 @@ export class SqliteStore implements DataStore {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS user_blocks (
+        blocker_id TEXT NOT NULL,
+        blocked_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (blocker_id, blocked_id),
+        FOREIGN KEY (blocker_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (blocked_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS server_roles (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL,
+        permissions_json TEXT NOT NULL DEFAULT '[]',
+        order_index INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS server_member_roles (
+        server_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, user_id, role_id),
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (role_id) REFERENCES server_roles(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_client_id ON messages(client_message_id);
       CREATE INDEX IF NOT EXISTS idx_participants_user ON conversation_participants(user_id);
@@ -314,6 +348,8 @@ export class SqliteStore implements DataStore {
       CREATE INDEX IF NOT EXISTS idx_server_invites_code ON server_invites(code);
       CREATE INDEX IF NOT EXISTS idx_friend_requests_user ON friend_requests(sender_id, receiver_id);
       CREATE INDEX IF NOT EXISTS idx_message_reads_msg ON message_reads(message_id);
+      CREATE INDEX IF NOT EXISTS idx_server_roles_server ON server_roles(server_id, order_index ASC);
+      CREATE INDEX IF NOT EXISTS idx_user_blocks ON user_blocks(blocker_id, blocked_id);
     `);
 
     // Safe schema migrations for existing SQLite databases
@@ -374,6 +410,13 @@ export class SqliteStore implements DataStore {
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN reply_to TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN forwarded_from TEXT;'); } catch (_) {}
     try { sqlite.exec('ALTER TABLE messages ADD COLUMN attachments TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE servers ADD COLUMN banner_url TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE servers ADD COLUMN welcome_message TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE servers ADD COLUMN requires_approval INTEGER DEFAULT 0;'); } catch (_) {}
+    try { sqlite.exec("ALTER TABLE servers ADD COLUMN join_questions_json TEXT DEFAULT '[]';"); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE membership_invitations ADD COLUMN answers_json TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE users ADD COLUMN banner_url TEXT;'); } catch (_) {}
+    try { sqlite.exec('ALTER TABLE users ADD COLUMN accent_color TEXT;'); } catch (_) {}
 
     // Whitelist mode setting initialization
     const existingSetting = sqlite
@@ -636,7 +679,7 @@ export class SqliteStore implements DataStore {
   // Users
   async getUserById(id: string): Promise<DbUser | null> {
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE id = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, banner_url, accent_color, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE id = ?')
       .get(id) as any;
     if (!row) return null;
 
@@ -650,6 +693,8 @@ export class SqliteStore implements DataStore {
       lastName: row.last_name || null,
       displayName: row.display_name,
       avatarUrl: row.avatar_url || null,
+      bannerUrl: row.banner_url || null,
+      accentColor: row.accent_color || null,
       phoneNumber: row.phone_number || null,
       isAdmin,
       isModerator,
@@ -667,7 +712,7 @@ export class SqliteStore implements DataStore {
   async getUserByEmail(email: string): Promise<DbUser | null> {
     const normalized = email.toLowerCase().trim();
     const row = this.getSqlite()
-      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
+      .prepare('SELECT id, email, first_name, last_name, display_name, avatar_url, banner_url, accent_color, phone_number, is_admin, is_moderator, onboarded, status, theme_preference, bio, is_family, group_add_privacy, created_at, last_active_at FROM users WHERE LOWER(email) = ?')
       .get(normalized) as any;
     if (!row) return null;
 
@@ -681,6 +726,8 @@ export class SqliteStore implements DataStore {
       lastName: row.last_name || null,
       displayName: row.display_name,
       avatarUrl: row.avatar_url || null,
+      bannerUrl: row.banner_url || null,
+      accentColor: row.accent_color || null,
       phoneNumber: row.phone_number || null,
       isAdmin,
       isModerator,
@@ -801,6 +848,8 @@ export class SqliteStore implements DataStore {
       lastName?: string | null;
       displayName?: string;
       avatarUrl?: string | null;
+      bannerUrl?: string | null;
+      accentColor?: string | null;
       phoneNumber?: string | null;
       themePreference?: 'dark' | 'light';
       bio?: string | null;
@@ -825,6 +874,14 @@ export class SqliteStore implements DataStore {
     if (updates.avatarUrl !== undefined) {
       updateParts.push('avatar_url = ?');
       params.push(updates.avatarUrl);
+    }
+    if (updates.bannerUrl !== undefined) {
+      updateParts.push('banner_url = ?');
+      params.push(updates.bannerUrl);
+    }
+    if (updates.accentColor !== undefined) {
+      updateParts.push('accent_color = ?');
+      params.push(updates.accentColor);
     }
     if (updates.phoneNumber !== undefined) {
       updateParts.push('phone_number = ?');
@@ -2280,17 +2337,32 @@ export class SqliteStore implements DataStore {
   }
 
   // Servers & Channels
-  async createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; rules?: string | null }): Promise<{ server: DbServer; channels: DbConversationSummary[] }> {
+  async createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; bannerUrl?: string | null; rules?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean; joinQuestions?: ServerJoinQuestion[] }): Promise<{ server: DbServer; channels: DbConversationSummary[] }> {
     const serverId = 'srv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     const now = new Date().toISOString();
     const sqlite = this.getSqlite();
 
     sqlite.exec('BEGIN IMMEDIATE');
     try {
+      const joinQuestionsJson = data.joinQuestions ? JSON.stringify(data.joinQuestions) : '[]';
+      const requiresApproval = data.requiresApproval || (data.joinQuestions && data.joinQuestions.length > 0) ? 1 : 0;
+
       sqlite.prepare(`
-        INSERT INTO servers (id, name, description, purpose, avatar_url, rules, owner_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).run(serverId, data.name, data.description || null, data.purpose || 'chat', data.avatarUrl || null, data.rules || null, ownerId);
+        INSERT INTO servers (id, name, description, purpose, avatar_url, banner_url, welcome_message, rules, requires_approval, join_questions_json, owner_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(
+        serverId,
+        data.name,
+        data.description || null,
+        data.purpose || 'chat',
+        data.avatarUrl || null,
+        data.bannerUrl || null,
+        data.welcomeMessage || null,
+        data.rules || null,
+        requiresApproval,
+        joinQuestionsJson,
+        ownerId
+      );
 
       sqlite.prepare(`
         INSERT INTO server_members (server_id, user_id, role, joined_at)
@@ -2342,7 +2414,12 @@ export class SqliteStore implements DataStore {
         description: data.description || null,
         purpose: data.purpose,
         avatarUrl: data.avatarUrl || null,
+        bannerUrl: data.bannerUrl || null,
+        welcomeMessage: data.welcomeMessage || null,
         rules: data.rules || null,
+        requiresApproval: requiresApproval === 1,
+        joinQuestions: data.joinQuestions || [],
+        roles: [],
         ownerId,
         memberIds: [ownerId],
         members: ownerUser ? [{
@@ -2350,6 +2427,7 @@ export class SqliteStore implements DataStore {
           displayName: ownerUser.displayName,
           avatarUrl: ownerUser.avatarUrl,
           role: 'owner',
+          roleIds: [],
           customTag: null,
           joinedAt: now,
         }] : [],
@@ -2367,10 +2445,20 @@ export class SqliteStore implements DataStore {
 
   async getServer(serverId: string, userId: string): Promise<DbServer | null> {
     const s = this.getSqlite().prepare(`
-      SELECT id, name, description, purpose, avatar_url, rules, owner_id, created_at, updated_at
+      SELECT id, name, description, purpose, avatar_url, banner_url, welcome_message, rules, requires_approval, join_questions_json, owner_id, created_at, updated_at
       FROM servers WHERE id = ?
     `).get(serverId) as any;
     if (!s) return null;
+
+    const memberRoleRows = this.getSqlite().prepare(`
+      SELECT user_id, role_id FROM server_member_roles WHERE server_id = ?
+    `).all(serverId) as any[];
+    const userRoleMap = new Map<string, string[]>();
+    for (const mr of memberRoleRows) {
+      const arr = userRoleMap.get(mr.user_id) || [];
+      arr.push(mr.role_id);
+      userRoleMap.set(mr.user_id, arr);
+    }
 
     const memberRows = this.getSqlite().prepare(`
       SELECT sm.user_id, sm.role, sm.custom_tag, sm.joined_at, u.display_name, u.avatar_url
@@ -2386,6 +2474,7 @@ export class SqliteStore implements DataStore {
       displayName: m.display_name,
       avatarUrl: m.avatar_url || null,
       role: m.role as any,
+      roleIds: userRoleMap.get(m.user_id) || [],
       customTag: m.custom_tag || null,
       joinedAt: m.joined_at,
     }));
@@ -2412,13 +2501,42 @@ export class SqliteStore implements DataStore {
       updatedAt: c.updated_at,
     }));
 
+    let joinQuestions: ServerJoinQuestion[] = [];
+    if (s.join_questions_json) {
+      try {
+        joinQuestions = JSON.parse(s.join_questions_json);
+      } catch {}
+    }
+
+    const roleRows = this.getSqlite().prepare(`
+      SELECT id, server_id, name, color, permissions_json, order_index, created_at
+      FROM server_roles
+      WHERE server_id = ?
+      ORDER BY order_index ASC, created_at ASC
+    `).all(serverId) as any[];
+
+    const roles: ServerCustomRole[] = roleRows.map((r) => ({
+      id: r.id,
+      serverId: r.server_id,
+      name: r.name,
+      color: r.color,
+      permissions: JSON.parse(r.permissions_json || '[]'),
+      order: r.order_index,
+      createdAt: r.created_at,
+    }));
+
     return {
       id: s.id,
       name: s.name,
       description: s.description || null,
       purpose: s.purpose || 'chat',
       avatarUrl: s.avatar_url || null,
+      bannerUrl: s.banner_url || null,
+      welcomeMessage: s.welcome_message || null,
       rules: s.rules || null,
+      requiresApproval: s.requires_approval === 1,
+      joinQuestions,
+      roles,
       ownerId: s.owner_id,
       memberIds,
       members,
@@ -2585,7 +2703,7 @@ export class SqliteStore implements DataStore {
     }
   }
 
-  async updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; purpose?: ServerPurpose }): Promise<void> {
+  async updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; bannerUrl?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean; purpose?: ServerPurpose }): Promise<void> {
     const updateParts: string[] = ['updated_at = CURRENT_TIMESTAMP'];
     const params: any[] = [];
 
@@ -2605,6 +2723,18 @@ export class SqliteStore implements DataStore {
       updateParts.push('avatar_url = ?');
       params.push(updates.avatarUrl);
     }
+    if (updates.bannerUrl !== undefined) {
+      updateParts.push('banner_url = ?');
+      params.push(updates.bannerUrl);
+    }
+    if (updates.welcomeMessage !== undefined) {
+      updateParts.push('welcome_message = ?');
+      params.push(updates.welcomeMessage);
+    }
+    if (updates.requiresApproval !== undefined) {
+      updateParts.push('requires_approval = ?');
+      params.push(updates.requiresApproval ? 1 : 0);
+    }
     if (updates.purpose !== undefined) {
       updateParts.push('purpose = ?');
       params.push(updates.purpose);
@@ -2612,6 +2742,11 @@ export class SqliteStore implements DataStore {
 
     params.push(serverId);
     this.getSqlite().prepare(`UPDATE servers SET ${updateParts.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  async updateServerIdentity(serverId: string, data: { name?: string; description?: string | null; purpose?: ServerPurpose; avatarUrl?: string | null; bannerUrl?: string | null; rules?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean }): Promise<DbServer | null> {
+    await this.updateServerSettings(serverId, data);
+    return this.getServer(serverId, '');
   }
 
   async isServerMember(serverId: string, userId: string): Promise<boolean> {
@@ -2630,15 +2765,269 @@ export class SqliteStore implements DataStore {
     return s?.owner_id === userId;
   }
 
+  // Community Join Questions & Roles
+  async setServerJoinQuestions(serverId: string, questions: ServerJoinQuestion[]): Promise<ServerJoinQuestion[]> {
+    const json = JSON.stringify(questions);
+    this.getSqlite().prepare(`
+      UPDATE servers
+      SET join_questions_json = ?, requires_approval = 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(json, serverId);
+    return questions;
+  }
+
+  async getServerJoinQuestions(serverId: string): Promise<ServerJoinQuestion[]> {
+    const row = this.getSqlite().prepare('SELECT join_questions_json FROM servers WHERE id = ?').get(serverId) as any;
+    if (!row || !row.join_questions_json) return [];
+    try {
+      return JSON.parse(row.join_questions_json);
+    } catch {
+      return [];
+    }
+  }
+
+  async createServerRole(serverId: string, data: { name: string; color: string; permissions: ServerPermission[]; order?: number }): Promise<ServerCustomRole> {
+    const id = 'role_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+    const orderIndex = data.order ?? 0;
+    const permissionsJson = JSON.stringify(data.permissions);
+
+    this.getSqlite().prepare(`
+      INSERT INTO server_roles (id, server_id, name, color, permissions_json, order_index, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, serverId, data.name, data.color, permissionsJson, orderIndex, now);
+
+    return {
+      id,
+      serverId,
+      name: data.name,
+      color: data.color,
+      permissions: data.permissions,
+      order: orderIndex,
+      createdAt: now,
+    };
+  }
+
+  async updateServerRole(serverId: string, roleId: string, updates: { name?: string; color?: string; permissions?: ServerPermission[]; order?: number }): Promise<ServerCustomRole | null> {
+    const updateParts: string[] = [];
+    const params: any[] = [];
+
+    if (updates.name !== undefined) {
+      updateParts.push('name = ?');
+      params.push(updates.name);
+    }
+    if (updates.color !== undefined) {
+      updateParts.push('color = ?');
+      params.push(updates.color);
+    }
+    if (updates.permissions !== undefined) {
+      updateParts.push('permissions_json = ?');
+      params.push(JSON.stringify(updates.permissions));
+    }
+    if (updates.order !== undefined) {
+      updateParts.push('order_index = ?');
+      params.push(updates.order);
+    }
+
+    if (updateParts.length > 0) {
+      params.push(roleId, serverId);
+      this.getSqlite().prepare(`UPDATE server_roles SET ${updateParts.join(', ')} WHERE id = ? AND server_id = ?`).run(...params);
+    }
+
+    const row = this.getSqlite().prepare('SELECT * FROM server_roles WHERE id = ?').get(roleId) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      serverId: row.server_id,
+      name: row.name,
+      color: row.color,
+      permissions: JSON.parse(row.permissions_json || '[]'),
+      order: row.order_index,
+      createdAt: row.created_at,
+    };
+  }
+
+  async deleteServerRole(serverId: string, roleId: string): Promise<boolean> {
+    const res = this.getSqlite().prepare('DELETE FROM server_roles WHERE id = ? AND server_id = ?').run(roleId, serverId);
+    this.getSqlite().prepare('DELETE FROM server_member_roles WHERE role_id = ?').run(roleId);
+    return res.changes > 0;
+  }
+
+  async getServerRoles(serverId: string): Promise<ServerCustomRole[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT id, server_id, name, color, permissions_json, order_index, created_at
+      FROM server_roles
+      WHERE server_id = ?
+      ORDER BY order_index ASC, created_at ASC
+    `).all(serverId) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      serverId: r.server_id,
+      name: r.name,
+      color: r.color,
+      permissions: JSON.parse(r.permissions_json || '[]'),
+      order: r.order_index,
+      createdAt: r.created_at,
+    }));
+  }
+
+  async setServerMemberCustomRoles(serverId: string, userId: string, roleIds: string[]): Promise<void> {
+    const sqlite = this.getSqlite();
+    sqlite.exec('BEGIN IMMEDIATE');
+    try {
+      sqlite.prepare('DELETE FROM server_member_roles WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+      const insert = sqlite.prepare('INSERT INTO server_member_roles (server_id, user_id, role_id) VALUES (?, ?, ?)');
+      for (const rId of roleIds) {
+        insert.run(serverId, userId, rId);
+      }
+      sqlite.exec('COMMIT');
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  async hasServerPermission(serverId: string, userId: string, permission: ServerPermission): Promise<boolean> {
+    const user = await this.getUserById(userId);
+    if (user?.isAdmin) return true;
+
+    const member = this.getSqlite().prepare('SELECT role FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId) as any;
+    if (!member) return false;
+
+    if (member.role === 'owner' || member.role === 'admin') return true;
+    if (member.role === 'moderator') {
+      if (['manage_messages', 'kick_members', 'send_announcements', 'view_audit_logs'].includes(permission)) {
+        return true;
+      }
+    }
+
+    const customRoles = this.getSqlite().prepare(`
+      SELECT sr.permissions_json
+      FROM server_member_roles smr
+      JOIN server_roles sr ON sr.id = smr.role_id
+      WHERE smr.server_id = ? AND smr.user_id = ?
+    `).all(serverId, userId) as any[];
+
+    for (const cr of customRoles) {
+      try {
+        const perms: ServerPermission[] = JSON.parse(cr.permissions_json);
+        if (perms.includes(permission)) return true;
+      } catch {}
+    }
+
+    return false;
+  }
+
+  // User Blocking & Relationships
+  async blockUser(blockerId: string, blockedId: string): Promise<void> {
+    if (blockerId === blockedId) return;
+    this.getSqlite().prepare(`
+      INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+    `).run(blockerId, blockedId);
+
+    await this.removeFriend(blockerId, blockedId);
+
+    this.getSqlite().prepare(`
+      DELETE FROM friend_requests
+      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+    `).run(blockerId, blockedId, blockedId, blockerId);
+  }
+
+  async unblockUser(blockerId: string, blockedId: string): Promise<void> {
+    this.getSqlite().prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').run(blockerId, blockedId);
+  }
+
+  async isUserBlocked(blockerId: string, blockedId: string): Promise<boolean> {
+    const row = this.getSqlite().prepare('SELECT 1 FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').get(blockerId, blockedId);
+    return !!row;
+  }
+
+  async areUsersBlocked(userId1: string, userId2: string): Promise<boolean> {
+    const row = this.getSqlite().prepare(`
+      SELECT 1 FROM user_blocks
+      WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)
+    `).get(userId1, userId2, userId2, userId1);
+    return !!row;
+  }
+
+  async getBlockedUsers(userId: string): Promise<DbUser[]> {
+    const rows = this.getSqlite().prepare(`
+      SELECT u.id, u.email, u.first_name, u.last_name, u.display_name, u.avatar_url, u.banner_url, u.accent_color, u.is_admin, u.is_moderator, u.bio, u.created_at, u.last_active_at
+      FROM users u
+      JOIN user_blocks ub ON ub.blocked_id = u.id
+      WHERE ub.blocker_id = ?
+      ORDER BY ub.created_at DESC
+    `).all(userId) as any[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      firstName: row.first_name || null,
+      lastName: row.last_name || null,
+      displayName: row.display_name,
+      avatarUrl: row.avatar_url || null,
+      bannerUrl: row.banner_url || null,
+      accentColor: row.accent_color || null,
+      isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
+      bio: row.bio || null,
+      onboarded: true,
+      status: 'active',
+      createdAt: row.created_at,
+      lastActiveAt: row.last_active_at,
+    }));
+  }
+
+  async getUserRelationship(userId1: string, userId2: string): Promise<{
+    isFriend: boolean;
+    isBlocked: boolean;
+    isBlockedBy: boolean;
+    friendRequestStatus: 'none' | 'sent' | 'received';
+    friendRequestId: string | null;
+  }> {
+    const isFriend = await this.areFriends(userId1, userId2);
+    const isBlocked = await this.isUserBlocked(userId1, userId2);
+    const isBlockedBy = await this.isUserBlocked(userId2, userId1);
+
+    const pendingReq = this.getSqlite().prepare(`
+      SELECT id, sender_id, receiver_id
+      FROM friend_requests
+      WHERE status = 'pending' AND ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
+    `).get(userId1, userId2, userId2, userId1) as any;
+
+    let friendRequestStatus: 'none' | 'sent' | 'received' = 'none';
+    let friendRequestId: string | null = null;
+
+    if (pendingReq) {
+      friendRequestId = pendingReq.id;
+      if (pendingReq.sender_id === userId1) {
+        friendRequestStatus = 'sent';
+      } else {
+        friendRequestStatus = 'received';
+      }
+    }
+
+    return {
+      isFriend,
+      isBlocked,
+      isBlockedBy,
+      friendRequestStatus,
+      friendRequestId,
+    };
+  }
+
   // Membership Invitations & Join Requests
   async createMembershipInvitation(invitation: Omit<DbMembershipInvitation, 'id' | 'createdAt' | 'status'> & { id?: string }): Promise<DbMembershipInvitation> {
     const id = invitation.id || 'inv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     const now = new Date().toISOString();
+    const answersJson = invitation.answers ? JSON.stringify(invitation.answers) : null;
 
     this.getSqlite().prepare(`
-      INSERT INTO membership_invitations (id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(id, invitation.targetType, invitation.targetId, invitation.targetName, invitation.userId, invitation.userDisplayName, invitation.type, invitation.createdById, now);
+      INSERT INTO membership_invitations (id, target_type, target_id, target_name, user_id, user_display_name, type, status, answers_json, created_by_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+    `).run(id, invitation.targetType, invitation.targetId, invitation.targetName, invitation.userId, invitation.userDisplayName, invitation.type, answersJson, invitation.createdById, now);
 
     return {
       id,
@@ -2649,6 +3038,7 @@ export class SqliteStore implements DataStore {
       userDisplayName: invitation.userDisplayName,
       type: invitation.type,
       status: 'pending',
+      answers: invitation.answers,
       createdById: invitation.createdById,
       createdAt: now,
       resolvedAt: null,
@@ -2658,7 +3048,7 @@ export class SqliteStore implements DataStore {
 
   async getUserInvitations(userId: string): Promise<DbMembershipInvitation[]> {
     const rows = this.getSqlite().prepare(`
-      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at, resolved_at, resolved_by_id
+      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, answers_json, created_by_id, created_at, resolved_at, resolved_by_id
       FROM membership_invitations
       WHERE user_id = ? AND type = 'invite' AND status = 'pending'
       ORDER BY created_at DESC
@@ -2673,6 +3063,7 @@ export class SqliteStore implements DataStore {
       userDisplayName: r.user_display_name,
       type: r.type,
       status: r.status,
+      answers: r.answers_json ? JSON.parse(r.answers_json) : undefined,
       createdById: r.created_by_id,
       createdAt: r.created_at,
       resolvedAt: r.resolved_at || null,
@@ -2682,7 +3073,7 @@ export class SqliteStore implements DataStore {
 
   async getTargetJoinRequests(targetType: 'group' | 'server', targetId: string): Promise<DbMembershipInvitation[]> {
     const rows = this.getSqlite().prepare(`
-      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at, resolved_at, resolved_by_id
+      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, answers_json, created_by_id, created_at, resolved_at, resolved_by_id
       FROM membership_invitations
       WHERE target_id = ? AND type = 'request' AND status = 'pending'
       ORDER BY created_at DESC
@@ -2697,6 +3088,7 @@ export class SqliteStore implements DataStore {
       userDisplayName: r.user_display_name,
       type: r.type,
       status: r.status,
+      answers: r.answers_json ? JSON.parse(r.answers_json) : undefined,
       createdById: r.created_by_id,
       createdAt: r.created_at,
       resolvedAt: r.resolved_at || null,
@@ -2715,7 +3107,7 @@ export class SqliteStore implements DataStore {
     if (res.changes === 0) return null;
 
     const r = this.getSqlite().prepare(`
-      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, created_by_id, created_at, resolved_at, resolved_by_id
+      SELECT id, target_type, target_id, target_name, user_id, user_display_name, type, status, answers_json, created_by_id, created_at, resolved_at, resolved_by_id
       FROM membership_invitations
       WHERE id = ?
     `).get(id) as any;
@@ -2730,6 +3122,7 @@ export class SqliteStore implements DataStore {
       userDisplayName: r.user_display_name,
       type: r.type,
       status: r.status,
+      answers: r.answers_json ? JSON.parse(r.answers_json) : undefined,
       createdById: r.created_by_id,
       createdAt: r.created_at,
       resolvedAt: r.resolved_at || null,
@@ -2941,6 +3334,11 @@ export class SqliteStore implements DataStore {
     const alreadyFriends = await this.areFriends(senderId, receiver.id);
     if (alreadyFriends) {
       throw new Error('Bu kullanıcıyla zaten arkadaşsınız.');
+    }
+
+    const areBlocked = await this.areUsersBlocked(senderId, receiver.id);
+    if (areBlocked) {
+      throw new Error('Engellenen veya sizi engelleyen bir kullanıcıya arkadaşlık isteği gönderilemez.');
     }
 
     const sender = await this.getUserById(senderId);

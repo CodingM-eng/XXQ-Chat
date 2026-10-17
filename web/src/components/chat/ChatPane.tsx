@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Conversation, Message, User, Attachment } from '../../types';
+import { Conversation, Message, User, Attachment, UserRelationship } from '../../types';
 import { api } from '../../services/api';
 import { getSocket } from '../../services/socket';
 import { EmojiPicker, QuickReactionsBar } from './EmojiPicker';
@@ -36,6 +36,11 @@ import {
   Square,
   StopCircle,
   UserCheck,
+  UserPlus,
+  UserX,
+  Ban,
+  CheckCircle2,
+  Sparkles,
   Info,
   Share2,
 } from 'lucide-react';
@@ -119,19 +124,110 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   // Read receipts popover
   const [selectedReadByMsg, setSelectedReadByMsg] = useState<Message | null>(null);
 
-  // User profile inspect modal
+  // User profile inspect modal & relationships
   const [inspectedUser, setInspectedUser] = useState<User | null>(null);
   const [isLoadingInspectedUser, setIsLoadingInspectedUser] = useState(false);
+  const [userRelationship, setUserRelationship] = useState<UserRelationship | null>(null);
+  const [relActionLoading, setRelActionLoading] = useState(false);
+  const [relFeedback, setRelFeedback] = useState<string | null>(null);
 
   const handleInspectUser = async (userId: string) => {
     try {
       setIsLoadingInspectedUser(true);
-      const res = await api.getUserProfile(userId);
-      setInspectedUser(res.user);
+      setRelFeedback(null);
+      const [userRes, relRes] = await Promise.all([
+        api.getUserProfile(userId),
+        currentUser && currentUser.id !== userId
+          ? api.getUserRelationship(userId).catch(() => ({ relationship: null }))
+          : Promise.resolve({ relationship: null }),
+      ]);
+      setInspectedUser(userRes.user);
+      setUserRelationship((relRes as any)?.relationship || null);
     } catch (err) {
       console.error('Failed to load user profile:', err);
     } finally {
       setIsLoadingInspectedUser(false);
+    }
+  };
+
+  const handleSendFriendReq = async (targetId: string) => {
+    try {
+      setRelActionLoading(true);
+      setRelFeedback(null);
+      await api.sendFriendRequest({ recipientId: targetId });
+      setUserRelationship((prev) =>
+        prev
+          ? { ...prev, friendRequestStatus: 'sent' }
+          : { isFriend: false, isBlocked: false, isBlockedBy: false, friendRequestStatus: 'sent', friendRequestId: null }
+      );
+      setRelFeedback('Arkadaşlık isteği gönderildi!');
+    } catch (err: any) {
+      setRelFeedback(err.message || 'Arkadaşlık isteği gönderilemedi.');
+    } finally {
+      setRelActionLoading(false);
+    }
+  };
+
+  const handleRespondFriendReq = async (requestId: string, action: 'accept' | 'decline') => {
+    try {
+      setRelActionLoading(true);
+      setRelFeedback(null);
+      await api.respondFriendRequest(requestId, action);
+      setUserRelationship((prev) =>
+        prev
+          ? {
+              ...prev,
+              isFriend: action === 'accept',
+              friendRequestStatus: 'none',
+              friendRequestId: null,
+            }
+          : null
+      );
+      setRelFeedback(action === 'accept' ? 'Arkadaşlık isteği kabul edildi!' : 'İstek reddedildi.');
+    } catch (err: any) {
+      setRelFeedback(err.message || 'İstek yanıtlanamadı.');
+    } finally {
+      setRelActionLoading(false);
+    }
+  };
+
+  const handleBlockUser = async (targetId: string) => {
+    if (!window.confirm('Bu kullanıcıyı engellemek istediğinize emin misiniz? Karşılıklı mesajlaşma durdurulacaktır.')) return;
+    try {
+      setRelActionLoading(true);
+      setRelFeedback(null);
+      await api.blockUser(targetId);
+      setUserRelationship((prev) =>
+        prev
+          ? {
+              ...prev,
+              isBlocked: true,
+              isFriend: false,
+              friendRequestStatus: 'none',
+            }
+          : { isFriend: false, isBlocked: true, isBlockedBy: false, friendRequestStatus: 'none', friendRequestId: null }
+      );
+      setRelFeedback('Kullanıcı engellendi.');
+    } catch (err: any) {
+      setRelFeedback(err.message || 'Kullanıcı engellenemedi.');
+    } finally {
+      setRelActionLoading(false);
+    }
+  };
+
+  const handleUnblockUser = async (targetId: string) => {
+    try {
+      setRelActionLoading(true);
+      setRelFeedback(null);
+      await api.unblockUser(targetId);
+      setUserRelationship((prev) =>
+        prev ? { ...prev, isBlocked: false } : null
+      );
+      setRelFeedback('Kullanıcının engeli kaldırıldı.');
+    } catch (err: any) {
+      setRelFeedback(err.message || 'Engel kaldırılamadı.');
+    } finally {
+      setRelActionLoading(false);
     }
   };
 
@@ -360,54 +456,69 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          {/* Conversation Avatar */}
-          <div className="relative shrink-0">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow overflow-hidden border border-purple-500/30">
-              {isGroup ? (
-                conversation.avatarUrl ? (
-                  <img src={conversation.avatarUrl} alt={conversation.name} className="w-full h-full object-cover" />
+          {/* Conversation Avatar & Name Header */}
+          <div
+            onClick={() => {
+              if (!isGroup && !isChannel && conversation.peer?.id) {
+                handleInspectUser(conversation.peer.id);
+              }
+            }}
+            className={`flex items-center gap-3 min-w-0 ${
+              !isGroup && !isChannel && conversation.peer?.id
+                ? 'cursor-pointer hover:opacity-90 transition-opacity'
+                : ''
+            }`}
+            title={!isGroup && !isChannel && conversation.peer?.id ? 'Kullanıcı profilini ve arkadaşlık durumunu görüntüle' : undefined}
+          >
+            {/* Conversation Avatar */}
+            <div className="relative shrink-0">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow overflow-hidden border border-purple-500/30">
+                {isGroup ? (
+                  conversation.avatarUrl ? (
+                    <img src={conversation.avatarUrl} alt={conversation.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Users className="w-5 h-5 text-purple-200" />
+                  )
+                ) : conversation.peer?.avatarUrl ? (
+                  <img src={conversation.peer.avatarUrl} alt={conversation.name} className="w-full h-full object-cover" />
                 ) : (
-                  <Users className="w-5 h-5 text-purple-200" />
-                )
-              ) : conversation.peer?.avatarUrl ? (
-                <img src={conversation.peer.avatarUrl} alt={conversation.name} className="w-full h-full object-cover" />
-              ) : (
-                conversation.name.slice(0, 2).toUpperCase()
+                  conversation.name.slice(0, 2).toUpperCase()
+                )}
+              </div>
+              {!isGroup && (
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#151221]" />
               )}
             </div>
-            {!isGroup && (
-              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#151221]" />
-            )}
-          </div>
 
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2">
-              {isChannel && <Hash className="w-4 h-4 text-purple-400 shrink-0" />}
-              <h2 className="font-bold text-slate-100 text-sm leading-tight truncate">{conversation.name}</h2>
-              {isGroup && (
-                <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-950/80 text-purple-300 border border-purple-800/40">
-                  Grup
-                </span>
-              )}
-              {isChannel && (
-                <span className="px-1.5 py-0.2 rounded text-[10px] bg-indigo-950/80 text-indigo-300 border border-indigo-800/40">
-                  Kanal
-                </span>
-              )}
-              {conversation.isAnnouncementOnly && (
-                <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/40 flex items-center gap-1">
-                  <Megaphone className="w-3 h-3 text-amber-400" />
-                  <span>Duyuru Kanalı</span>
-                </span>
-              )}
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-2">
+                {isChannel && <Hash className="w-4 h-4 text-purple-400 shrink-0" />}
+                <h2 className="font-bold text-slate-100 text-sm leading-tight truncate">{conversation.name}</h2>
+                {isGroup && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-950/80 text-purple-300 border border-purple-800/40">
+                    Grup
+                  </span>
+                )}
+                {isChannel && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-indigo-950/80 text-indigo-300 border border-indigo-800/40">
+                    Kanal
+                  </span>
+                )}
+                {conversation.isAnnouncementOnly && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/40 flex items-center gap-1">
+                    <Megaphone className="w-3 h-3 text-amber-400" />
+                    <span>Duyuru Kanalı</span>
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] text-purple-400 font-medium leading-none mt-1 truncate">
+                {typingUser
+                  ? `${typingUser} yazıyor...`
+                  : isGroup
+                  ? `${conversation.participantCount || conversation.participants?.length || 2} üye`
+                  : 'çevrimiçi • profili gör'}
+              </span>
             </div>
-            <span className="text-[11px] text-purple-400 font-medium leading-none mt-1 truncate">
-              {typingUser
-                ? `${typingUser} yazıyor...`
-                : isGroup
-                ? `${conversation.participantCount || conversation.participants?.length || 2} üye`
-                : 'çevrimiçi'}
-            </span>
           </div>
         </div>
 
@@ -1156,60 +1267,195 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           serverName={conversation.name}
         />
       )}
-      {/* User Profile View Modal (Hakkımda, Rol, Katılım vb.) */}
+      {/* User Profile View Modal (Hakkımda, Rol, Katılım, Arkadaş & Engelleme vb.) */}
       {inspectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#120f1e] border border-[#2a2244] w-full max-w-sm rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center relative">
-            <button
-              onClick={() => setInspectedUser(null)}
-              className="absolute top-4 right-4 p-1.5 rounded-xl bg-[#1b152d] hover:bg-[#251d3e] text-slate-400 hover:text-white transition-colors"
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in select-none">
+          <div className="bg-[#120f1e] border border-[#2a2244] w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl flex flex-col text-left relative">
+            {/* Profile Banner */}
+            <div
+              className="w-full h-24 bg-gradient-to-r from-purple-900 to-indigo-900 bg-cover bg-center relative"
+              style={{
+                backgroundColor: inspectedUser.accentColor || '#3b2361',
+                backgroundImage: inspectedUser.bannerUrl ? `url(${inspectedUser.bannerUrl})` : undefined,
+              }}
             >
-              <X className="w-4 h-4" />
-            </button>
+              <button
+                onClick={() => setInspectedUser(null)}
+                className="absolute top-3 right-3 p-1.5 rounded-xl bg-black/60 hover:bg-black/80 text-white/80 hover:text-white transition-colors backdrop-blur-sm z-10"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-            <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-purple-500 shadow-xl shadow-purple-950/50 mb-3 bg-[#181329] flex items-center justify-center text-white font-bold text-2xl">
-              {inspectedUser.avatarUrl ? (
-                <img src={inspectedUser.avatarUrl} alt={inspectedUser.displayName} className="w-full h-full object-cover" />
-              ) : (
-                inspectedUser.displayName.slice(0, 2).toUpperCase()
+            {/* Profile Header (Avatar overlapping banner) */}
+            <div className="px-5 pt-0 pb-4 relative">
+              <div className="flex items-end justify-between -mt-10 mb-3">
+                <div
+                  className="w-20 h-20 rounded-2xl overflow-hidden border-4 border-[#120f1e] shadow-xl bg-[#181329] flex items-center justify-center text-white font-bold text-2xl"
+                  style={{
+                    borderColor: inspectedUser.accentColor || '#7c3aed',
+                  }}
+                >
+                  {inspectedUser.avatarUrl ? (
+                    <img src={inspectedUser.avatarUrl} alt={inspectedUser.displayName} className="w-full h-full object-cover" />
+                  ) : (
+                    inspectedUser.displayName.slice(0, 2).toUpperCase()
+                  )}
+                </div>
+
+                {/* Free Personalization Badge */}
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-950/80 text-purple-300 border border-purple-800/60 flex items-center gap-1 shadow-sm">
+                  <Sparkles className="w-3 h-3 text-purple-400" />
+                  <span>Ücretsiz Profil</span>
+                </span>
+              </div>
+
+              {/* User Name & Details */}
+              <div className="mb-3">
+                <h3 className="text-base font-bold text-white leading-tight flex items-center gap-1.5">
+                  <span>{inspectedUser.displayName}</span>
+                  {inspectedUser.accentColor && (
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/40"
+                      style={{ backgroundColor: inspectedUser.accentColor }}
+                      title="Özel Vurgu Rengi"
+                    />
+                  )}
+                </h3>
+                <p className="text-[11px] text-slate-400">{inspectedUser.email}</p>
+              </div>
+
+              {/* Role badge */}
+              <div className="mb-3">
+                {inspectedUser.isAdmin ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60">
+                    Platform Yöneticisi
+                  </span>
+                ) : inspectedUser.isFamily ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-pink-950/80 text-pink-300 border border-pink-700/60">
+                    Aile Üyesi
+                  </span>
+                ) : inspectedUser.isModerator ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-700/60">
+                    Moderatör
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[#1e1732] text-slate-300 border border-[#31254e]">
+                    Kullanıcı
+                  </span>
+                )}
+              </div>
+
+              {/* Relationship feedback message */}
+              {relFeedback && (
+                <div className="mb-3 p-2 rounded-xl bg-purple-950/80 border border-purple-800 text-[11px] text-purple-200">
+                  {relFeedback}
+                </div>
               )}
-            </div>
 
-            <h3 className="text-base font-bold text-white mb-1">{inspectedUser.displayName}</h3>
+              {/* Relationship actions: Friend & Block controls */}
+              {currentUser && currentUser.id !== inspectedUser.id && (
+                <div className="mb-3.5 p-3 rounded-2xl bg-[#0c0a16] border border-[#231b36] space-y-2">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Arkadaşlık & İletişim
+                  </div>
 
-            {/* Role badge */}
-            <div className="mb-3">
-              {inspectedUser.isAdmin ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60">
-                  Platform Yöneticisi
-                </span>
-              ) : inspectedUser.isFamily ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-pink-950/80 text-pink-300 border border-pink-700/60">
-                  Aile Üyesi
-                </span>
-              ) : inspectedUser.isModerator ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-700/60">
-                  Moderatör
-                </span>
-              ) : (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[#1e1732] text-slate-300 border border-[#31254e]">
-                  Kullanıcı
-                </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {userRelationship?.isBlocked ? (
+                      <div className="flex items-center justify-between w-full">
+                        <span className="px-2 py-1 rounded-xl bg-red-950/80 text-red-300 border border-red-800 text-xs font-semibold flex items-center gap-1.5">
+                          <Ban className="w-3.5 h-3.5" />
+                          <span>Engellendi</span>
+                        </span>
+                        <button
+                          type="button"
+                          disabled={relActionLoading}
+                          onClick={() => handleUnblockUser(inspectedUser.id)}
+                          className="px-3 py-1.5 rounded-xl bg-[#1d1730] hover:bg-[#271f42] text-slate-200 text-xs font-semibold transition-colors disabled:opacity-50"
+                        >
+                          Engeli Kaldır
+                        </button>
+                      </div>
+                    ) : userRelationship?.isBlockedBy ? (
+                      <span className="text-xs text-red-400 font-medium">
+                        Bu kullanıcı tarafından engellendiniz.
+                      </span>
+                    ) : (
+                      <>
+                        {userRelationship?.isFriend ? (
+                          <span className="px-2.5 py-1.5 rounded-xl bg-emerald-950/80 text-emerald-300 border border-emerald-800 text-xs font-bold flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Arkadaş</span>
+                          </span>
+                        ) : userRelationship?.friendRequestStatus === 'sent' ? (
+                          <span className="px-2.5 py-1.5 rounded-xl bg-purple-950/80 text-purple-300 border border-purple-800 text-xs font-bold flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-purple-400" />
+                            <span>İstek Gönderildi</span>
+                          </span>
+                        ) : userRelationship?.friendRequestStatus === 'received' && userRelationship.friendRequestId ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={relActionLoading}
+                              onClick={() => handleRespondFriendReq(userRelationship.friendRequestId!, 'accept')}
+                              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                              <span>Kabul Et</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={relActionLoading}
+                              onClick={() => handleRespondFriendReq(userRelationship.friendRequestId!, 'decline')}
+                              className="px-3 py-1.5 rounded-xl bg-[#1d1730] hover:bg-[#271f42] text-slate-300 text-xs font-semibold transition-colors disabled:opacity-50"
+                            >
+                              Reddet
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={relActionLoading}
+                            onClick={() => handleSendFriendReq(inspectedUser.id)}
+                            className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-md shadow-purple-950/50 disabled:opacity-50"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" />
+                            <span>Arkadaş Ekle</span>
+                          </button>
+                        )}
+
+                        {/* Block action button */}
+                        <button
+                          type="button"
+                          disabled={relActionLoading}
+                          onClick={() => handleBlockUser(inspectedUser.id)}
+                          className="px-2.5 py-1.5 rounded-xl bg-red-950/30 hover:bg-red-950/70 border border-red-900/40 text-red-400 hover:text-red-300 text-xs font-semibold transition-colors ml-auto flex items-center gap-1 disabled:opacity-50"
+                          title="Kullanıcıyı Engelle"
+                        >
+                          <Ban className="w-3.5 h-3.5" />
+                          <span>Engelle</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
               )}
-            </div>
 
-            {/* Hakkımda (Bio) */}
-            <div className="w-full p-3 bg-[#0c0a16] border border-[#231b36] rounded-2xl text-left mb-3">
-              <span className="text-[10px] font-bold text-purple-400 block mb-1 uppercase tracking-wider">Hakkımda</span>
-              <p className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
-                {inspectedUser.bio || 'Bu kullanıcı henüz hakkında bilgisi eklemedi.'}
-              </p>
-            </div>
+              {/* Hakkımda (Bio) */}
+              <div className="w-full p-3 bg-[#0c0a16] border border-[#231b36] rounded-2xl text-left mb-3">
+                <span className="text-[10px] font-bold text-purple-400 block mb-1 uppercase tracking-wider">Hakkımda</span>
+                <p className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
+                  {inspectedUser.bio || 'Bu kullanıcı henüz hakkında bilgisi eklemedi.'}
+                </p>
+              </div>
 
-            {/* Account Metadata */}
-            <div className="w-full text-[11px] text-slate-400 flex items-center justify-between px-1">
-              <span>Kayıt Tarihi:</span>
-              <span className="font-mono text-slate-300">{inspectedUser.createdAt ? new Date(inspectedUser.createdAt).toLocaleDateString('tr-TR') : 'Bilinmiyor'}</span>
+              {/* Account Metadata */}
+              <div className="w-full text-[11px] text-slate-400 flex items-center justify-between px-1">
+                <span>Kayıt Tarihi:</span>
+                <span className="font-mono text-slate-300">
+                  {inspectedUser.createdAt ? new Date(inspectedUser.createdAt).toLocaleDateString('tr-TR') : 'Bilinmiyor'}
+                </span>
+              </div>
             </div>
           </div>
         </div>

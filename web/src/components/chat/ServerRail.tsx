@@ -17,6 +17,7 @@ interface ServerRailProps {
   onSelectHome: () => void;
   onSelectServer: (serverId: string) => void;
   onOpenNewServer: () => void;
+  onOpenJoinCommunity?: () => void;
   unreadHomeCount?: number;
   serverUnreadCounts?: Record<string, number>;
   theme?: 'dark' | 'light';
@@ -34,6 +35,7 @@ export const ServerRail: React.FC<ServerRailProps> = ({
   onSelectHome,
   onSelectServer,
   onOpenNewServer,
+  onOpenJoinCommunity,
   unreadHomeCount = 0,
   serverUnreadCounts = {},
   theme = 'dark',
@@ -145,6 +147,20 @@ export const ServerRail: React.FC<ServerRailProps> = ({
             <Plus className="w-5 h-5 transition-transform group-hover:rotate-90" />
           </button>
         </div>
+
+        {/* 4. Join Community (Compass) */}
+        {onOpenJoinCommunity && (
+          <div className="relative group w-full flex items-center justify-center pt-1">
+            <span className="absolute left-0 w-1 bg-purple-400 rounded-r-full h-2 opacity-0 group-hover:opacity-100 group-hover:h-5 transition-all duration-200" />
+            <button
+              onClick={onOpenJoinCommunity}
+              className="w-12 h-12 rounded-[24px] hover:rounded-2xl bg-[#120e21] hover:bg-purple-600 text-purple-400 hover:text-white border border-purple-900/40 hover:border-purple-500 flex items-center justify-center transition-all duration-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+              title="Bir Topluluğa Katıl (Davet Kodu)"
+            >
+              <Compass className="w-5 h-5 transition-transform group-hover:scale-110" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Separator */}

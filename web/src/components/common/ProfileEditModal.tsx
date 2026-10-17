@@ -1,7 +1,19 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
-import { X, User as UserIcon, Check, Phone, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
+import {
+  X,
+  User as UserIcon,
+  Check,
+  Phone,
+  Upload,
+  Image as ImageIcon,
+  Loader2,
+  Sparkles,
+  Palette,
+  Trash2,
+  Shield,
+} from 'lucide-react';
 
 const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -10,6 +22,17 @@ const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80',
+];
+
+const PRESET_ACCENT_COLORS = [
+  { name: 'XXQ Mor', color: '#8b5cf6' },
+  { name: 'Neon Pembe', color: '#ec4899' },
+  { name: 'Derin Mavi', color: '#3b82f6' },
+  { name: 'Zümrüt Yeşil', color: '#10b981' },
+  { name: 'Sıcak Amber', color: '#f59e0b' },
+  { name: 'Gül Kırmızı', color: '#f43f5e' },
+  { name: 'Okyanus Turkuaz', color: '#06b6d4' },
+  { name: 'İndigo Gece', color: '#6366f1' },
 ];
 
 interface ProfileEditModalProps {
@@ -36,15 +59,26 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
 
+  // Banner state: 'file' | 'url'
+  const [bannerMode, setBannerMode] = useState<'file' | 'url'>('file');
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [bannerPreview, setBannerPreview] = useState<string | null>(user?.bannerUrl || null);
+  const [customBannerUrl, setCustomBannerUrl] = useState(user?.bannerUrl || '');
+  const [removeBannerRequested, setRemoveBannerRequested] = useState(false);
+
+  // Accent color
+  const [accentColor, setAccentColor] = useState<string>(user?.accentColor || '#8b5cf6');
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen || !user) return null;
 
-  const currentPreview =
+  const currentAvatarPreview =
     avatarMode === 'file' && filePreview
       ? filePreview
       : avatarMode === 'url' && customAvatarUrl.trim()
@@ -60,8 +94,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
       return;
     }
 
-    if (file.size > 1024 * 1024) {
-      setError('Resim boyutu 1 MB değerini aşamaz. Lütfen daha küçük bir resim seçin.');
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Resim boyutu 2 MB değerini aşamaz. Lütfen daha küçük bir resim seçin.');
       return;
     }
 
@@ -74,6 +108,39 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
       setAvatarMode('file');
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleBannerFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setError('Lütfen geçerli bir afiş dosyası seçin (JPEG, PNG, WEBP, GIF).');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Afiş boyutu 2 MB değerini aşamaz. Lütfen daha küçük bir resim seçin.');
+      return;
+    }
+
+    setError(null);
+    setBannerFile(file);
+    setRemoveBannerRequested(false);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setBannerPreview(event.target?.result as string);
+      setBannerMode('file');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveBanner = () => {
+    setBannerFile(null);
+    setBannerPreview(null);
+    setCustomBannerUrl('');
+    setRemoveBannerRequested(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -90,7 +157,6 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
       let finalAvatarUrl: string | undefined = undefined;
 
       if (avatarMode === 'file' && selectedFile) {
-        // Upload file via avatar endpoint
         const uploadRes = await api.uploadAvatar(selectedFile);
         finalAvatarUrl = uploadRes.avatarUrl;
       } else if (avatarMode === 'url' && customAvatarUrl.trim()) {
@@ -99,11 +165,33 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
         finalAvatarUrl = selectedPreset;
       }
 
+      // Handle Banner
+      let finalBannerUrl: string | null | undefined = undefined;
+      if (removeBannerRequested) {
+        try {
+          await api.removeBanner();
+          finalBannerUrl = null;
+        } catch (bErr) {
+          console.warn('Afiş silinirken hata:', bErr);
+        }
+      } else if (bannerMode === 'file' && bannerFile) {
+        try {
+          const bannerRes = await api.uploadBanner(bannerFile);
+          finalBannerUrl = bannerRes.bannerUrl;
+        } catch (bErr: any) {
+          console.warn('Afiş dosyası yüklenemedi:', bErr);
+        }
+      } else if (bannerMode === 'url') {
+        finalBannerUrl = customBannerUrl.trim() || null;
+      }
+
       const res = await api.updateMe({
         firstName: firstName.trim() || undefined,
         lastName: lastName.trim() || undefined,
         displayName: displayName.trim(),
         avatarUrl: finalAvatarUrl,
+        bannerUrl: finalBannerUrl,
+        accentColor: accentColor || null,
         phoneNumber: phoneNumber.trim() || undefined,
         bio: bio.trim() || null,
         groupAddPrivacy,
@@ -123,8 +211,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#120f1e] border border-[#2a2244] w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in select-none">
+      <div className="bg-[#120f1e] border border-[#2a2244] w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[#241c38] flex items-center justify-between bg-gradient-to-r from-purple-950/40 via-[#120f1e] to-[#120f1e]">
           <div className="flex items-center gap-2.5">
@@ -132,8 +220,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               <UserIcon className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">Profilimi Düzenle</h2>
-              <p className="text-[11px] text-slate-400">Kişisel bilgilerinizi ve profil fotoğrafınızı güncelleyin</p>
+              <h2 className="text-sm font-bold text-white">Profil & Kişiselleştirme</h2>
+              <p className="text-[11px] text-slate-400">Ücretsiz afiş, özel tema renkleri ve profil bilgileri</p>
             </div>
           </div>
           <button
@@ -145,7 +233,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto max-h-[75vh]">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto flex-1 text-xs">
           {error && (
             <div className="p-3 bg-red-950/60 border border-red-800/80 rounded-xl text-xs text-red-300">
               {error}
@@ -155,12 +243,151 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
           {success && (
             <div className="p-3 bg-emerald-950/60 border border-emerald-800/80 rounded-xl text-xs text-emerald-300 flex items-center gap-2">
               <Check className="w-4 h-4 text-emerald-400" />
-              <span>Profil ve fotoğraf başarıyla güncellendi!</span>
+              <span>Profil ve kişiselleştirmeleriniz başarıyla kaydedildi!</span>
             </div>
           )}
 
+          {/* Free Personalization Notice */}
+          <div className="p-3.5 bg-gradient-to-r from-purple-950/80 via-[#1d1435] to-indigo-950/80 border border-purple-600/50 rounded-2xl flex items-start gap-3 shadow-md">
+            <div className="p-2 rounded-xl bg-purple-600 text-white shrink-0 shadow">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-bold text-white text-xs flex items-center gap-1.5">
+                <span>Herkes İçin %100 Ücretsiz Kişiselleştirme</span>
+              </h4>
+              <p className="text-[11px] text-purple-200/90 leading-relaxed mt-0.5">
+                XXQ Chat'te profil afişi, özel tema ve vurgu renkleri, özel avatar ve tüm emojiler/reaksiyonlar tüm kullanıcılara tamamen ücretsizdir. Ücretli abonelik veya kilitli özellikler bulunmaz.
+              </p>
+            </div>
+          </div>
+
+          {/* Banner & Live Header Preview */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Profil Afişi (Banner)
+            </label>
+
+            {/* Banner preview card */}
+            <div
+              className="w-full h-28 rounded-2xl bg-[#18122c] border border-[#2b2046] overflow-hidden relative bg-cover bg-center mb-2 flex items-end p-3 shadow-inner"
+              style={{
+                backgroundColor: accentColor || '#312356',
+                backgroundImage: bannerPreview ? `url(${bannerPreview})` : undefined,
+              }}
+            >
+              <div
+                className="w-14 h-14 rounded-xl overflow-hidden border-2 bg-[#120f1e] flex items-center justify-center text-white font-bold text-lg shadow-lg shrink-0"
+                style={{ borderColor: accentColor }}
+              >
+                <img
+                  src={currentAvatarPreview}
+                  alt="Önizleme"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = PRESET_AVATARS[0];
+                  }}
+                />
+              </div>
+
+              {bannerPreview && (
+                <button
+                  type="button"
+                  onClick={handleRemoveBanner}
+                  className="absolute top-2 right-2 px-2.5 py-1 bg-black/70 hover:bg-red-950 text-red-300 hover:text-red-200 rounded-lg text-[10px] font-semibold transition-colors flex items-center gap-1 backdrop-blur-sm"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>Afişi Kaldır</span>
+                </button>
+              )}
+            </div>
+
+            {/* Banner controls */}
+            <div className="flex items-center gap-2">
+              <input
+                ref={bannerInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleBannerFileChange}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => bannerInputRef.current?.click()}
+                className="px-3 py-1.5 bg-[#1b152d] hover:bg-[#251d3e] text-purple-300 rounded-xl font-semibold transition-colors flex items-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Afiş Yükle</span>
+              </button>
+              <div className="flex-1">
+                <input
+                  type="url"
+                  placeholder="Veya afiş görsel URL bağlantısı girin..."
+                  value={customBannerUrl}
+                  onChange={(e) => {
+                    setCustomBannerUrl(e.target.value);
+                    setBannerPreview(e.target.value || null);
+                    setBannerMode('url');
+                    setRemoveBannerRequested(false);
+                  }}
+                  className="w-full px-3 py-1.5 bg-[#0b0914] border border-[#241c38] rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Önerilen boyut: 600x200 piksel. Güvenlik ve kaynak koruması amacıyla dosya boyutu 2 MB ile sınırlıdır.
+            </p>
+          </div>
+
+          {/* Accent Color Selection */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Özel Profil Vurgu Rengi
+            </label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {PRESET_ACCENT_COLORS.map((item) => (
+                <button
+                  type="button"
+                  key={item.color}
+                  onClick={() => setAccentColor(item.color)}
+                  className={`w-7 h-7 rounded-xl transition-transform flex items-center justify-center border-2 ${
+                    accentColor === item.color
+                      ? 'scale-110 border-white shadow-lg'
+                      : 'border-transparent hover:scale-105'
+                  }`}
+                  style={{ backgroundColor: item.color }}
+                  title={item.name}
+                >
+                  {accentColor === item.color && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
+                </button>
+              ))}
+
+              {/* Custom Color Input */}
+              <label
+                className="w-7 h-7 rounded-xl border border-dashed border-slate-600 hover:border-purple-400 cursor-pointer flex items-center justify-center overflow-hidden"
+                title="Özel Renk Seç"
+              >
+                <input
+                  type="color"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  className="opacity-0 w-full h-full cursor-pointer"
+                />
+                <Palette className="w-3.5 h-3.5 text-slate-400 absolute pointer-events-none" />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setAccentColor('#8b5cf6')}
+                className="text-[11px] text-purple-400 hover:text-purple-300 font-semibold ml-1"
+              >
+                Sıfırla
+              </button>
+            </div>
+          </div>
+
           {/* Name Fields */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#241c38]">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">Adınız</label>
               <input
@@ -255,53 +482,11 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               <option value="friends">Yalnızca Arkadaşlarım (Sadece arkadaşlarım gruplara ekleyebilir)</option>
               <option value="invite_only">Yalnızca Davetle (Gruplara doğrudan eklenemem, davet onayı gerekir)</option>
             </select>
-            <p className="text-[10px] text-slate-500 mt-1">
-              Grup kurucularının sizi doğrudan gruplara ekleyebilmesini veya davet onayınıza tabi tutulmasını belirler.
-            </p>
           </div>
 
           {/* Avatar Options */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-2">Profil Fotoğrafı</label>
-
-            {/* Live Preview Box */}
-            <div className="flex items-center gap-3 mb-3 p-3 bg-[#0b0914] border border-[#241c38] rounded-2xl">
-              <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-purple-500 bg-[#161224] flex-shrink-0 shadow-lg shadow-purple-950/40">
-                <img
-                  src={currentPreview}
-                  alt="Önizleme"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = PRESET_AVATARS[0];
-                  }}
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-slate-200">Mevcut Önizleme</p>
-                <p className="text-[11px] text-slate-400 truncate">
-                  {avatarMode === 'file'
-                    ? selectedFile?.name || 'Yerel dosya seçildi'
-                    : avatarMode === 'url'
-                    ? 'Özel internet bağlantısı'
-                    : 'Hazır avatar seçildi'}
-                </p>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/png, image/jpeg, image/webp, image/gif"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 bg-purple-950/80 hover:bg-purple-900 border border-purple-700/60 rounded-lg text-[11px] font-semibold text-purple-200 transition-colors"
-                >
-                  <Upload className="w-3 h-3 text-purple-300" />
-                  <span>Fotoğraf Yükle</span>
-                </button>
-              </div>
-            </div>
 
             {/* Mode selection tabs */}
             <div className="flex items-center gap-1.5 mb-2.5">
@@ -327,6 +512,21 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               >
                 Web Bağlantısı (URL)
               </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-[#181329] text-purple-300 hover:text-white transition-colors flex items-center gap-1 ml-auto"
+              >
+                <Upload className="w-3 h-3" />
+                <span>Dosya Yükle</span>
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/png, image/jpeg, image/webp, image/gif"
+                onChange={handleFileChange}
+                className="hidden"
+              />
             </div>
 
             {avatarMode === 'preset' && (
@@ -384,12 +584,12 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               />
             </div>
             <p className="text-[10px] text-slate-500 mt-1">
-              Telefon numaranız yalnızca hesap güvenliği için saklanır, diğer kullanıcılara asla gösterilmez.
+              Telefon numaranız yalnızca hesap kurtarma veya güvenlik için saklanır, diğer kullanıcılara asla gösterilmez.
             </p>
           </div>
 
           {/* Buttons */}
-          <div className="flex items-center justify-end gap-2.5 pt-3">
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#241c38]">
             <button
               type="button"
               onClick={onClose}

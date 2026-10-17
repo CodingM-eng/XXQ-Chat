@@ -18,6 +18,9 @@ import {
   DbSupportReport,
   DbServer,
   ServerPurpose,
+  ServerPermission,
+  ServerCustomRole,
+  ServerJoinQuestion,
   DbMembershipInvitation,
   DbServerInvite,
   DbFriendRequest,
@@ -366,6 +369,8 @@ export class FirestoreStore implements DataStore {
       lastName: d.lastName || d.last_name || null,
       displayName: d.displayName || d.display_name,
       avatarUrl: d.avatarUrl || d.avatar_url || null,
+      bannerUrl: d.bannerUrl || d.banner_url || null,
+      accentColor: d.accentColor || d.accent_color || null,
       phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin,
       isModerator,
@@ -395,6 +400,8 @@ export class FirestoreStore implements DataStore {
       lastName: d.lastName || d.last_name || null,
       displayName: d.displayName || d.display_name,
       avatarUrl: d.avatarUrl || d.avatar_url || null,
+      bannerUrl: d.bannerUrl || d.banner_url || null,
+      accentColor: d.accentColor || d.accent_color || null,
       phoneNumber: d.phoneNumber || d.phone_number || null,
       isAdmin,
       isModerator,
@@ -482,6 +489,8 @@ export class FirestoreStore implements DataStore {
       lastName?: string | null;
       displayName?: string;
       avatarUrl?: string | null;
+      bannerUrl?: string | null;
+      accentColor?: string | null;
       phoneNumber?: string | null;
       themePreference?: 'dark' | 'light';
       bio?: string | null;
@@ -497,6 +506,8 @@ export class FirestoreStore implements DataStore {
     if (updates.lastName !== undefined) dataToUpdate.lastName = updates.lastName;
     if (updates.displayName !== undefined) dataToUpdate.displayName = updates.displayName;
     if (updates.avatarUrl !== undefined) dataToUpdate.avatarUrl = updates.avatarUrl;
+    if (updates.bannerUrl !== undefined) dataToUpdate.bannerUrl = updates.bannerUrl;
+    if (updates.accentColor !== undefined) dataToUpdate.accentColor = updates.accentColor;
     if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber;
     if (updates.themePreference !== undefined) dataToUpdate.themePreference = updates.themePreference;
     if (updates.bio !== undefined) dataToUpdate.bio = updates.bio;
@@ -1614,7 +1625,7 @@ export class FirestoreStore implements DataStore {
   }
 
   // Servers & Channels
-  async createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; rules?: string | null }): Promise<{ server: DbServer; channels: DbConversationSummary[] }> {
+  async createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; bannerUrl?: string | null; rules?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean; joinQuestions?: ServerJoinQuestion[] }): Promise<{ server: DbServer; channels: DbConversationSummary[] }> {
     const serverId = 'srv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
     const now = new Date().toISOString();
 
@@ -1624,7 +1635,11 @@ export class FirestoreStore implements DataStore {
       description: data.description || null,
       purpose: data.purpose || 'chat',
       avatarUrl: data.avatarUrl || null,
+      bannerUrl: data.bannerUrl || null,
+      welcomeMessage: data.welcomeMessage || null,
       rules: data.rules || null,
+      requiresApproval: !!data.requiresApproval || (!!data.joinQuestions && data.joinQuestions.length > 0),
+      joinQuestions: data.joinQuestions || [],
       ownerId,
       memberIds: [ownerId],
       roles: { [ownerId]: 'owner' },
@@ -1690,7 +1705,12 @@ export class FirestoreStore implements DataStore {
       description: data.description || null,
       purpose: data.purpose,
       avatarUrl: data.avatarUrl || null,
+      bannerUrl: data.bannerUrl || null,
+      welcomeMessage: data.welcomeMessage || null,
       rules: data.rules || null,
+      requiresApproval: !!data.requiresApproval || (!!data.joinQuestions && data.joinQuestions.length > 0),
+      joinQuestions: data.joinQuestions || [],
+      roles: [],
       ownerId,
       memberIds: [ownerId],
       members: ownerUser ? [{
@@ -1698,6 +1718,7 @@ export class FirestoreStore implements DataStore {
         displayName: ownerUser.displayName,
         avatarUrl: ownerUser.avatarUrl,
         role: 'owner',
+        roleIds: [],
         customTag: null,
         joinedAt: now,
       }] : [],
@@ -1724,6 +1745,7 @@ export class FirestoreStore implements DataStore {
           displayName: u.displayName,
           avatarUrl: u.avatarUrl,
           role: data.roles?.[mid] || (data.ownerId === mid ? 'owner' : 'member'),
+          roleIds: data.memberCustomRoles?.[mid] || [],
           customTag: data.customTags?.[mid] || null,
           joinedAt: data.joinedAts?.[mid] || data.createdAt,
         });
@@ -1753,13 +1775,25 @@ export class FirestoreStore implements DataStore {
       });
     }
 
+    const rolesSnap = await this.getFirestore().collection('server_roles').where('serverId', '==', serverId).get();
+    const roles: ServerCustomRole[] = [];
+    rolesSnap.forEach((doc) => {
+      roles.push(doc.data() as ServerCustomRole);
+    });
+    roles.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
     return {
       id: sDoc.id,
       name: data.name,
       description: data.description || null,
       purpose: data.purpose || 'chat',
       avatarUrl: data.avatarUrl || null,
+      bannerUrl: data.bannerUrl || null,
+      welcomeMessage: data.welcomeMessage || null,
       rules: data.rules || null,
+      requiresApproval: !!data.requiresApproval,
+      joinQuestions: data.joinQuestions || [],
+      roles,
       ownerId: data.ownerId,
       memberIds,
       members,
@@ -1949,15 +1983,23 @@ export class FirestoreStore implements DataStore {
     }
   }
 
-  async updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; purpose?: ServerPurpose }): Promise<void> {
+  async updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; bannerUrl?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean; purpose?: ServerPurpose }): Promise<void> {
     const sRef = this.getFirestore().collection('servers').doc(serverId);
     const data: any = { updatedAt: new Date().toISOString() };
     if (updates.name !== undefined) data.name = updates.name;
     if (updates.description !== undefined) data.description = updates.description;
     if (updates.rules !== undefined) data.rules = updates.rules;
     if (updates.avatarUrl !== undefined) data.avatarUrl = updates.avatarUrl;
+    if (updates.bannerUrl !== undefined) data.bannerUrl = updates.bannerUrl;
+    if (updates.welcomeMessage !== undefined) data.welcomeMessage = updates.welcomeMessage;
+    if (updates.requiresApproval !== undefined) data.requiresApproval = updates.requiresApproval;
     if (updates.purpose !== undefined) data.purpose = updates.purpose;
     await sRef.set(data, { merge: true });
+  }
+
+  async updateServerIdentity(serverId: string, data: { name?: string; description?: string | null; purpose?: ServerPurpose; avatarUrl?: string | null; bannerUrl?: string | null; rules?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean }): Promise<DbServer | null> {
+    await this.updateServerSettings(serverId, data);
+    return this.getServer(serverId, '');
   }
 
   async isServerMember(serverId: string, userId: string): Promise<boolean> {
@@ -1975,6 +2017,94 @@ export class FirestoreStore implements DataStore {
     return data.roles?.[userId] === 'owner' || data.roles?.[userId] === 'admin';
   }
 
+  // Community Join Questions & Roles
+  async setServerJoinQuestions(serverId: string, questions: ServerJoinQuestion[]): Promise<ServerJoinQuestion[]> {
+    await this.getFirestore().collection('servers').doc(serverId).set({
+      joinQuestions: questions,
+      requiresApproval: true,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return questions;
+  }
+
+  async getServerJoinQuestions(serverId: string): Promise<ServerJoinQuestion[]> {
+    const doc = await this.getFirestore().collection('servers').doc(serverId).get();
+    if (!doc.exists) return [];
+    return (doc.data()?.joinQuestions as ServerJoinQuestion[]) || [];
+  }
+
+  async createServerRole(serverId: string, data: { name: string; color: string; permissions: ServerPermission[]; order?: number }): Promise<ServerCustomRole> {
+    const id = 'role_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+    const now = new Date().toISOString();
+    const role: ServerCustomRole = {
+      id,
+      serverId,
+      name: data.name,
+      color: data.color,
+      permissions: data.permissions,
+      order: data.order ?? 0,
+      createdAt: now,
+    };
+    await this.getFirestore().collection('server_roles').doc(id).set(role);
+    return role;
+  }
+
+  async updateServerRole(serverId: string, roleId: string, updates: { name?: string; color?: string; permissions?: ServerPermission[]; order?: number }): Promise<ServerCustomRole | null> {
+    const docRef = this.getFirestore().collection('server_roles').doc(roleId);
+    const doc = await docRef.get();
+    if (!doc.exists) return null;
+    await docRef.set(updates, { merge: true });
+    const fresh = await docRef.get();
+    return fresh.data() as ServerCustomRole;
+  }
+
+  async deleteServerRole(serverId: string, roleId: string): Promise<boolean> {
+    await this.getFirestore().collection('server_roles').doc(roleId).delete();
+    return true;
+  }
+
+  async getServerRoles(serverId: string): Promise<ServerCustomRole[]> {
+    const snap = await this.getFirestore().collection('server_roles').where('serverId', '==', serverId).get();
+    const roles: ServerCustomRole[] = [];
+    snap.forEach((d) => roles.push(d.data() as ServerCustomRole));
+    return roles.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  async setServerMemberCustomRoles(serverId: string, userId: string, roleIds: string[]): Promise<void> {
+    await this.getFirestore().collection('servers').doc(serverId).set({
+      [`memberCustomRoles.${userId}`]: roleIds,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  }
+
+  async hasServerPermission(serverId: string, userId: string, permission: ServerPermission): Promise<boolean> {
+    const user = await this.getUserById(userId);
+    if (user?.isAdmin) return true;
+
+    const sDoc = await this.getFirestore().collection('servers').doc(serverId).get();
+    if (!sDoc.exists) return false;
+    const sData = sDoc.data()!;
+
+    const baseRole = sData.roles?.[userId] || (sData.ownerId === userId ? 'owner' : 'member');
+    if (baseRole === 'owner' || baseRole === 'admin') return true;
+    if (baseRole === 'moderator') {
+      if (['manage_messages', 'kick_members', 'send_announcements', 'view_audit_logs'].includes(permission)) {
+        return true;
+      }
+    }
+
+    const assignedRoleIds: string[] = sData.memberCustomRoles?.[userId] || [];
+    for (const rid of assignedRoleIds) {
+      const rDoc = await this.getFirestore().collection('server_roles').doc(rid).get();
+      if (rDoc.exists) {
+        const perms: ServerPermission[] = rDoc.data()?.permissions || [];
+        if (perms.includes(permission)) return true;
+      }
+    }
+
+    return false;
+  }
+
   // Membership Invitations & Join Requests
   async createMembershipInvitation(invitation: Omit<DbMembershipInvitation, 'id' | 'createdAt' | 'status'> & { id?: string }): Promise<DbMembershipInvitation> {
     const id = invitation.id || 'inv_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
@@ -1989,6 +2119,7 @@ export class FirestoreStore implements DataStore {
       userDisplayName: invitation.userDisplayName,
       type: invitation.type,
       status: 'pending',
+      answers: invitation.answers,
       createdById: invitation.createdById,
       createdAt: now,
       resolvedAt: null,
@@ -2219,6 +2350,11 @@ export class FirestoreStore implements DataStore {
       throw new Error('Bu kullanıcıyla zaten arkadaşsınız.');
     }
 
+    const areBlocked = await this.areUsersBlocked(senderId, receiver.id);
+    if (areBlocked) {
+      throw new Error('Engellenen veya sizi engelleyen bir kullanıcıya arkadaşlık isteği gönderilemez.');
+    }
+
     const sender = await this.getUserById(senderId);
     if (!sender) throw new Error('Gönderen kullanıcı bulunamadı.');
 
@@ -2336,6 +2472,107 @@ export class FirestoreStore implements DataStore {
   async areFriends(userId1: string, userId2: string): Promise<boolean> {
     const doc = await this.getFirestore().collection('user_friends').doc(`${userId1}_${userId2}`).get();
     return doc.exists;
+  }
+
+  // User Blocking & Relationships
+  async blockUser(blockerId: string, blockedId: string): Promise<void> {
+    if (blockerId === blockedId) return;
+    const now = new Date().toISOString();
+    await this.getFirestore().collection('user_blocks').doc(`${blockerId}_${blockedId}`).set({
+      blockerId,
+      blockedId,
+      createdAt: now,
+    });
+
+    await this.removeFriend(blockerId, blockedId);
+
+    const snap = await this.getFirestore().collection('friend_requests')
+      .where('senderId', 'in', [blockerId, blockedId])
+      .get();
+
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      if (
+        (data.senderId === blockerId && data.receiverId === blockedId) ||
+        (data.senderId === blockedId && data.receiverId === blockerId)
+      ) {
+        await doc.ref.delete();
+      }
+    }
+  }
+
+  async unblockUser(blockerId: string, blockedId: string): Promise<void> {
+    await this.getFirestore().collection('user_blocks').doc(`${blockerId}_${blockedId}`).delete();
+  }
+
+  async isUserBlocked(blockerId: string, blockedId: string): Promise<boolean> {
+    const doc = await this.getFirestore().collection('user_blocks').doc(`${blockerId}_${blockedId}`).get();
+    return doc.exists;
+  }
+
+  async areUsersBlocked(userId1: string, userId2: string): Promise<boolean> {
+    const b1 = await this.isUserBlocked(userId1, userId2);
+    if (b1) return true;
+    return this.isUserBlocked(userId2, userId1);
+  }
+
+  async getBlockedUsers(userId: string): Promise<DbUser[]> {
+    const snap = await this.getFirestore().collection('user_blocks')
+      .where('blockerId', '==', userId)
+      .get();
+
+    const users: DbUser[] = [];
+    for (const d of snap.docs) {
+      const u = await this.getUserById(d.data().blockedId);
+      if (u) users.push(u);
+    }
+    return users.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  async getUserRelationship(userId1: string, userId2: string): Promise<{
+    isFriend: boolean;
+    isBlocked: boolean;
+    isBlockedBy: boolean;
+    friendRequestStatus: 'none' | 'sent' | 'received';
+    friendRequestId: string | null;
+  }> {
+    const isFriend = await this.areFriends(userId1, userId2);
+    const isBlocked = await this.isUserBlocked(userId1, userId2);
+    const isBlockedBy = await this.isUserBlocked(userId2, userId1);
+
+    const snap = await this.getFirestore().collection('friend_requests')
+      .where('senderId', 'in', [userId1, userId2])
+      .get();
+
+    let friendRequestStatus: 'none' | 'sent' | 'received' = 'none';
+    let friendRequestId: string | null = null;
+
+    const pendingDoc = snap.docs.find((d) => {
+      const data = d.data();
+      return (
+        data.status === 'pending' &&
+        ((data.senderId === userId1 && data.receiverId === userId2) ||
+         (data.senderId === userId2 && data.receiverId === userId1))
+      );
+    });
+
+    if (pendingDoc) {
+      const d = pendingDoc.data();
+      friendRequestId = pendingDoc.id;
+      if (d.senderId === userId1) {
+        friendRequestStatus = 'sent';
+      } else {
+        friendRequestStatus = 'received';
+      }
+    }
+
+    return {
+      isFriend,
+      isBlocked,
+      isBlockedBy,
+      friendRequestStatus,
+      friendRequestId,
+    };
   }
 
   // Bot Pool & Gemini AI Configuration

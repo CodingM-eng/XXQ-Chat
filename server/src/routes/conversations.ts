@@ -93,6 +93,16 @@ router.post('/direct', async (req, res) => {
     return;
   }
 
+  // Block check: Cannot start direct conversation if either user blocked the other
+  const areBlocked = await dataStore.areUsersBlocked(currentUserId, peer.id);
+  if (areBlocked) {
+    res.status(403).json({
+      error: 'USER_BLOCKED',
+      message: 'Engellenen veya sizi engelleyen bir kullanıcıyla doğrudan sohbet başlatamazsınız.',
+    });
+    return;
+  }
+
   // Check if direct conversation already exists
   const existingConvId = await dataStore.getDirectConversation(currentUserId, peer.id);
 
@@ -882,18 +892,29 @@ router.post('/:id/messages', async (req, res) => {
 
   const conv = await dataStore.getConversation(convId, user.id);
 
-  // Aile role messaging guard: only platform admin can send direct messages to Aile users
-  if (conv && conv.type === 'direct' && !user.isAdmin) {
+  // Aile role & block guard for direct messaging
+  if (conv && conv.type === 'direct') {
     const participants = await dataStore.getConversationParticipantIds(convId);
     const peerId = participants.find((id) => id !== user.id);
     if (peerId) {
-      const peer = await dataStore.getUserById(peerId);
-      if (peer && peer.isFamily) {
+      const areBlocked = await dataStore.areUsersBlocked(user.id, peerId);
+      if (areBlocked) {
         res.status(403).json({
-          error: 'FAMILY_ROLE_PROTECTED',
-          message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi mesaj gönderebilir.',
+          error: 'USER_BLOCKED',
+          message: 'Engellenen veya sizi engelleyen bir kullanıcıya mesaj gönderemezsiniz.',
         });
         return;
+      }
+
+      if (!user.isAdmin) {
+        const peer = await dataStore.getUserById(peerId);
+        if (peer && peer.isFamily) {
+          res.status(403).json({
+            error: 'FAMILY_ROLE_PROTECTED',
+            message: 'Aile rolündeki kullanıcılara yalnızca platform yöneticisi mesaj gönderebilir.',
+          });
+          return;
+        }
       }
     }
   }
@@ -901,11 +922,14 @@ router.post('/:id/messages', async (req, res) => {
   // Check announcement-only channel permission
   if (conv && conv.isAnnouncementOnly) {
     const role = await dataStore.getConversationRole(convId, user.id);
-    const isOwnerOrAdmin = role === 'owner' || role === 'admin' || user.isAdmin;
-    if (!isOwnerOrAdmin) {
+    let canSend = role === 'owner' || role === 'admin' || user.isAdmin;
+    if (!canSend && conv.serverId) {
+      canSend = await dataStore.hasServerPermission(conv.serverId, user.id, 'send_announcements');
+    }
+    if (!canSend) {
       res.status(403).json({
         error: 'ANNOUNCEMENT_ONLY',
-        message: 'Bu kanal salt okunur duyuru kanalıdır. Yalnızca yöneticiler mesaj gönderebilir.',
+        message: 'Bu kanal salt okunur duyuru kanalıdır. Yalnızca yöneticiler veya yetkili roller mesaj gönderebilir.',
       });
       return;
     }

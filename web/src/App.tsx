@@ -13,6 +13,8 @@ import { NewChatModal } from './components/chat/NewChatModal';
 import { NewServerModal } from './components/chat/NewServerModal';
 import { CreateChannelModal } from './components/chat/CreateChannelModal';
 import { ServerInviteModal } from './components/chat/ServerInviteModal';
+import { CommunitySettingsModal } from './components/chat/CommunitySettingsModal';
+import { JoinCommunityModal } from './components/chat/JoinCommunityModal';
 import { FriendsModal } from './components/chat/FriendsModal';
 import { InvitationsModal } from './components/chat/InvitationsModal';
 import { ProfileEditModal } from './components/common/ProfileEditModal';
@@ -56,6 +58,8 @@ export const AppContent: React.FC = () => {
   const [isNewServerOpen, setIsNewServerOpen] = useState(false);
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const [isServerInviteOpen, setIsServerInviteOpen] = useState(false);
+  const [isCommunitySettingsOpen, setIsCommunitySettingsOpen] = useState(false);
+  const [isJoinCommunityOpen, setIsJoinCommunityOpen] = useState(false);
   const [isFriendsOpen, setIsFriendsOpen] = useState(false);
   const [isInvitationsOpen, setIsInvitationsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -598,6 +602,7 @@ export const AppContent: React.FC = () => {
               onSelectHome={handleSelectHome}
               onSelectServer={handleSelectServer}
               onOpenNewServer={() => setIsNewServerOpen(true)}
+              onOpenJoinCommunity={() => setIsJoinCommunityOpen(true)}
               unreadHomeCount={unreadHomeCount}
               serverUnreadCounts={serverUnreadCounts}
               theme={theme}
@@ -628,6 +633,7 @@ export const AppContent: React.FC = () => {
               onOpenNewChat={() => setIsNewChatOpen(true)}
               onOpenNewChannel={() => setIsCreateChannelOpen(true)}
               onOpenServerInvite={() => setIsServerInviteOpen(true)}
+              onOpenCommunitySettings={() => setIsCommunitySettingsOpen(true)}
               onOpenFriends={() => setIsFriendsOpen(true)}
               onOpenInvitations={() => setIsInvitationsOpen(true)}
               pendingFriendRequestsCount={pendingFriendRequestsCount}
@@ -841,6 +847,32 @@ export const AppContent: React.FC = () => {
           onClose={() => setIsServerInviteOpen(false)}
           serverId={activeServerId || selectedConversation?.serverId || selectedConversation?.id || ''}
           serverName={activeServer?.name || selectedConversation?.name || 'XXQ Topluluğu'}
+        />
+      )}
+
+      {/* Community Settings Modal */}
+      {isCommunitySettingsOpen && activeServer && (
+        <CommunitySettingsModal
+          isOpen={isCommunitySettingsOpen}
+          onClose={() => setIsCommunitySettingsOpen(false)}
+          server={activeServer}
+          currentUser={user}
+          onServerUpdated={(updated) => {
+            setServers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+          }}
+        />
+      )}
+
+      {/* Join Community Modal */}
+      {isJoinCommunityOpen && (
+        <JoinCommunityModal
+          isOpen={isJoinCommunityOpen}
+          onClose={() => setIsJoinCommunityOpen(false)}
+          onJoined={(newServer) => {
+            loadServers();
+            loadConversations();
+            handleSelectServer(newServer.id);
+          }}
         />
       )}
 

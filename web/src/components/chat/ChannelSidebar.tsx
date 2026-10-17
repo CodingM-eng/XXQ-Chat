@@ -29,6 +29,7 @@ interface ChannelSidebarProps {
   onOpenNewChat: () => void;
   onOpenNewChannel?: () => void;
   onOpenServerInvite?: () => void;
+  onOpenCommunitySettings?: () => void;
   onOpenFriends: () => void;
   onOpenInvitations: () => void;
   pendingFriendRequestsCount?: number;
@@ -47,6 +48,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   onOpenNewChat,
   onOpenNewChannel,
   onOpenServerInvite,
+  onOpenCommunitySettings,
   onOpenFriends,
   onOpenInvitations,
   pendingFriendRequestsCount = 0,
@@ -167,24 +169,39 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           {/* Server Title Banner Button */}
           <button
             onClick={() => setIsServerMenuOpen(!isServerMenuOpen)}
-            className="w-full p-3.5 flex items-center justify-between hover:bg-[#161129] transition-colors text-left"
+            className="w-full p-3.5 flex items-center justify-between hover:bg-[#161129] transition-colors text-left relative overflow-hidden group"
           >
-            <div className="min-w-0 pr-2">
-              <h2 className="text-sm font-bold text-white truncate">
-                {activeServer?.name || 'Topluluk Sunucusu'}
-              </h2>
-              <span className="text-[10px] text-purple-400 font-medium capitalize">
-                {activeServer?.purpose === 'gaming'
-                  ? '🎮 Oyun Topluluğu'
-                  : activeServer?.purpose === 'chat'
-                  ? '💬 Sohbet ve Muhabbet'
-                  : activeServer?.purpose === 'business'
-                  ? '💼 İş ve Proje'
-                  : '📢 Duyuru ve Topluluk'}
-              </span>
+            {activeServer?.bannerUrl && (
+              <div
+                className="absolute inset-0 opacity-20 bg-cover bg-center pointer-events-none group-hover:opacity-30 transition-opacity"
+                style={{ backgroundImage: `url(${activeServer.bannerUrl})` }}
+              />
+            )}
+            <div className="flex items-center gap-2.5 min-w-0 pr-2 relative z-10">
+              {activeServer?.avatarUrl && (
+                <img
+                  src={activeServer.avatarUrl}
+                  alt={activeServer.name}
+                  className="w-8 h-8 rounded-xl object-cover border border-purple-800/60 shrink-0 shadow"
+                />
+              )}
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-white truncate">
+                  {activeServer?.name || 'Topluluk Sunucusu'}
+                </h2>
+                <span className="text-[10px] text-purple-400 font-medium capitalize">
+                  {activeServer?.purpose === 'gaming'
+                    ? '🎮 Oyun Topluluğu'
+                    : activeServer?.purpose === 'chat'
+                    ? '💬 Sohbet ve Muhabbet'
+                    : activeServer?.purpose === 'business'
+                    ? '💼 İş ve Proje'
+                    : '📢 Duyuru ve Topluluk'}
+                </span>
+              </div>
             </div>
             <ChevronDown
-              className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ${
+              className={`w-4 h-4 text-slate-400 transition-transform shrink-0 relative z-10 ${
                 isServerMenuOpen ? 'rotate-180 text-purple-300' : ''
               }`}
             />
@@ -216,6 +233,19 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 >
                   <Plus className="w-3.5 h-3.5 text-purple-400" />
                   <span>Yeni Kanal Ekle</span>
+                </button>
+              )}
+
+              {isServerAdmin && onOpenCommunitySettings && (
+                <button
+                  onClick={() => {
+                    setIsServerMenuOpen(false);
+                    onOpenCommunitySettings();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-slate-200 hover:text-white hover:bg-[#1e1733] transition-colors font-medium text-left"
+                >
+                  <Settings className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Topluluk Ayarları</span>
                 </button>
               )}
             </div>

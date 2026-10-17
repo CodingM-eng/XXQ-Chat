@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Shield,
   Heart,
+  Ban,
 } from 'lucide-react';
 
 interface FriendsModalProps {
@@ -27,10 +28,12 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   onClose,
   onStartDirectChat,
 }) => {
-  const [activeTab, setActiveTab] = useState<'friends' | 'requests' | 'add'>('friends');
+  const [activeTab, setActiveTab] = useState<'friends' | 'requests' | 'add' | 'blocked'>('friends');
   const [friends, setFriends] = useState<User[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<FriendRequest[]>([]);
+  const [blockedUsers, setBlockedUsers] = useState<User[]>([]);
+  const [unblockingId, setUnblockingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -50,13 +53,15 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
     try {
       setLoading(true);
       setError(null);
-      const [friendsRes, requestsRes] = await Promise.all([
+      const [friendsRes, requestsRes, blockedRes] = await Promise.all([
         api.getFriends().catch(() => ({ friends: [] })),
         api.getFriendRequests().catch(() => ({ incoming: [], outgoing: [] })),
+        api.getBlockedUsers().catch(() => ({ blockedUsers: [] })),
       ]);
       setFriends(friendsRes.friends || []);
       setIncomingRequests(requestsRes.incoming || []);
       setOutgoingRequests(requestsRes.outgoing || []);
+      setBlockedUsers(blockedRes.blockedUsers || []);
     } catch (err: any) {
       setError(err.message || 'Arkadaşlar yüklenirken bir hata oluştu.');
     } finally {
@@ -94,6 +99,20 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
       setError(err.message || 'İşlem gerçekleştirilemedi.');
     } finally {
       setRespondingId(null);
+    }
+  };
+
+  const handleUnblockUser = async (userId: string) => {
+    try {
+      setUnblockingId(userId);
+      setError(null);
+      await api.unblockUser(userId);
+      setSuccessMsg('Kullanıcının engeli kaldırıldı.');
+      await loadFriendsData();
+    } catch (err: any) {
+      setError(err.message || 'Engel kaldırılamadı.');
+    } finally {
+      setUnblockingId(null);
     }
   };
 
@@ -176,6 +195,18 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
           >
             <UserPlus className="w-3.5 h-3.5" />
             <span>Arkadaş Ekle</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('blocked')}
+            className={`px-3.5 py-1.5 rounded-xl font-bold transition-all flex items-center gap-2 ${
+              activeTab === 'blocked'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50'
+                : 'text-slate-400 hover:text-white hover:bg-[#1a142c]'
+            }`}
+          >
+            <Ban className="w-3.5 h-3.5" />
+            <span>Engellenenler ({blockedUsers.length})</span>
           </button>
         </div>
 
@@ -336,17 +367,17 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
                 )}
               </div>
             </div>
-          ) : (
+          ) : activeTab === 'add' ? (
             /* Add Friend Form */
             <form onSubmit={handleSendRequest} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Kullanıcı E-Posta Adresi
+                  Kullanıcı E-Posta Adresi veya Kullanıcı Adı
                 </label>
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
                   <input
-                    type="email"
+                    type="text"
                     required
                     placeholder="ornek@alanadi.com"
                     value={targetQuery}
@@ -387,6 +418,48 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
                 )}
               </button>
             </form>
+          ) : (
+            /* Blocked Users List */
+            <div className="space-y-3">
+              {blockedUsers.length === 0 ? (
+                <div className="py-12 text-center text-slate-500">
+                  <Shield className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                  <p className="text-sm font-semibold text-slate-400">Engellenen kullanıcı bulunmuyor.</p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Engellediğiniz kullanıcılar burada listelenir ve size mesaj gönderemezler.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-[#201834]">
+                  {blockedUsers.map((bu) => (
+                    <div key={bu.id} className="py-2.5 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-9 h-9 rounded-2xl bg-[#1e1830] border border-[#31254e] flex items-center justify-center font-bold text-slate-300 text-xs shrink-0 overflow-hidden">
+                          {bu.avatarUrl ? (
+                            <img src={bu.avatarUrl} alt={bu.displayName} className="w-full h-full object-cover" />
+                          ) : (
+                            bu.displayName.slice(0, 2).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-white block truncate">{bu.displayName}</span>
+                          <span className="text-[10px] text-slate-400 block truncate">{bu.email}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={unblockingId === bu.id}
+                        onClick={() => handleUnblockUser(bu.id)}
+                        className="px-3 py-1.5 bg-[#1f1832] hover:bg-[#2b2144] text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-colors shrink-0 disabled:opacity-50"
+                      >
+                        {unblockingId === bu.id ? 'Açılıyor...' : 'Engeli Kaldır'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

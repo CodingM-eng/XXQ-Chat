@@ -11,6 +11,8 @@ export interface DbUser {
   isFamily?: boolean;
   groupAddPrivacy?: 'everyone' | 'friends' | 'invite_only';
   bio?: string | null;
+  bannerUrl?: string | null;
+  accentColor?: string | null;
   themePreference?: 'dark' | 'light';
   onboarded: boolean;
   status: 'active' | 'pending' | 'blocked';
@@ -117,21 +119,53 @@ export interface DbConversationSummary {
 
 export type ServerPurpose = 'gaming' | 'chat' | 'community' | 'business' | 'other';
 
+export type ServerPermission =
+  | 'manage_server'
+  | 'manage_roles'
+  | 'manage_channels'
+  | 'manage_messages'
+  | 'send_announcements'
+  | 'kick_members'
+  | 'view_audit_logs';
+
+export interface ServerCustomRole {
+  id: string;
+  serverId: string;
+  name: string;
+  color: string;
+  permissions: ServerPermission[];
+  order: number;
+  createdAt: string;
+}
+
+export interface ServerJoinQuestion {
+  id: string;
+  question: string;
+  required: boolean;
+  order: number;
+}
+
 export interface DbServer {
   id: string;
   name: string;
   description?: string | null;
   purpose: ServerPurpose;
   avatarUrl?: string | null;
+  bannerUrl?: string | null;
+  welcomeMessage?: string | null;
   rules?: string | null;
   ownerId: string;
   memberIds: string[];
   channels?: DbConversationSummary[];
+  requiresApproval?: boolean;
+  joinQuestions?: ServerJoinQuestion[];
+  roles?: ServerCustomRole[];
   members?: Array<{
     id: string;
     displayName: string;
     avatarUrl?: string | null;
     role: 'owner' | 'admin' | 'moderator' | 'member';
+    roleIds?: string[];
     customTag?: string | null;
     joinedAt: string;
   }>;
@@ -148,6 +182,7 @@ export interface DbMembershipInvitation {
   userDisplayName: string;
   type: 'invite' | 'request';
   status: 'pending' | 'accepted' | 'declined' | 'approved' | 'rejected' | 'expired';
+  answers?: Record<string, string>;
   createdById: string;
   createdAt: string;
   resolvedAt?: string | null;
@@ -318,6 +353,8 @@ export interface DataStore {
       lastName?: string | null;
       displayName?: string;
       avatarUrl?: string | null;
+      bannerUrl?: string | null;
+      accentColor?: string | null;
       phoneNumber?: string | null;
       themePreference?: 'dark' | 'light';
       bio?: string | null;
@@ -432,7 +469,7 @@ export interface DataStore {
   getConversationRole(conversationId: string, userId: string): Promise<'owner' | 'admin' | 'moderator' | 'member' | null>;
 
   // Servers & Channels
-  createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; rules?: string | null }): Promise<{ server: DbServer; channels: DbConversationSummary[] }>;
+  createServer(ownerId: string, data: { name: string; description?: string | null; purpose: ServerPurpose; avatarUrl?: string | null; bannerUrl?: string | null; rules?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean; joinQuestions?: ServerJoinQuestion[] }): Promise<{ server: DbServer; channels: DbConversationSummary[] }>;
   getServer(serverId: string, userId: string): Promise<DbServer | null>;
   getUserServers(userId: string): Promise<DbServer[]>;
   getAllServers(): Promise<DbServer[]>;
@@ -440,9 +477,20 @@ export interface DataStore {
   addServerMember(serverId: string, userId: string, role?: 'admin' | 'moderator' | 'member'): Promise<void>;
   removeServerMember(serverId: string, userId: string): Promise<void>;
   updateServerMemberRole(serverId: string, userId: string, role: 'owner' | 'admin' | 'moderator' | 'member', customTag?: string | null): Promise<void>;
-  updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; purpose?: ServerPurpose }): Promise<void>;
+  updateServerSettings(serverId: string, updates: { name?: string; description?: string | null; rules?: string | null; avatarUrl?: string | null; bannerUrl?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean; purpose?: ServerPurpose }): Promise<void>;
+  updateServerIdentity(serverId: string, data: { name?: string; description?: string | null; purpose?: ServerPurpose; avatarUrl?: string | null; bannerUrl?: string | null; rules?: string | null; welcomeMessage?: string | null; requiresApproval?: boolean }): Promise<DbServer | null>;
   isServerMember(serverId: string, userId: string): Promise<boolean>;
   isServerAdmin(serverId: string, userId: string): Promise<boolean>;
+
+  // Community Join Questions & Roles
+  setServerJoinQuestions(serverId: string, questions: ServerJoinQuestion[]): Promise<ServerJoinQuestion[]>;
+  getServerJoinQuestions(serverId: string): Promise<ServerJoinQuestion[]>;
+  createServerRole(serverId: string, data: { name: string; color: string; permissions: ServerPermission[]; order?: number }): Promise<ServerCustomRole>;
+  updateServerRole(serverId: string, roleId: string, updates: { name?: string; color?: string; permissions?: ServerPermission[]; order?: number }): Promise<ServerCustomRole | null>;
+  deleteServerRole(serverId: string, roleId: string): Promise<boolean>;
+  getServerRoles(serverId: string): Promise<ServerCustomRole[]>;
+  setServerMemberCustomRoles(serverId: string, userId: string, roleIds: string[]): Promise<void>;
+  hasServerPermission(serverId: string, userId: string, permission: ServerPermission): Promise<boolean>;
 
   // Membership Invitations & Join Requests
   createMembershipInvitation(invitation: Omit<DbMembershipInvitation, 'id' | 'createdAt' | 'status'> & { id?: string }): Promise<DbMembershipInvitation>;
@@ -453,6 +501,14 @@ export interface DataStore {
 
   // Family Role & User Profile
   setUserFamily(userId: string, isFamily: boolean): Promise<DbUser | null>;
+
+  // User Blocking & Relationships
+  blockUser(blockerId: string, blockedId: string): Promise<void>;
+  unblockUser(blockerId: string, blockedId: string): Promise<void>;
+  isUserBlocked(blockerId: string, blockedId: string): Promise<boolean>;
+  areUsersBlocked(userId1: string, userId2: string): Promise<boolean>;
+  getBlockedUsers(userId: string): Promise<DbUser[]>;
+  getUserRelationship(userId1: string, userId2: string): Promise<{ isFriend: boolean; isBlocked: boolean; isBlockedBy: boolean; friendRequestStatus: 'none' | 'sent' | 'received'; friendRequestId: string | null }>;
 
   // Group Discoverability Search
   searchDiscoverableGroups(userId: string, query: string): Promise<DbConversationSummary[]>;
