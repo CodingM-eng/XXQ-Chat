@@ -385,9 +385,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
 
   // Drive Handlers
   const handleOpenDriveConnect = async () => {
+    setDriveModalOpen(true);
+    setDriveConnecting(false);
+
+    if (driveStatus && !driveStatus.isConfigured) {
+      setDriveAuthUrl('');
+      setError(
+        driveStatus.errorMessageTr ||
+        'Google Drive OAuth yapılandırması eksik (GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REDIRECT_URI). Lütfen önce Render ortam değişkenlerini tanımlayın.'
+      );
+      return;
+    }
+
     try {
-      setDriveModalOpen(true);
-      setDriveConnecting(false);
       const res = await api.getDriveAuthUrl();
       setDriveAuthUrl(res.authUrl);
     } catch (err: any) {
@@ -1203,11 +1213,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
             {driveStatus && !driveStatus.isConfigured ? (
               <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-2xl flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                <div className="space-y-1 text-xs">
+                <div className="space-y-1.5 text-xs">
                   <p className="font-bold text-amber-300">Google Drive OAuth Yapılandırması Eksik</p>
                   <p className="text-amber-200/80 leading-relaxed">
-                    Render ortam değişkenlerinde <code>GOOGLE_DRIVE_CLIENT_ID</code> ve <code>GOOGLE_DRIVE_CLIENT_SECRET</code> anahtarlarının tanımlanması gerekmektedir.
-                    Google Cloud Console üzerinden OAuth 2.0 Client ID oluşturup Yetkili Yönlendirme URI olarak <code>{driveStatus.redirectUri || 'https://xxq-chat-backend.onrender.com/api/drive/callback'}</code> adresini ekleyin.
+                    {driveStatus.errorMessageTr || 'Render ortam değişkenlerinde GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET ve GOOGLE_DRIVE_REDIRECT_URI anahtarlarının tanımlanması gerekmektedir.'}
+                  </p>
+                  {driveStatus.missingSettings && driveStatus.missingSettings.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {driveStatus.missingSettings.map((key) => (
+                        <span key={key} className="px-2 py-0.5 rounded bg-black/40 border border-amber-700/50 font-mono text-[10px] text-amber-200 font-semibold">
+                          {key}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-amber-200/70 text-[11px] pt-1 leading-relaxed">
+                    Google Cloud Console üzerinden OAuth 2.0 Web İstemcisi oluşturup Yetkili Yönlendirme URI olarak <code className="text-amber-100 font-mono select-all bg-black/40 px-1.5 py-0.5 rounded">{driveStatus.redirectUri || 'https://xxq-chat-backend.onrender.com/api/drive/callback'}</code> adresini ekleyin.
                   </p>
                 </div>
               </div>
@@ -2162,6 +2183,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
             </div>
 
             <div className="space-y-4 text-xs">
+              {driveStatus && !driveStatus.isConfigured ? (
+                <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-800/60 space-y-2">
+                  <div className="flex items-center gap-2 text-amber-300 font-bold">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>Google Drive OAuth Yapılandırması Eksik</span>
+                  </div>
+                  <p className="text-amber-200/90 leading-relaxed text-[11px]">
+                    {driveStatus.errorMessageTr || 'Sunucuda gerekli Google Drive OAuth ortam değişkenleri henüz tanımlanmamış.'}
+                  </p>
+                  {driveStatus.missingSettings && driveStatus.missingSettings.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 my-1">
+                      {driveStatus.missingSettings.map((key) => (
+                        <span key={key} className="px-2 py-0.5 rounded bg-black/40 border border-amber-700/50 font-mono text-[10px] text-amber-200 font-semibold">
+                          {key}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-amber-300/80 text-[11px] leading-relaxed">
+                    Lütfen Render Dashboard &gt; xxq-chat-backend &gt; <strong>Environment</strong> sekmesinden bu değişkenleri tanımlayın ve Google Cloud Console'da Yetkili Yönlendirme URI olarak <code className="text-white font-mono select-all bg-black/40 px-1 rounded">{driveStatus.redirectUri || 'https://xxq-chat-backend.onrender.com/api/drive/callback'}</code> adresini kaydedin.
+                  </p>
+                </div>
+              ) : null}
+
               <div className="p-3.5 rounded-2xl bg-[#171126] border border-[#2d2247] space-y-2">
                 <p className="font-bold text-slate-200">1. Adım: Google Yetkilendirmesini Başlatın</p>
                 <p className="text-slate-400 leading-relaxed">
@@ -2178,7 +2223,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                 ) : (
-                  <p className="text-rose-400">Google Drive API istemcisi sunucu tarafında henüz yapılandırılmamış.</p>
+                  <p className="text-rose-400">
+                    {driveStatus && !driveStatus.isConfigured
+                      ? 'Yetkilendirme bağlantısı oluşturulamadı: Render ortam değişkenleri eksik.'
+                      : 'Google Drive API istemcisi sunucu tarafında henüz yapılandırılmamış.'}
+                  </p>
                 )}
               </div>
 
@@ -2192,13 +2241,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                   placeholder="4/0AWtg... yetkilendirme kodu"
                   value={driveAuthCode}
                   onChange={(e) => setDriveAuthCode(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#1b152d] border border-[#2d2247] rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono text-[11px]"
+                  disabled={driveConnecting || (driveStatus ? !driveStatus.isConfigured : false)}
+                  className="w-full px-3 py-2 bg-[#1b152d] border border-[#2d2247] rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono text-[11px] disabled:opacity-50"
                   required
                 />
                 <button
                   type="submit"
-                  disabled={driveConnecting || !driveAuthCode.trim()}
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-md"
+                  disabled={driveConnecting || !driveAuthCode.trim() || (driveStatus ? !driveStatus.isConfigured : false)}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {driveConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Bağlantıyı Tamamla'}
                 </button>

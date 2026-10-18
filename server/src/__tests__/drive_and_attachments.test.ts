@@ -181,4 +181,100 @@ describe('XXQ Chat Google Drive & Attachments Suite', () => {
     const recheck = await dataStore.getDriveAccountById(acc.id);
     expect(recheck).toBeNull();
   });
+
+  it('reports Drive OAuth configuration status and missing settings clearly without revealing secrets', async () => {
+    // When environment variables are missing
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', '');
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', '');
+
+    const res = await request(app)
+      .get('/api/drive/status')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.isConfigured).toBe(false);
+    expect(res.body.clientIdConfigured).toBe(false);
+    expect(res.body.clientSecretConfigured).toBe(false);
+    expect(res.body.missingSettings).toContain('GOOGLE_DRIVE_CLIENT_ID');
+    expect(res.body.missingSettings).toContain('GOOGLE_DRIVE_CLIENT_SECRET');
+    expect(res.body.errorMessageTr).toContain('Google Drive OAuth yapılandırması eksik');
+    // Ensure no secrets or tokens exist in response
+    expect(res.body.clientSecret).toBeUndefined();
+    expect(res.body.refreshToken).toBeUndefined();
+  });
+
+  it('rejects /api/drive/auth-url with 400 and Turkish explanation when OAuth is unconfigured', async () => {
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', '');
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', '');
+
+    const res = await request(app)
+      .get('/api/drive/auth-url')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('CONFIG_ERROR');
+    expect(res.body.message).toContain('Google Drive OAuth yapılandırması eksik');
+    expect(res.body.missingSettings).toContain('GOOGLE_DRIVE_CLIENT_ID');
+  });
+
+  it('generates secure OAuth URL with valid state when configured', async () => {
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'test-client.apps.googleusercontent.com');
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'test-client-secret-12345');
+    vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+    const res = await request(app)
+      .get('/api/drive/auth-url')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.authUrl).toBeDefined();
+    expect(res.body.state).toBeDefined();
+    expect(res.body.redirectUri).toBe('https://xxq-chat-backend.onrender.com/api/drive/callback');
+    expect(res.body.authUrl).toContain('client_id=test-client.apps.googleusercontent.com');
+    expect(res.body.authUrl).toContain('redirect_uri=https%3A%2F%2Fxxq-chat-backend.onrender.com%2Fapi%2Fdrive%2Fcallback');
+  });
+
+  it('rejects /api/drive/connect with 400 when OAuth is unconfigured', async () => {
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', '');
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', '');
+
+    const res = await request(app)
+      .post('/api/drive/connect')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ code: '4/0AWtgFakeCode123' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('CONFIG_ERROR');
+    expect(res.body.message).toContain('Google Drive OAuth yapılandırması eksik');
+  });
+
+  it('rejects /api/drive/callback when state is missing or invalid (CSRF prevention)', async () => {
+    // Missing state
+    const missingRes = await request(app)
+      .get('/api/drive/callback?code=some-code');
+
+    expect(missingRes.status).toBe(400);
+    expect(missingRes.text).toContain('Güvenlik Doğrulaması Başarısız');
+    expect(missingRes.text).toContain('state');
+
+    // Invalid/tampered state
+    const forgedRes = await request(app)
+      .get('/api/drive/callback?code=some-code&state=malicious-forged-state');
+
+    expect(forgedRes.status).toBe(400);
+    expect(forgedRes.text).toContain('Güvenlik Doğrulaması Başarısız');
+  });
+
+  it('validates state and enforces single-use in GoogleDriveService.verifyState', () => {
+    const state = GoogleDriveService.generateState('test_user');
+    expect(state).toHaveLength(48); // 24 bytes in hex
+
+    // First verification should pass
+    const firstCheck = GoogleDriveService.verifyState(state);
+    expect(firstCheck).toBe(true);
+
+    // Replay attack / second check should fail (single use)
+    const secondCheck = GoogleDriveService.verifyState(state);
+    expect(secondCheck).toBe(false);
+  });
 });

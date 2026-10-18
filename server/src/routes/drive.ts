@@ -9,10 +9,26 @@ const router = Router();
 // GET /api/drive/auth-url (Admin only)
 router.get('/auth-url', requireAuth, requireAdmin, (req, res) => {
   try {
-    const authUrl = GoogleDriveService.getAuthUrl();
-    res.json({ authUrl });
+    const status = GoogleDriveService.getStatus();
+    if (!status.isConfigured) {
+      res.status(400).json({
+        error: 'CONFIG_ERROR',
+        message: status.errorMessageTr || 'Google Drive OAuth yapılandırması eksik. Lütfen Render ortam değişkenlerini tanımlayın.',
+        missingSettings: status.missingSettings,
+        redirectUri: status.redirectUri,
+      });
+      return;
+    }
+
+    const state = GoogleDriveService.generateState(req.user?.id);
+    const authUrl = GoogleDriveService.getAuthUrl(state);
+    res.json({ authUrl, state, redirectUri: status.redirectUri });
   } catch (err: any) {
-    res.status(400).json({ error: 'CONFIG_ERROR', message: err.message });
+    res.status(400).json({
+      error: 'CONFIG_ERROR',
+      message: err.message,
+      missingSettings: GoogleDriveService.getStatus().missingSettings,
+    });
   }
 });
 
@@ -25,6 +41,17 @@ router.post('/connect', requireAuth, requireAdmin, async (req, res) => {
   const parseResult = connectSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_INPUT', message: 'Geçersiz yetkilendirme kodu.' });
+    return;
+  }
+
+  const status = GoogleDriveService.getStatus();
+  if (!status.isConfigured) {
+    res.status(400).json({
+      error: 'CONFIG_ERROR',
+      message: status.errorMessageTr || 'Google Drive OAuth yapılandırması eksik. Lütfen Render ortam değişkenlerini tanımlayın.',
+      missingSettings: status.missingSettings,
+      redirectUri: status.redirectUri,
+    });
     return;
   }
 
@@ -130,6 +157,7 @@ router.post('/accounts/:id/sync', requireAuth, requireAdmin, async (req, res) =>
 // GET /api/drive/callback - Google OAuth 2.0 redirect target
 router.get('/callback', async (req, res) => {
   const code = req.query.code as string | undefined;
+  const state = req.query.state as string | undefined;
   const error = req.query.error as string | undefined;
 
   const frontendUrl = (process.env.CORS_ORIGIN || '').split(',')[0].trim().replace(/\/$/, '') || 'https://xxq-chat-frontend.onrender.com';
@@ -155,6 +183,36 @@ router.get('/callback', async (req, res) => {
           <h1>Google Drive Yetkilendirmesi Başarısız</h1>
           <p>Google OAuth izni onaylanmadı veya reddedildi: <strong>${error}</strong></p>
           <p>Lütfen XXQ Chat Yönetim Paneline dönerek bağlantıyı tekrar deneyin.</p>
+          <a href="${frontendUrl}" class="btn">XXQ Chat'e Dön</a>
+        </div>
+      </body>
+      </html>
+    `);
+    return;
+  }
+
+  // Validate OAuth state parameter to prevent CSRF
+  if (!state || !GoogleDriveService.verifyState(state)) {
+    res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="tr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>XXQ Chat - Güvenlik Doğrulaması Başarısız</title>
+        <style>
+          body { background-color: #090710; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+          .card { background-color: #120f1e; border: 1px solid #3b1d54; border-radius: 20px; padding: 32px; max-width: 480px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+          h1 { color: #f87171; font-size: 20px; margin-top: 0; }
+          p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
+          .btn { display: inline-block; background-color: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 13px; margin-top: 20px; border: none; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Güvenlik Doğrulaması Başarısız</h1>
+          <p>OAuth durum parametresi (state) geçersiz veya süresi dolmuş. Olası bir yetkisiz yönlendirmeyi önlemek amacıyla istek reddedildi.</p>
+          <p>Lütfen XXQ Chat Yönetim Paneline dönerek bağlantıyı tekrar başlatın.</p>
           <a href="${frontendUrl}" class="btn">XXQ Chat'e Dön</a>
         </div>
       </body>

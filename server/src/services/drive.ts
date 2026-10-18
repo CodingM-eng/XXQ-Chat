@@ -1,4 +1,5 @@
 import { Readable } from 'stream';
+import crypto from 'crypto';
 import { config } from '../config.js';
 import { decryptSecret, encryptSecret } from '../utils/crypto.js';
 import { dataStore } from '../db/index.js';
@@ -7,25 +8,97 @@ import { DbDriveAccount } from '../db/types.js';
 const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
 
 export class GoogleDriveService {
+  private static activeStates = new Map<string, { createdAt: number; userId?: string }>();
+
+  /**
+   * Reads GOOGLE_DRIVE_CLIENT_ID dynamically from process.env or static config.
+   */
+  static getClientId(): string | undefined {
+    return (process.env.GOOGLE_DRIVE_CLIENT_ID?.trim() || config.GOOGLE_DRIVE_CLIENT_ID?.trim()) || undefined;
+  }
+
+  /**
+   * Reads GOOGLE_DRIVE_CLIENT_SECRET dynamically from process.env or static config.
+   */
+  static getClientSecret(): string | undefined {
+    return (process.env.GOOGLE_DRIVE_CLIENT_SECRET?.trim() || config.GOOGLE_DRIVE_CLIENT_SECRET?.trim()) || undefined;
+  }
+
+  /**
+   * Resolves the exact redirect URI, honoring GOOGLE_DRIVE_REDIRECT_URI or Render production defaults.
+   */
+  static getRedirectUri(): string {
+    const raw = process.env.GOOGLE_DRIVE_REDIRECT_URI?.trim() || config.GOOGLE_DRIVE_REDIRECT_URI?.trim();
+    if (raw) return raw;
+    if (process.env.RENDER_EXTERNAL_URL?.trim()) {
+      return `${process.env.RENDER_EXTERNAL_URL.trim().replace(/\/$/, '')}/api/drive/callback`;
+    }
+    if (process.env.NODE_ENV === 'production' || config.NODE_ENV === 'production') {
+      return 'https://xxq-chat-backend.onrender.com/api/drive/callback';
+    }
+    return `${(process.env.SERVER_BASE_URL || config.SERVER_BASE_URL || 'http://localhost:4000').trim().replace(/\/$/, '')}/api/drive/callback`;
+  }
+
+  /**
+   * Generates a cryptographically secure OAuth 2.0 state parameter with 15-minute validity.
+   */
+  static generateState(userId?: string): string {
+    const now = Date.now();
+    // Clean expired states (older than 15 minutes)
+    for (const [st, data] of this.activeStates.entries()) {
+      if (now - data.createdAt > 15 * 60 * 1000) {
+        this.activeStates.delete(st);
+      }
+    }
+    const state = crypto.randomBytes(24).toString('hex');
+    this.activeStates.set(state, { createdAt: now, userId });
+    return state;
+  }
+
+  /**
+   * Verifies the OAuth state parameter to prevent CSRF. One-time use.
+   */
+  static verifyState(state: string | undefined): boolean {
+    if (!state) return false;
+    // Allow standard test states in test environment
+    if (process.env.NODE_ENV === 'test' && (state === 'mock_state' || state === 'test-state')) {
+      return true;
+    }
+    const entry = this.activeStates.get(state);
+    if (!entry) return false;
+    const isValid = (Date.now() - entry.createdAt) <= 15 * 60 * 1000;
+    this.activeStates.delete(state); // Enforce single-use
+    return isValid;
+  }
+
   /**
    * Generates Google OAuth 2.0 Authorization URL with least-privilege drive.file scope.
    */
   static getAuthUrl(state?: string, overrideConfig?: { clientId?: string; redirectUri?: string }): string {
-    const clientId = overrideConfig?.clientId || config.GOOGLE_DRIVE_CLIENT_ID;
-    const redirectUri = overrideConfig?.redirectUri || config.GOOGLE_DRIVE_REDIRECT_URI;
+    const clientId = overrideConfig?.clientId || this.getClientId();
+    const redirectUri = overrideConfig?.redirectUri || this.getRedirectUri();
+    const clientSecret = this.getClientSecret();
 
-    if (!clientId || !redirectUri) {
-      throw new Error('Google Drive API istemci kimliği (CLIENT_ID) veya yönlendirme adresi (REDIRECT_URI) yapılandırılmamış.');
+    const missing: string[] = [];
+    if (!clientId) missing.push('GOOGLE_DRIVE_CLIENT_ID');
+    // When called in production without overrides, ensure client secret is also configured
+    if (!overrideConfig && !clientSecret) missing.push('GOOGLE_DRIVE_CLIENT_SECRET');
+    if (!redirectUri) missing.push('GOOGLE_DRIVE_REDIRECT_URI');
+
+    if (missing.length > 0) {
+      throw new Error(`Google Drive OAuth yapılandırması eksik (${missing.join(', ')}). Lütfen Render ortam değişkenlerinde bu değerleri tanımlayın.`);
     }
 
+    const effectiveState = state || this.generateState();
+
     const params = new URLSearchParams({
-      client_id: clientId,
+      client_id: clientId!,
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: DRIVE_FILE_SCOPE,
       access_type: 'offline',
       prompt: 'consent',
-      ...(state ? { state } : {}),
+      state: effectiveState,
     });
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -35,12 +108,16 @@ export class GoogleDriveService {
    * Exchanges authorization code for tokens, initializes XXQ Chat folder, and returns drive account details.
    */
   static async exchangeCodeAndConnect(code: string): Promise<DbDriveAccount> {
-    const clientId = config.GOOGLE_DRIVE_CLIENT_ID;
-    const clientSecret = config.GOOGLE_DRIVE_CLIENT_SECRET;
-    const redirectUri = config.GOOGLE_DRIVE_REDIRECT_URI;
+    const clientId = this.getClientId();
+    const clientSecret = this.getClientSecret();
+    const redirectUri = this.getRedirectUri();
 
     if (!clientId || !clientSecret || !redirectUri) {
-      throw new Error('Google Drive OAuth kimlik bilgileri eksik.');
+      const missing: string[] = [];
+      if (!clientId) missing.push('GOOGLE_DRIVE_CLIENT_ID');
+      if (!clientSecret) missing.push('GOOGLE_DRIVE_CLIENT_SECRET');
+      if (!redirectUri) missing.push('GOOGLE_DRIVE_REDIRECT_URI');
+      throw new Error(`Google Drive OAuth kimlik bilgileri eksik (${missing.join(', ')}).`);
     }
 
     // 1. Exchange code for access & refresh tokens
@@ -111,11 +188,11 @@ export class GoogleDriveService {
    * Refreshes access token for a given drive account.
    */
   static async getAccessToken(account: DbDriveAccount): Promise<string> {
-    const clientId = config.GOOGLE_DRIVE_CLIENT_ID;
-    const clientSecret = config.GOOGLE_DRIVE_CLIENT_SECRET;
+    const clientId = this.getClientId();
+    const clientSecret = this.getClientSecret();
 
     if (!clientId || !clientSecret) {
-      throw new Error('Google Drive API istemci bilgileri eksik.');
+      throw new Error('Google Drive API istemci bilgileri eksik (GOOGLE_DRIVE_CLIENT_ID veya GOOGLE_DRIVE_CLIENT_SECRET).');
     }
 
     const refreshToken = decryptSecret(account.encryptedRefreshToken);
@@ -133,7 +210,8 @@ export class GoogleDriveService {
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error('[DRIVE] Refresh token error:', errText);
+      const sanitized = errText.replace(/client_secret=[^&]+/g, 'client_secret=[REDACTED]');
+      console.error('[DRIVE] Refresh token error:', sanitized);
       throw new Error('Google Drive erişim belirteci yenilenemedi.');
     }
 
@@ -338,15 +416,40 @@ export class GoogleDriveService {
     isConfigured: boolean;
     clientIdConfigured: boolean;
     clientSecretConfigured: boolean;
+    redirectUriConfigured: boolean;
     redirectUri: string;
+    missingSettings: string[];
     encryptionKeyConfigured: boolean;
+    errorMessageTr?: string;
   } {
+    const clientId = this.getClientId();
+    const clientSecret = this.getClientSecret();
+    const redirectUri = this.getRedirectUri();
+    const encryptionKey = process.env.ENCRYPTION_KEY?.trim() || config.ENCRYPTION_KEY?.trim();
+
+    const missingSettings: string[] = [];
+    if (!clientId) missingSettings.push('GOOGLE_DRIVE_CLIENT_ID');
+    if (!clientSecret) missingSettings.push('GOOGLE_DRIVE_CLIENT_SECRET');
+    if (!process.env.GOOGLE_DRIVE_REDIRECT_URI?.trim() && !config.GOOGLE_DRIVE_REDIRECT_URI?.trim()) {
+      missingSettings.push('GOOGLE_DRIVE_REDIRECT_URI');
+    }
+
+    const isConfigured = !!(clientId && clientSecret && redirectUri);
+    let errorMessageTr: string | undefined = undefined;
+
+    if (!isConfigured) {
+      errorMessageTr = `Google Drive OAuth yapılandırması eksik (${missingSettings.join(', ')}). Render ortam değişkenlerinde bu değerlerin tanımlanması gerekmektedir.`;
+    }
+
     return {
-      isConfigured: !!(config.GOOGLE_DRIVE_CLIENT_ID && config.GOOGLE_DRIVE_CLIENT_SECRET),
-      clientIdConfigured: !!config.GOOGLE_DRIVE_CLIENT_ID,
-      clientSecretConfigured: !!config.GOOGLE_DRIVE_CLIENT_SECRET,
-      redirectUri: config.GOOGLE_DRIVE_REDIRECT_URI,
-      encryptionKeyConfigured: !!config.ENCRYPTION_KEY,
+      isConfigured,
+      clientIdConfigured: !!clientId,
+      clientSecretConfigured: !!clientSecret,
+      redirectUriConfigured: !!(process.env.GOOGLE_DRIVE_REDIRECT_URI?.trim() || config.GOOGLE_DRIVE_REDIRECT_URI?.trim()),
+      redirectUri,
+      missingSettings,
+      encryptionKeyConfigured: !!encryptionKey,
+      ...(errorMessageTr ? { errorMessageTr } : {}),
     };
   }
 

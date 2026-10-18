@@ -344,8 +344,11 @@ export interface DriveStatus {
   isConfigured: boolean;
   clientIdConfigured: boolean;
   clientSecretConfigured: boolean;
+  redirectUriConfigured?: boolean;
   redirectUri: string;
   encryptionKeyConfigured: boolean;
+  missingSettings?: string[];
+  errorMessageTr?: string;
   accounts: DriveAccount[];
   totalAccounts: number;
 }

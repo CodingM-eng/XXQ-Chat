@@ -337,6 +337,70 @@ Telegram webhookunun çalışabilmesi için Render backend servisinizde aşağı
 
 ---
 
+## 📁 Google Drive OAuth 2.0 Entegrasyonu ve Kurulum Kılavuzu
+
+XXQ Chat, sohbetlerde paylaşılan dosya eklerini (belgeler, görseller, ses ve videolar) güvenli bir şekilde saklamak için Google Drive entegrasyonunu destekler. Dosyalar, yöneticinin Google Drive hesabında otomatik oluşturulan özel bir **XXQ Chat** klasöründe saklanır.
+
+### 1. Google Cloud Console Yapılandırması
+
+Google Drive entegrasyonunu etkinleştirmek için Google Cloud Console üzerinde aşağıdaki adımları tamamlayın:
+
+1. **Google Cloud Console'a Giriş Yapın**: [console.cloud.google.com](https://console.cloud.google.com/) adresine gidin ve projenizi seçin (veya yeni bir proje oluşturun).
+2. **Google Drive API'yi Etkinleştirin**:
+   - Sol menüden **APIs & Services (API'ler ve Hizmetler) > Library (Kitaplık)** sekmesine gidin.
+   - Arama kutusuna `Google Drive API` yazın ve **Enable (Etkinleştir)** butonuna tıklayın.
+3. **OAuth Onay Ekranını (Consent Screen) Yapılandırın**:
+   - **APIs & Services > OAuth consent screen** sekmesine gidin.
+   - User Type olarak **External (Harici)** seçin (veya Google Workspace kullanıyorsanız Internal).
+   - Uygulama adını (örn: `XXQ Chat`), kullanıcı destek e-postasını ve geliştirici iletişim bilgilerini girin.
+   - **Scopes (Kapsamlar)** adımında `https://www.googleapis.com/auth/drive.file` kapsamını ekleyin.
+   - Uygulamanız Test modundaysa, **Test Users (Test Kullanıcıları)** listesine Drive hesabını bağlayacak yönetici e-posta adresini (`codingdevelopia@gmail.com`) ekleyin.
+4. **OAuth 2.0 İstemci Kimliği (Client ID) Oluşturun**:
+   - **APIs & Services > Credentials (Kimlik Bilgileri)** sekmesine gidin.
+   - **+ CREATE CREDENTIALS (+ KİMLİK BİLGİSİ OLUŞTUR)** butonuna tıklayın ve **OAuth client ID** seçeneğini seçin.
+   - **Application type (Uygulama türü)**: `Web application` (Web uygulaması).
+   - **Name (Ad)**: `XXQ Chat Web Client`.
+   - **Authorized redirect URIs (Yetkili yönlendirme URI'leri)** alanına **BİREBİR** şu adresi ekleyin:
+     ```text
+     https://xxq-chat-backend.onrender.com/api/drive/callback
+     ```
+     *(Yerel geliştirme yapıyorsanız ek olarak `http://localhost:4000/api/drive/callback` ekleyebilirsiniz).*
+   - **CREATE (OLUŞTUR)** butonuna tıklayın. Açılan pencereden **Client ID** ve **Client Secret** değerlerini kopyalayın.
+
+### 2. Render Ortam Değişkenleri (Environment Variables)
+
+Render Dashboard üzerinde **xxq-chat-backend** servisinizin **Environment** sekmesine gidin ve aşağıdaki değişkenleri tanımlayın:
+
+| Değişken Adı | Zorunlu? | Açıklama ve Değer |
+| :--- | :--- | :--- |
+| `GOOGLE_DRIVE_CLIENT_ID` | **Evet** | Google Cloud Console'dan alınan istemci kimliği (örn. `xxxx.apps.googleusercontent.com`). |
+| `GOOGLE_DRIVE_CLIENT_SECRET` | **Evet** | Google Cloud Console'dan alınan gizli anahtar (örn. `GOCSPX-xxxx`). |
+| `GOOGLE_DRIVE_REDIRECT_URI` | **Evet** | `https://xxq-chat-backend.onrender.com/api/drive/callback` |
+| `ENCRYPTION_KEY` | **Evet** | Refresh token'larını AES-256-GCM ile şifrelemek için kullanılan 32 karakterlik anahtar (Render otomatik üretir). |
+
+> [!WARNING]
+> Gerçek kimlik bilgilerini (`CLIENT_SECRET`, `ENCRYPTION_KEY`, `REFRESH_TOKEN`) ASLA Git deposuna commit etmeyin, günlüklere (log) basmayın veya istemci koduna dahil etmeyin.
+
+### 3. Yönetici Onayı ve Bağlantının Tamamlanması
+
+Ortam değişkenleri tanımlandıktan sonra bağlantı süreci şu şekilde tamamlanır:
+1. Bir sistem yöneticisi olarak XXQ Chat uygulamasına giriş yapın (`codingdevelopia@gmail.com`).
+2. Sol alt menüden **Yönetim Paneli**'ni açın ve **Google Drive** sekmesine geçin.
+3. Eğer ortam değişkenleri eksikse panel, eksik anahtarları kırmızı/sarı uyarı kutusunda net bir şekilde listeler ve yönlendirme URI'sini gösterir.
+4. Değişkenler eksiksiz tanımlandığında **"Drive Ekle"** butonuna tıklayın.
+5. **"Google ile Yetkilendir"** bağlantısına tıklayarak Google oturum açma ve izin ekranında `XXQ Chat` klasörü erişimine onay verin.
+6. Google yönlendirme penceresinden dönen yetkilendirme kodunu (`code`) modal pencereye yapıştırıp **"Bağlantıyı Tamamla"** butonuna basın (veya otomatik yönlendirme akışını kullanın).
+7. Bağlantı başarıyla kurulduğunda Google Drive hesabı, e-posta adresi ve depolama alanı kotası yönetim panelinde listelenir.
+
+### 4. Güvenlik ve Gizlilik Mimarisi
+
+- **En Az Ayrıcalık Kuralı (`drive.file`)**: XXQ Chat, kullanıcının veya yöneticinin kişisel Drive dosyalarına kesinlikle erişemez. Yalnızca uygulamanın kendisi tarafından oluşturulan `XXQ Chat` klasörünü ve bu klasör altındaki sohbet eklerini okuyabilir ve yönetebilir.
+- **CSRF Korumalı OAuth Akışı**: Yetkilendirme isteği başlatılırken 24 baytlık kriptografik ve süreli `state` parametresi oluşturulur ve callback sırasında doğrulanır.
+- **AES-256-GCM Şifreleme**: Alınan OAuth yenileme belirteçleri (refresh token), veritabanına yazılmadan önce sunucu tarafında AES-256-GCM ile şifrelenir (`encryptSecret`).
+- **Yetkili İndirme Akışı**: Yüklenen dosyalara ait genel/halka açık (public) bağlantı oluşturulmaz. Dosyalar, yalnızca ilgili sohbette yer alan kullanıcılar tarafından `GET /api/conversations/:id/attachments/:attachmentId` rotası üzerinden üyelik doğrulanarak indirilebilir.
+
+---
+
 ## 🧪 Comprehensive Two-User & Multi-User Verification Guide
 
 To verify end-to-end functionality across authenticated accounts:
