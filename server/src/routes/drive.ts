@@ -20,7 +20,7 @@ router.get('/auth-url', requireAuth, requireAdmin, (req, res) => {
       return;
     }
 
-    const state = GoogleDriveService.generateState(req.user?.id);
+    const state = GoogleDriveService.generateState(req.user?.id, status.redirectUri);
     const authUrl = GoogleDriveService.getAuthUrl(state);
     res.json({ authUrl, state, redirectUri: status.redirectUri });
   } catch (err: any) {
@@ -83,8 +83,8 @@ router.post('/connect', requireAuth, requireAdmin, async (req, res) => {
       message: `${driveAccount.email} Google Drive hesabı başarıyla bağlandı.`,
     });
   } catch (err: any) {
-    console.error('[DRIVE CONNECT ERROR]', err);
-    res.status(500).json({ error: 'DRIVE_CONNECT_ERROR', message: err.message });
+    console.error('[DRIVE CONNECT ERROR]', err.message || err);
+    res.status(400).json({ error: 'OAUTH_ERROR', message: err.message || 'Google Drive yetkilendirme kodu doğrulanamadı.' });
   }
 });
 
@@ -154,13 +154,13 @@ router.post('/accounts/:id/sync', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-// GET /api/drive/callback - Google OAuth 2.0 redirect target
-router.get('/callback', async (req, res) => {
-  const code = req.query.code as string | undefined;
-  const state = req.query.state as string | undefined;
-  const error = req.query.error as string | undefined;
+// GET & POST /api/drive/callback - Google OAuth 2.0 redirect target
+router.all('/callback', async (req, res) => {
+  const code = ((req.query.code || req.body?.code) as string | undefined)?.trim();
+  const state = ((req.query.state || req.body?.state) as string | undefined)?.trim();
+  const error = ((req.query.error || req.body?.error) as string | undefined)?.trim();
 
-  const frontendUrl = (process.env.CORS_ORIGIN || '').split(',')[0].trim().replace(/\/$/, '') || 'https://xxq-chat-frontend.onrender.com';
+  const frontendUrl = (process.env.CORS_ORIGIN || '').split(',')[0].trim().replace(/\/+$/, '') || 'https://xxq-chat-frontend.onrender.com';
 
   if (error) {
     res.status(400).send(`
@@ -182,7 +182,7 @@ router.get('/callback', async (req, res) => {
         <div class="card">
           <h1>Google Drive Yetkilendirmesi Başarısız</h1>
           <p>Google OAuth izni onaylanmadı veya reddedildi: <strong>${error}</strong></p>
-          <p>Lütfen XXQ Chat Yönetim Paneline dönerek bağlantıyı tekrar deneyin.</p>
+          <p>Lütfen XXQ Chat Yönetim Paneline dönerek "Drive Ekle" butonundan bağlantıyı tekrar başlatın.</p>
           <a href="${frontendUrl}" class="btn">XXQ Chat'e Dön</a>
         </div>
       </body>
@@ -191,8 +191,9 @@ router.get('/callback', async (req, res) => {
     return;
   }
 
-  // Validate OAuth state parameter to prevent CSRF
-  if (!state || !GoogleDriveService.verifyState(state)) {
+  // Validate OAuth state parameter to prevent CSRF and retrieve matching redirectUri
+  const stateCheck = GoogleDriveService.verifyState(state);
+  if (!stateCheck.isValid) {
     res.status(400).send(`
       <!DOCTYPE html>
       <html lang="tr">
@@ -211,8 +212,8 @@ router.get('/callback', async (req, res) => {
       <body>
         <div class="card">
           <h1>Güvenlik Doğrulaması Başarısız</h1>
-          <p>OAuth durum parametresi (state) geçersiz veya süresi dolmuş. Olası bir yetkisiz yönlendirmeyi önlemek amacıyla istek reddedildi.</p>
-          <p>Lütfen XXQ Chat Yönetim Paneline dönerek bağlantıyı tekrar başlatın.</p>
+          <p>OAuth durum parametresi (state) geçersiz veya süresi dolmuş. Olası bir yetkisiz yönlendirmeyi veya CSRF saldırısını önlemek amacıyla istek reddedildi.</p>
+          <p>Lütfen XXQ Chat Yönetim Paneline dönerek "Drive Ekle" butonuna tıklayıp yeni bir yetkilendirme başlatın.</p>
           <a href="${frontendUrl}" class="btn">XXQ Chat'e Dön</a>
         </div>
       </body>
@@ -236,7 +237,8 @@ router.get('/callback', async (req, res) => {
       <body>
         <div class="card">
           <h2 style="color:#c084fc;">Google Drive Callback</h2>
-          <p style="color:#94a3b8; font-size: 13px;">Bu adres Google OAuth geri dönüşüdür. Yetkilendirme kodu bulunamadı.</p>
+          <p style="color:#94a3b8; font-size: 13px;">Google OAuth yönlendirmesinde yetkilendirme kodu (code) bulunamadı. Lütfen yeni bir yetkilendirme başlatın.</p>
+          <a href="${frontendUrl}" style="display:inline-block; margin-top:16px; background:#7c3aed; color:#fff; padding:10px 20px; border-radius:10px; text-decoration:none; font-size:12px;">XXQ Chat'e Dön</a>
         </div>
       </body>
       </html>
@@ -244,12 +246,13 @@ router.get('/callback', async (req, res) => {
     return;
   }
 
-  // Attempt automatic exchange if credentials are fully configured
+  // Perform single-use code exchange with the preserved matching redirectUri
   let connectedAccountEmail: string | null = null;
   let autoExchangeError: string | null = null;
 
   try {
-    const driveAccount = await GoogleDriveService.exchangeCodeAndConnect(code);
+    const redirectUri = stateCheck.redirectUri || GoogleDriveService.getRedirectUri();
+    const driveAccount = await GoogleDriveService.exchangeCodeAndConnect(code, redirectUri);
     connectedAccountEmail = driveAccount.email;
     await dataStore.recordAuditLog({
       actorEmail: 'system/oauth-callback',
@@ -262,53 +265,88 @@ router.get('/callback', async (req, res) => {
     autoExchangeError = err.message;
   }
 
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="tr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>XXQ Chat - Google Drive Bağlantısı</title>
-      <style>
-        body { background-color: #090710; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
-        .card { background-color: #120f1e; border: 1px solid #2a2042; border-radius: 20px; padding: 32px; max-width: 520px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
-        .badge { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 18px; background: rgba(124,58,237,0.2); border: 1px solid rgba(124,58,237,0.4); color: #c084fc; margin-bottom: 16px; font-size: 24px; }
-        h1 { color: #ffffff; font-size: 20px; margin-top: 0; margin-bottom: 8px; }
-        p { color: #94a3b8; font-size: 13px; line-height: 1.5; margin: 8px 0; }
-        .code-box { background: #07050d; border: 1px dashed #4c1d95; border-radius: 12px; padding: 12px; font-family: monospace; font-size: 12px; color: #e9d5ff; word-break: break-all; margin: 16px 0; user-select: all; text-align: left; }
-        .btn { display: inline-block; background-color: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 13px; margin-top: 12px; border: none; cursor: pointer; transition: background 0.2s; }
-        .btn:hover { background-color: #6d28d9; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <div class="badge">✓</div>
-        <h1>Google Drive Yetkilendirmesi Başarılı</h1>
-        ${
-          connectedAccountEmail
-            ? `<p style="color:#4ade80;"><strong>${connectedAccountEmail}</strong> hesabı başarıyla XXQ Chat depolama alanına bağlandı.</p>`
-            : `<p>Aşağıdaki yetkilendirme kodunu XXQ Chat Yönetim Paneline yapıştırarak bağlantıyı tamamlayabilirsiniz:</p>
-               <div class="code-box">${code}</div>`
-        }
-        <p>Pencere birkaç saniye içinde otomatik olarak kapanacaktır.</p>
-        <a href="${frontendUrl}" class="btn" id="returnBtn">XXQ Chat'e Dön</a>
-      </div>
-      <script>
-        // Notify parent / opener window if opened in a popup
-        try {
-          if (window.opener) {
-            window.opener.postMessage({
-              type: 'XXQ_DRIVE_OAUTH_CODE',
-              code: ${JSON.stringify(code)},
-              email: ${JSON.stringify(connectedAccountEmail || '')}
-            }, '*');
-            setTimeout(function() { window.close(); }, 2000);
-          }
-        } catch (e) {}
-      </script>
-    </body>
-    </html>
-  `);
+  if (connectedAccountEmail) {
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="tr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>XXQ Chat - Google Drive Başarıyla Bağlandı</title>
+        <style>
+          body { background-color: #090710; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+          .card { background-color: #120f1e; border: 1px solid #166534; border-radius: 20px; padding: 32px; max-width: 520px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+          .badge { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 18px; background: rgba(34,197,94,0.2); border: 1px solid rgba(34,197,94,0.4); color: #4ade80; margin-bottom: 16px; font-size: 24px; }
+          h1 { color: #ffffff; font-size: 20px; margin-top: 0; margin-bottom: 8px; }
+          p { color: #94a3b8; font-size: 13px; line-height: 1.5; margin: 8px 0; }
+          .btn { display: inline-block; background-color: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 13px; margin-top: 16px; border: none; cursor: pointer; transition: background 0.2s; }
+          .btn:hover { background-color: #6d28d9; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="badge">✓</div>
+          <h1>Google Drive Başarıyla Bağlandı</h1>
+          <p style="color:#4ade80; font-weight:600; font-size:14px;">${connectedAccountEmail} hesabı başarıyla XXQ Chat depolama alanına bağlandı.</p>
+          <p>Sohbet ekleri (dosya, görsel, belge) artık bu Google Drive hesabındaki 'XXQ Chat' klasöründe güvenle saklanacaktır.</p>
+          <p style="font-size: 12px; color: #64748b; margin-top: 16px;">Bu pencere birkaç saniye içinde otomatik olarak kapanacaktır.</p>
+          <a href="${frontendUrl}" class="btn" id="returnBtn">XXQ Chat'e Dön</a>
+        </div>
+        <script>
+          try {
+            if (window.opener) {
+              window.opener.postMessage({
+                type: 'XXQ_DRIVE_OAUTH_SUCCESS',
+                email: ${JSON.stringify(connectedAccountEmail)}
+              }, '*');
+              setTimeout(function() { window.close(); }, 2000);
+            }
+          } catch (e) {}
+        </script>
+      </body>
+      </html>
+    `);
+  } else {
+    res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="tr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>XXQ Chat - Google Drive Bağlantısı Başarısız</title>
+        <style>
+          body { background-color: #090710; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+          .card { background-color: #120f1e; border: 1px solid #7f1d1d; border-radius: 20px; padding: 32px; max-width: 520px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+          .badge { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 18px; background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.4); color: #f87171; margin-bottom: 16px; font-size: 24px; }
+          h1 { color: #f87171; font-size: 20px; margin-top: 0; margin-bottom: 8px; }
+          p { color: #94a3b8; font-size: 13px; line-height: 1.5; margin: 8px 0; }
+          .err-box { background: #1a0f18; border: 1px solid #831843; border-radius: 12px; padding: 12px; color: #fca5a5; font-size: 12px; line-height: 1.5; margin: 16px 0; text-align: left; }
+          .btn { display: inline-block; background-color: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 13px; margin-top: 16px; border: none; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="badge">✕</div>
+          <h1>Yetkilendirme Başarısız Oldu</h1>
+          <div class="err-box">${autoExchangeError || 'Google Drive yetkilendirme kodu doğrulanamadı.'}</div>
+          <p>Google yetkilendirme kodları tek kullanımlık ve kısa ömürlüdür. Bir kez başarısız olan veya kullanılan kod tekrar denenemez.</p>
+          <p>Lütfen XXQ Chat Yönetim Paneline dönerek <strong>"Drive Ekle"</strong> butonuna tıklayıp yeni bir oturum açma akışı başlatın.</p>
+          <a href="${frontendUrl}" class="btn" id="returnBtn">XXQ Chat'e Dön</a>
+        </div>
+        <script>
+          try {
+            if (window.opener) {
+              window.opener.postMessage({
+                type: 'XXQ_DRIVE_OAUTH_FAILED',
+                error: ${JSON.stringify(autoExchangeError || 'Yetkilendirme doğrulanamadı.')}
+              }, '*');
+            }
+          } catch (e) {}
+        </script>
+      </body>
+      </html>
+    `);
+  }
 });
 
 // DELETE /api/drive/accounts/:id (Admin only)

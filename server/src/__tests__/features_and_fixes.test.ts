@@ -263,9 +263,10 @@ describe('XXQ Chat Features & Fixes Verification Suite', () => {
     it('renders Turkish callback message on /api/drive/callback', async () => {
       const res = await request(app).get('/api/drive/callback?code=mock_code&state=mock_state');
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
       expect(res.text).toContain('Google Drive Bağlantısı');
-      expect(res.text).toContain('Pencere birkaç saniye içinde otomatik olarak kapanacaktır');
+      expect(res.text).toContain('Yetkilendirme Başarısız Oldu');
+      expect(res.text).toContain('Google yetkilendirme kodları tek kullanımlık ve kısa ömürlüdür');
     });
   });
 });

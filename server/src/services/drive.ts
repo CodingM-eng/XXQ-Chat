@@ -7,42 +7,70 @@ import { DbDriveAccount } from '../db/types.js';
 
 const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
 
+export interface ProcessedCodeEntry {
+  timestamp: number;
+  status: 'pending' | 'success' | 'failed';
+  email?: string;
+  error?: string;
+}
+
+export interface StateEntry {
+  createdAt: number;
+  userId?: string;
+  redirectUri: string;
+}
+
 export class GoogleDriveService {
-  private static activeStates = new Map<string, { createdAt: number; userId?: string }>();
+  private static activeStates = new Map<string, StateEntry>();
+  private static processedCodes = new Map<string, ProcessedCodeEntry>();
+
+  /**
+   * Helper to strip outer quotes and whitespace from environment strings.
+   */
+  static cleanEnv(val: string | undefined): string | undefined {
+    if (!val) return undefined;
+    let trimmed = val.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      trimmed = trimmed.slice(1, -1).trim();
+    }
+    return trimmed || undefined;
+  }
 
   /**
    * Reads GOOGLE_DRIVE_CLIENT_ID dynamically from process.env or static config.
    */
   static getClientId(): string | undefined {
-    return (process.env.GOOGLE_DRIVE_CLIENT_ID?.trim() || config.GOOGLE_DRIVE_CLIENT_ID?.trim()) || undefined;
+    return this.cleanEnv(process.env.GOOGLE_DRIVE_CLIENT_ID) || this.cleanEnv(config.GOOGLE_DRIVE_CLIENT_ID);
   }
 
   /**
    * Reads GOOGLE_DRIVE_CLIENT_SECRET dynamically from process.env or static config.
    */
   static getClientSecret(): string | undefined {
-    return (process.env.GOOGLE_DRIVE_CLIENT_SECRET?.trim() || config.GOOGLE_DRIVE_CLIENT_SECRET?.trim()) || undefined;
+    return this.cleanEnv(process.env.GOOGLE_DRIVE_CLIENT_SECRET) || this.cleanEnv(config.GOOGLE_DRIVE_CLIENT_SECRET);
   }
 
   /**
    * Resolves the exact redirect URI, honoring GOOGLE_DRIVE_REDIRECT_URI or Render production defaults.
+   * Strips trailing slashes to guarantee exact URI matching.
    */
   static getRedirectUri(): string {
-    const raw = process.env.GOOGLE_DRIVE_REDIRECT_URI?.trim() || config.GOOGLE_DRIVE_REDIRECT_URI?.trim();
-    if (raw) return raw;
+    const raw = this.cleanEnv(process.env.GOOGLE_DRIVE_REDIRECT_URI) || this.cleanEnv(config.GOOGLE_DRIVE_REDIRECT_URI);
+    if (raw) return raw.replace(/\/+$/, '');
     if (process.env.RENDER_EXTERNAL_URL?.trim()) {
-      return `${process.env.RENDER_EXTERNAL_URL.trim().replace(/\/$/, '')}/api/drive/callback`;
+      return `${process.env.RENDER_EXTERNAL_URL.trim().replace(/\/+$/, '')}/api/drive/callback`;
     }
     if (process.env.NODE_ENV === 'production' || config.NODE_ENV === 'production') {
       return 'https://xxq-chat-backend.onrender.com/api/drive/callback';
     }
-    return `${(process.env.SERVER_BASE_URL || config.SERVER_BASE_URL || 'http://localhost:4000').trim().replace(/\/$/, '')}/api/drive/callback`;
+    return `${(process.env.SERVER_BASE_URL || config.SERVER_BASE_URL || 'http://localhost:4000').trim().replace(/\/+$/, '')}/api/drive/callback`;
   }
 
   /**
-   * Generates a cryptographically secure OAuth 2.0 state parameter with 15-minute validity.
+   * Generates a cryptographically secure OAuth 2.0 state parameter with 15-minute validity
+   * and preserves the exact redirect URI used for this specific flow.
    */
-  static generateState(userId?: string): string {
+  static generateState(userId?: string, redirectUri?: string): string {
     const now = Date.now();
     // Clean expired states (older than 15 minutes)
     for (const [st, data] of this.activeStates.entries()) {
@@ -51,24 +79,88 @@ export class GoogleDriveService {
       }
     }
     const state = crypto.randomBytes(24).toString('hex');
-    this.activeStates.set(state, { createdAt: now, userId });
+    const rUri = (redirectUri || this.getRedirectUri()).trim().replace(/\/+$/, '');
+    this.activeStates.set(state, { createdAt: now, userId, redirectUri: rUri });
     return state;
   }
 
   /**
    * Verifies the OAuth state parameter to prevent CSRF. One-time use.
+   * Returns validity status and the preserved redirect URI.
    */
-  static verifyState(state: string | undefined): boolean {
-    if (!state) return false;
+  static verifyState(state: string | undefined): { isValid: boolean; redirectUri?: string } {
+    if (!state) return { isValid: false };
     // Allow standard test states in test environment
     if (process.env.NODE_ENV === 'test' && (state === 'mock_state' || state === 'test-state')) {
-      return true;
+      return { isValid: true, redirectUri: this.getRedirectUri() };
     }
     const entry = this.activeStates.get(state);
-    if (!entry) return false;
+    if (!entry) return { isValid: false };
     const isValid = (Date.now() - entry.createdAt) <= 15 * 60 * 1000;
     this.activeStates.delete(state); // Enforce single-use
-    return isValid;
+    return { isValid, redirectUri: entry.redirectUri };
+  }
+
+  /**
+   * Clears state and code caches. Used in unit tests.
+   */
+  static resetCodeTracking(): void {
+    this.processedCodes.clear();
+    this.activeStates.clear();
+  }
+
+  /**
+   * Safely inspects Google OAuth token endpoint errors without exposing secrets, codes, or tokens.
+   */
+  static sanitizeOAuthError(errBody: string, status: number): {
+    code: string;
+    description: string;
+    userMessageTr: string;
+  } {
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(errBody);
+    } catch {
+      // Non-JSON or HTML response
+    }
+
+    const errorCode = String(parsed.error || `HTTP_${status}`);
+    const errorDesc = String(parsed.error_description || '');
+
+    // Sanitized description strips any potential secrets or authorization tokens
+    const sanitizedDesc = errorDesc
+      .replace(/client_secret=[^&\s]+/gi, 'client_secret=[REDACTED]')
+      .replace(/code=[^&\s]+/gi, 'code=[REDACTED]')
+      .replace(/token=[^&\s]+/gi, 'token=[REDACTED]');
+
+    let userMessageTr = 'Google Drive yetkilendirme kodu doğrulanamadı.';
+
+    switch (errorCode) {
+      case 'invalid_grant':
+        userMessageTr = 'Google yetkilendirme kodu geçersiz, süresi dolmuş veya daha önce kullanılmış (invalid_grant). Yetkilendirme kodları tek kullanımlıktır. Lütfen "Google ile Yetkilendir" butonuna tıklayarak yeni bir yetkilendirme akışı başlatın.';
+        break;
+      case 'redirect_uri_mismatch':
+        userMessageTr = `Yönlendirme adresi uyuşmazlığı (redirect_uri_mismatch). Google Cloud Console'da kayıtlı Yetkili Yönlendirme URI ile sunucunun kullandığı URI (${this.getRedirectUri()}) birebir aynı olmalıdır.`;
+        break;
+      case 'invalid_client':
+        userMessageTr = 'Google OAuth istemci kimliği veya gizli anahtarı geçersiz (invalid_client). Lütfen Render ortam değişkenlerindeki GOOGLE_DRIVE_CLIENT_ID ve GOOGLE_DRIVE_CLIENT_SECRET değerlerini kontrol edin.';
+        break;
+      case 'invalid_request':
+        userMessageTr = 'Google OAuth isteği eksik veya hatalı parametre içeriyor (invalid_request). Lütfen yeni bir yetkilendirme akışı başlatın.';
+        break;
+      case 'unauthorized_client':
+        userMessageTr = 'Bu OAuth istemcisi seçilen yetkilendirme türü için yapılandırılmamış (unauthorized_client). Google Cloud Console\'da uygulama türünün "Web application" olduğundan emin olun.';
+        break;
+      default:
+        userMessageTr = `Google Drive yetkilendirme kodu doğrulanamadı (${errorCode}: ${status}). Lütfen yeni bir yetkilendirme akışı başlatın.`;
+        break;
+    }
+
+    return {
+      code: errorCode,
+      description: sanitizedDesc,
+      userMessageTr,
+    };
   }
 
   /**
@@ -76,7 +168,7 @@ export class GoogleDriveService {
    */
   static getAuthUrl(state?: string, overrideConfig?: { clientId?: string; redirectUri?: string }): string {
     const clientId = overrideConfig?.clientId || this.getClientId();
-    const redirectUri = overrideConfig?.redirectUri || this.getRedirectUri();
+    const redirectUri = (overrideConfig?.redirectUri || this.getRedirectUri()).trim().replace(/\/+$/, '');
     const clientSecret = this.getClientSecret();
 
     const missing: string[] = [];
@@ -89,7 +181,7 @@ export class GoogleDriveService {
       throw new Error(`Google Drive OAuth yapılandırması eksik (${missing.join(', ')}). Lütfen Render ortam değişkenlerinde bu değerleri tanımlayın.`);
     }
 
-    const effectiveState = state || this.generateState();
+    const effectiveState = state || this.generateState(undefined, redirectUri);
 
     const params = new URLSearchParams({
       client_id: clientId!,
@@ -106,13 +198,44 @@ export class GoogleDriveService {
 
   /**
    * Exchanges authorization code for tokens, initializes XXQ Chat folder, and returns drive account details.
+   * Enforces single-use semantics: rejects repeated code exchanges and prevents retrying with dead codes.
    */
-  static async exchangeCodeAndConnect(code: string): Promise<DbDriveAccount> {
+  static async exchangeCodeAndConnect(code: string, customRedirectUri?: string): Promise<DbDriveAccount> {
+    const trimmedCode = code?.trim();
+    if (!trimmedCode) {
+      throw new Error('Geçersiz veya boş yetkilendirme kodu.');
+    }
+
+    const now = Date.now();
+    // Clean old codes (> 15 minutes)
+    for (const [c, data] of this.processedCodes.entries()) {
+      if (now - data.timestamp > 15 * 60 * 1000) {
+        this.processedCodes.delete(c);
+      }
+    }
+
+    const existing = this.processedCodes.get(trimmedCode);
+    if (existing) {
+      if (existing.status === 'success') {
+        throw new Error(
+          `Bu yetkilendirme kodu daha önce kullanıldı ve Google Drive hesabı (${existing.email || 'bağlandı'}) başarıyla bağlandı. Google yetkilendirme kodları tek kullanımlıktır. Yeni bir işlem için lütfen yeni bir yetkilendirme başlatın.`
+        );
+      } else {
+        throw new Error(
+          'Bu yetkilendirme kodu daha önce kullanıldı veya başarısız bir denemede tüketildi. Google yetkilendirme kodları tek kullanımlıktır. Lütfen "Google ile Yetkilendir" butonuna tıklayarak yeni bir oturum açma akışı başlatın.'
+        );
+      }
+    }
+
+    // Mark code as pending to prevent concurrent double-redemption
+    this.processedCodes.set(trimmedCode, { timestamp: now, status: 'pending' });
+
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
-    const redirectUri = this.getRedirectUri();
+    const redirectUri = (customRedirectUri || this.getRedirectUri()).trim().replace(/\/+$/, '');
 
     if (!clientId || !clientSecret || !redirectUri) {
+      this.processedCodes.delete(trimmedCode);
       const missing: string[] = [];
       if (!clientId) missing.push('GOOGLE_DRIVE_CLIENT_ID');
       if (!clientSecret) missing.push('GOOGLE_DRIVE_CLIENT_SECRET');
@@ -121,22 +244,30 @@ export class GoogleDriveService {
     }
 
     // 1. Exchange code for access & refresh tokens
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
-      }),
-    });
+    let tokenRes: Response;
+    try {
+      tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code: trimmedCode,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: 'authorization_code',
+        }),
+      });
+    } catch (networkErr: any) {
+      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'failed', error: networkErr.message });
+      throw new Error(`Google OAuth sunucusuna erişilemedi: ${networkErr.message}`);
+    }
 
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text();
-      console.error('[DRIVE] Token exchange error:', errBody);
-      throw new Error(`Google Drive yetkilendirme kodu doğrulanamadı: ${tokenRes.status}`);
+      const sanitized = this.sanitizeOAuthError(errBody, tokenRes.status);
+      console.error(`[DRIVE] Token exchange error: ${sanitized.code} - ${sanitized.description}`);
+      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'failed', error: sanitized.userMessageTr });
+      throw new Error(sanitized.userMessageTr);
     }
 
     const tokenData = (await tokenRes.json()) as {
@@ -146,6 +277,7 @@ export class GoogleDriveService {
     };
 
     if (!tokenData.refresh_token) {
+      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'failed', error: 'MISSING_REFRESH_TOKEN' });
       throw new Error('Google Drive yenileme belirteci (refresh_token) alınamadı. Lütfen erişim iznini kaldırıp tekrar deneyin.');
     }
 
@@ -181,6 +313,13 @@ export class GoogleDriveService {
       spaceTotal: quota.spaceTotal,
     });
 
+    // Mark as successfully redeemed
+    this.processedCodes.set(trimmedCode, {
+      timestamp: Date.now(),
+      status: 'success',
+      email: driveAccount.email,
+    });
+
     return driveAccount;
   }
 
@@ -210,9 +349,9 @@ export class GoogleDriveService {
 
     if (!res.ok) {
       const errText = await res.text();
-      const sanitized = errText.replace(/client_secret=[^&]+/g, 'client_secret=[REDACTED]');
-      console.error('[DRIVE] Refresh token error:', sanitized);
-      throw new Error('Google Drive erişim belirteci yenilenemedi.');
+      const sanitized = this.sanitizeOAuthError(errText, res.status);
+      console.error(`[DRIVE] Refresh token error: ${sanitized.code} - ${sanitized.description}`);
+      throw new Error(`Google Drive erişim belirteci yenilenemedi (${sanitized.code}).`);
     }
 
     const data = (await res.json()) as { access_token: string };

@@ -137,6 +137,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
 
   useEffect(() => {
     loadAdminData();
+
+    const handleOAuthMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'XXQ_DRIVE_OAUTH_SUCCESS') {
+        setSuccessMsg(`Google Drive hesabı başarıyla bağlandı (${event.data.email || 'Aktif'}).`);
+        setDriveModalOpen(false);
+        setDriveAuthCode('');
+        setDriveConnecting(false);
+        loadAdminData();
+      } else if (event.data?.type === 'XXQ_DRIVE_OAUTH_FAILED') {
+        setError(event.data.error || 'Google Drive yetkilendirmesi doğrulanamadı.');
+        setDriveConnecting(false);
+      }
+    };
+
+    window.addEventListener('message', handleOAuthMessage);
+    return () => {
+      window.removeEventListener('message', handleOAuthMessage);
+    };
   }, []);
 
   const loadAdminData = async () => {
@@ -2232,9 +2250,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
               </div>
 
               <form onSubmit={handleCompleteDriveConnect} className="p-3.5 rounded-2xl bg-[#171126] border border-[#2d2247] space-y-3">
-                <p className="font-bold text-slate-200">2. Adım: Yetkilendirme Kodunu Girin</p>
+                <p className="font-bold text-slate-200">2. Adım: Yetkilendirme Kodunu Girin (Alternatif)</p>
                 <p className="text-slate-400 leading-relaxed">
-                  Google onay ekranından veya yönlendirme URL'sinden aldığınız <code>code</code> parametresini yapıştırın:
+                  Google onay ekranı tamamlandığında bağlantı genellikle otomatik olarak kurulur. Açılır pencere (popup) engellendiyse ve callback sayfasından manuel kod aldıysanız yapıştırın:
                 </p>
                 <input
                   type="text"

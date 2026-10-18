@@ -266,15 +266,115 @@ describe('XXQ Chat Google Drive & Attachments Suite', () => {
   });
 
   it('validates state and enforces single-use in GoogleDriveService.verifyState', () => {
-    const state = GoogleDriveService.generateState('test_user');
+    const state = GoogleDriveService.generateState('test_user', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
     expect(state).toHaveLength(48); // 24 bytes in hex
 
-    // First verification should pass
+    // First verification should pass and return the exact redirectUri
     const firstCheck = GoogleDriveService.verifyState(state);
-    expect(firstCheck).toBe(true);
+    expect(firstCheck.isValid).toBe(true);
+    expect(firstCheck.redirectUri).toBe('https://xxq-chat-backend.onrender.com/api/drive/callback');
 
     // Replay attack / second check should fail (single use)
     const secondCheck = GoogleDriveService.verifyState(state);
-    expect(secondCheck).toBe(false);
+    expect(secondCheck.isValid).toBe(false);
+  });
+
+  it('guarantees redirect URI consistency and strips trailing slashes', () => {
+    // Test with trailing slash and extra whitespace
+    vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback/// ');
+    expect(GoogleDriveService.getRedirectUri()).toBe('https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+    // Test cleanEnv with quotes
+    expect(GoogleDriveService.cleanEnv('"test-client-id"')).toBe('test-client-id');
+    expect(GoogleDriveService.cleanEnv("'test-secret'")).toBe('test-secret');
+  });
+
+  it('safely inspects Google token endpoint error responses without leaking credentials', () => {
+    // 1. invalid_grant
+    const grantErr = GoogleDriveService.sanitizeOAuthError(
+      JSON.stringify({ error: 'invalid_grant', error_description: 'Code was already redeemed client_secret=very_secret_key' }),
+      400
+    );
+    expect(grantErr.code).toBe('invalid_grant');
+    expect(grantErr.description).not.toContain('very_secret_key');
+    expect(grantErr.description).toContain('[REDACTED]');
+    expect(grantErr.userMessageTr).toContain('Google yetkilendirme kodu geçersiz, süresi dolmuş veya daha önce kullanılmış');
+
+    // 2. redirect_uri_mismatch
+    const redirectErr = GoogleDriveService.sanitizeOAuthError(
+      JSON.stringify({ error: 'redirect_uri_mismatch', error_description: 'Bad Request' }),
+      400
+    );
+    expect(redirectErr.code).toBe('redirect_uri_mismatch');
+    expect(redirectErr.userMessageTr).toContain('Yönlendirme adresi uyuşmazlığı');
+
+    // 3. invalid_client
+    const clientErr = GoogleDriveService.sanitizeOAuthError(
+      JSON.stringify({ error: 'invalid_client', error_description: 'Unauthorized' }),
+      401
+    );
+    expect(clientErr.code).toBe('invalid_client');
+    expect(clientErr.userMessageTr).toContain('Google OAuth istemci kimliği veya gizli anahtarı geçersiz');
+  });
+
+  it('enforces single-use authorization code and prevents repeated or failed code reuse', async () => {
+    GoogleDriveService.resetCodeTracking();
+
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'client-id-123');
+    vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'secret-456');
+    vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+    // Mock fetch for token exchange: simulate Google invalid_grant 400
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+      if (typeof url === 'string' && url.includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'Bad Request' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const testCode = '4/0AWtgSingleUseCode123';
+
+    // First attempt fails at Google
+    await expect(GoogleDriveService.exchangeCodeAndConnect(testCode)).rejects.toThrow(
+      /Google yetkilendirme kodu geçersiz, süresi dolmuş veya daha önce kullanılmış/
+    );
+
+    // Second attempt with the SAME code must be rejected locally without even contacting Google!
+    fetchMock.mockClear();
+    await expect(GoogleDriveService.exchangeCodeAndConnect(testCode)).rejects.toThrow(
+      /Bu yetkilendirme kodu daha önce kullanıldı veya başarısız bir denemede tüketildi/
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('handles callback via both GET and POST with single-use state verification', async () => {
+    GoogleDriveService.resetCodeTracking();
+
+    const stateGet = GoogleDriveService.generateState('admin_1');
+    const getRes = await request(app)
+      .get(`/api/drive/callback?code=test-code-1&state=${stateGet}`);
+
+    // State is consumed on first check
+    expect(GoogleDriveService.verifyState(stateGet).isValid).toBe(false);
+
+    // Replay attack with same state fails
+    const replayRes = await request(app)
+      .get(`/api/drive/callback?code=test-code-1&state=${stateGet}`);
+    expect(replayRes.status).toBe(400);
+    expect(replayRes.text).toContain('Güvenlik Doğrulaması Başarısız');
+
+    // POST method support
+    const statePost = GoogleDriveService.generateState('admin_2');
+    const postRes = await request(app)
+      .post('/api/drive/callback')
+      .send({ code: 'test-code-post', state: statePost });
+
+    expect(postRes.status).toBe(400); // 400 because test-code-post exchange fails without mocking, but state was accepted
+    expect(postRes.text).not.toContain('Güvenlik Doğrulaması Başarısız');
+    // Ensure dead code is NOT rendered in a copyable code-box
+    expect(postRes.text).not.toContain('class="code-box"');
   });
 });
