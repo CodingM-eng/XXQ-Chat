@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { Server, ServerJoinQuestion } from '../../types';
+import { SafeAvatar } from '../common/SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 import {
   X,
   Layers,
@@ -223,15 +225,17 @@ export const JoinCommunityModal: React.FC<JoinCommunityModalProps> = ({
               <div
                 className="w-full h-24 rounded-2xl bg-[#1a1330] border border-[#2e234c] overflow-hidden relative bg-cover bg-center flex items-end p-3 shadow-inner"
                 style={{
-                  backgroundImage: inviteData.serverBanner ? `url(${inviteData.serverBanner})` : undefined,
+                  backgroundImage: toSafeImageUrl(inviteData.serverBanner) ? `url(${toSafeImageUrl(inviteData.serverBanner)})` : undefined,
                 }}
               >
                 <div className="w-12 h-12 rounded-xl overflow-hidden border-2 border-purple-500 bg-[#120f1e] flex items-center justify-center text-white font-bold text-base shadow-lg shrink-0">
-                  {inviteData.serverAvatar ? (
-                    <img src={inviteData.serverAvatar} alt={inviteData.serverName} className="w-full h-full object-cover" />
-                  ) : (
-                    inviteData.serverName.slice(0, 2).toUpperCase()
-                  )}
+                  <SafeAvatar
+                    src={inviteData.serverAvatar}
+                    alt={inviteData.serverName}
+                    className="w-full h-full object-cover"
+                    fallbackText={inviteData.serverName}
+                    size={48}
+                  />
                 </div>
               </div>
 

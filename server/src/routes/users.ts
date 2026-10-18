@@ -4,6 +4,7 @@ import multer from 'multer';
 import { requireAuth } from '../auth/index.js';
 import { enforceWhitelist } from '../middleware/whitelist.js';
 import { dataStore } from '../db/index.js';
+import { normalizeAndSanitizeImageUrl, sanitizeSvg } from '../utils/sanitizeSvg.js';
 
 const router = Router();
 
@@ -78,7 +79,7 @@ router.post('/onboarding', async (req, res) => {
     firstName: firstName?.trim() || null,
     lastName: lastName?.trim() || null,
     displayName: displayName.trim(),
-    avatarUrl: avatarUrl?.trim() || null,
+    avatarUrl: avatarUrl !== undefined ? normalizeAndSanitizeImageUrl(avatarUrl) : null,
     phoneNumber: phoneNumber?.trim() || null,
   });
 
@@ -121,8 +122,8 @@ router.patch('/me', async (req, res) => {
     firstName: firstName?.trim(),
     lastName: lastName?.trim(),
     displayName: displayName?.trim(),
-    avatarUrl: avatarUrl !== undefined ? (avatarUrl?.trim() || null) : undefined,
-    bannerUrl: bannerUrl !== undefined ? (bannerUrl?.trim() || null) : undefined,
+    avatarUrl: avatarUrl !== undefined ? normalizeAndSanitizeImageUrl(avatarUrl) : undefined,
+    bannerUrl: bannerUrl !== undefined ? normalizeAndSanitizeImageUrl(bannerUrl) : undefined,
     accentColor: accentColor !== undefined ? (accentColor?.trim() || null) : undefined,
     phoneNumber: phoneNumber !== undefined ? (phoneNumber.trim() || null) : undefined,
     themePreference,
@@ -174,14 +175,23 @@ router.post('/avatar', (req, res) => {
         res.status(400).json({ error: 'INVALID_FILE_TYPE', message: 'Yalnızca resim dosyası yüklenebilir.' });
         return;
       }
-      newAvatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      if (req.file.mimetype === 'image/svg+xml') {
+        const sanitized = sanitizeSvg(req.file.buffer.toString('utf8'));
+        if (!sanitized) {
+          res.status(400).json({ error: 'INVALID_SVG', message: 'Geçersiz veya zararlı kod içeren SVG dosyası.' });
+          return;
+        }
+        newAvatarUrl = `data:image/svg+xml;utf8,${encodeURIComponent(sanitized)}`;
+      } else {
+        newAvatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      }
     } else if (req.body && typeof req.body.avatarUrl === 'string') {
-      const url = req.body.avatarUrl.trim();
-      if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:image/')) {
-        res.status(400).json({ error: 'INVALID_URL', message: 'Geçersiz resim bağlantısı. http://, https:// veya data URI olmalıdır.' });
+      const sanitized = normalizeAndSanitizeImageUrl(req.body.avatarUrl);
+      if (!sanitized) {
+        res.status(400).json({ error: 'INVALID_URL', message: 'Geçersiz resim bağlantısı veya desteklenmeyen format.' });
         return;
       }
-      newAvatarUrl = url;
+      newAvatarUrl = sanitized;
     } else {
       res.status(400).json({ error: 'NO_IMAGE', message: 'Bir resim dosyası veya geçerli bir resim bağlantısı sağlamalısınız.' });
       return;
@@ -227,14 +237,23 @@ router.post('/banner', (req, res) => {
         res.status(400).json({ error: 'INVALID_FILE_TYPE', message: 'Yalnızca resim dosyası yüklenebilir.' });
         return;
       }
-      newBannerUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      if (req.file.mimetype === 'image/svg+xml') {
+        const sanitized = sanitizeSvg(req.file.buffer.toString('utf8'));
+        if (!sanitized) {
+          res.status(400).json({ error: 'INVALID_SVG', message: 'Geçersiz veya zararlı kod içeren SVG dosyası.' });
+          return;
+        }
+        newBannerUrl = `data:image/svg+xml;utf8,${encodeURIComponent(sanitized)}`;
+      } else {
+        newBannerUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      }
     } else if (req.body && typeof req.body.bannerUrl === 'string') {
-      const url = req.body.bannerUrl.trim();
-      if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:image/')) {
-        res.status(400).json({ error: 'INVALID_URL', message: 'Geçersiz resim bağlantısı. http://, https:// veya data URI olmalıdır.' });
+      const sanitized = normalizeAndSanitizeImageUrl(req.body.bannerUrl);
+      if (!sanitized) {
+        res.status(400).json({ error: 'INVALID_URL', message: 'Geçersiz resim bağlantısı veya desteklenmeyen format.' });
         return;
       }
-      newBannerUrl = url;
+      newBannerUrl = sanitized;
     } else {
       res.status(400).json({ error: 'NO_IMAGE', message: 'Bir resim dosyası veya geçerli bir afiş bağlantısı sağlamalısınız.' });
       return;

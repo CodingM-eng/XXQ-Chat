@@ -16,9 +16,11 @@ import {
   Headphones,
   Check,
   CheckCheck,
-  Clock,
   Sparkles,
+  User as UserIcon,
 } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 
 interface ChannelSidebarProps {
   activeServerId: string | null;
@@ -171,20 +173,22 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             onClick={() => setIsServerMenuOpen(!isServerMenuOpen)}
             className="w-full p-3.5 flex items-center justify-between hover:bg-[#161129] transition-colors text-left relative overflow-hidden group"
           >
-            {activeServer?.bannerUrl && (
+            {toSafeImageUrl(activeServer?.bannerUrl) && (
               <div
                 className="absolute inset-0 opacity-20 bg-cover bg-center pointer-events-none group-hover:opacity-30 transition-opacity"
-                style={{ backgroundImage: `url(${activeServer.bannerUrl})` }}
+                style={{ backgroundImage: `url(${toSafeImageUrl(activeServer?.bannerUrl)})` }}
               />
             )}
             <div className="flex items-center gap-2.5 min-w-0 pr-2 relative z-10">
-              {activeServer?.avatarUrl && (
-                <img
-                  src={activeServer.avatarUrl}
-                  alt={activeServer.name}
-                  className="w-8 h-8 rounded-xl object-cover border border-purple-800/60 shrink-0 shadow"
+              <div className="w-8 h-8 rounded-xl overflow-hidden border border-purple-800/60 shrink-0 shadow bg-purple-950 flex items-center justify-center">
+                <SafeAvatar
+                  src={activeServer?.avatarUrl}
+                  alt={activeServer?.name}
+                  fallbackText={activeServer?.name?.slice(0, 2).toUpperCase()}
+                  fallbackIcon={<Users className="w-4 h-4 text-purple-300" />}
+                  className="w-full h-full object-cover"
                 />
-              )}
+              </div>
               <div className="min-w-0">
                 <h2 className="text-sm font-bold text-white truncate">
                   {activeServer?.name || 'Topluluk Sunucusu'}
@@ -352,17 +356,13 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                             : 'bg-gradient-to-tr from-purple-900 via-purple-700 to-sky-500'
                         }`}
                       >
-                        {isGroup ? (
-                          conv.avatarUrl ? (
-                            <img src={conv.avatarUrl} alt={conv.name} className="w-full h-full object-cover" />
-                          ) : (
-                            <Users className="w-4 h-4 text-purple-200" />
-                          )
-                        ) : conv.peer?.avatarUrl ? (
-                          <img src={conv.peer.avatarUrl} alt={conv.name} className="w-full h-full object-cover" />
-                        ) : (
-                          conv.name.slice(0, 2).toUpperCase()
-                        )}
+                        <SafeAvatar
+                          src={isGroup ? conv.avatarUrl : (conv.avatarUrl || conv.peer?.avatarUrl)}
+                          alt={conv.name}
+                          fallbackText={!isGroup ? conv.name.slice(0, 2).toUpperCase() : undefined}
+                          fallbackIcon={isGroup ? <Users className="w-4 h-4 text-purple-200" /> : <UserIcon className="w-4 h-4 text-purple-200" />}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                       {!isGroup && (
                         <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#0c0a14]" />
@@ -492,11 +492,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           >
             <div className="relative shrink-0">
               <div className="w-8 h-8 rounded-xl bg-purple-900 flex items-center justify-center font-bold text-white text-xs overflow-hidden border border-purple-500/40">
-                {currentUser.avatarUrl ? (
-                  <img src={currentUser.avatarUrl} alt={currentUser.displayName} className="w-full h-full object-cover" />
-                ) : (
-                  currentUser.displayName.slice(0, 2).toUpperCase()
-                )}
+                <SafeAvatar
+                  src={currentUser.avatarUrl}
+                  alt={currentUser.displayName}
+                  fallbackText={currentUser.displayName.slice(0, 2).toUpperCase()}
+                  className="w-full h-full object-cover"
+                />
               </div>
               <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border border-[#090710]" />
             </div>

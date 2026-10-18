@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { getSocket } from '../../services/socket';
 import { User } from '../../types';
+import { SafeAvatar } from '../common/SafeAvatar';
 import {
   Phone,
   PhoneOff,
@@ -810,16 +811,14 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
 
               {callStatus !== 'connected' && (
                 <div className="flex flex-col items-center justify-center gap-3 p-6 text-center animate-fade-in">
-                  <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-purple-800 to-indigo-600 border-2 border-purple-500/40 flex items-center justify-center text-white text-xl font-bold shadow-xl animate-pulse">
-                    {callState.targetUser.avatarUrl ? (
-                      <img
-                        src={callState.targetUser.avatarUrl}
-                        alt={callState.targetUser.displayName}
-                        className="w-full h-full object-cover rounded-full"
-                      />
-                    ) : (
-                      callState.targetUser.displayName.slice(0, 2).toUpperCase()
-                    )}
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-purple-800 to-indigo-600 border-2 border-purple-500/40 flex items-center justify-center text-white text-xl font-bold shadow-xl animate-pulse overflow-hidden">
+                    <SafeAvatar
+                      src={callState.targetUser.avatarUrl}
+                      alt={callState.targetUser.displayName}
+                      className="w-full h-full object-cover rounded-full"
+                      fallbackText={callState.targetUser.displayName}
+                      size={80}
+                    />
                   </div>
                   <div className="space-y-1">
                     <p className="font-bold text-sm text-white">{callState.targetUser.displayName}</p>
@@ -859,15 +858,13 @@ export const ActiveCallModal: React.FC<ActiveCallModalProps> = ({
                   <div className="absolute -inset-3 rounded-full bg-purple-500/20 animate-ping opacity-60" />
                 )}
                 <div className="relative w-28 h-28 rounded-full bg-gradient-to-tr from-purple-800 to-indigo-600 border-4 border-[#251b3d] flex items-center justify-center text-white text-3xl font-bold shadow-2xl overflow-hidden">
-                  {callState.targetUser.avatarUrl ? (
-                    <img
-                      src={callState.targetUser.avatarUrl}
-                      alt={callState.targetUser.displayName}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    callState.targetUser.displayName.slice(0, 2).toUpperCase()
-                  )}
+                  <SafeAvatar
+                    src={callState.targetUser.avatarUrl}
+                    alt={callState.targetUser.displayName}
+                    className="w-full h-full object-cover"
+                    fallbackText={callState.targetUser.displayName}
+                    size={112}
+                  />
                 </div>
               </div>
 

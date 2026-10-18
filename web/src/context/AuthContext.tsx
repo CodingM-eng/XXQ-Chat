@@ -15,6 +15,8 @@ interface AuthContextType {
   loginWithGoogle: () => Promise<void>;
   logout: () => void;
   refreshSession: () => Promise<void>;
+  retrySession: () => Promise<void>;
+  clearError: () => void;
   updateUser: (updatedUser: User) => void;
 }
 
@@ -165,6 +167,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithGoogle,
         logout,
         refreshSession,
+        retrySession: refreshSession,
+        clearError: () => setError(null),
         updateUser,
       }}
     >

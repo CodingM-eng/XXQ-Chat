@@ -1,6 +1,7 @@
 import React from 'react';
 import { Server, User } from '../../types';
 import { BrandLogo } from '../common/BrandLogo';
+import { SafeAvatar } from '../common/SafeAvatar';
 import {
   Plus,
   Compass,
@@ -119,11 +120,13 @@ export const ServerRail: React.FC<ServerRailProps> = ({
                 }`}
                 title={`${server.name} (${server.purpose})`}
               >
-                {server.avatarUrl ? (
-                  <img src={server.avatarUrl} alt={server.name} className="w-full h-full object-cover" />
-                ) : (
-                  <span>{initials}</span>
-                )}
+                <SafeAvatar
+                  src={server.avatarUrl}
+                  alt={server.name}
+                  fallbackText={initials}
+                  fallbackIcon={<Users className="w-5 h-5 text-purple-200" />}
+                  className="w-full h-full object-cover"
+                />
 
                 {/* Server Unread Badge */}
                 {unreadCount > 0 && (
@@ -194,16 +197,15 @@ export const ServerRail: React.FC<ServerRailProps> = ({
         {currentUser && onOpenProfile && (
           <button
             onClick={onOpenProfile}
-            className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-purple-500/50 hover:border-purple-400 transition-all focus:outline-none focus:ring-2 focus:ring-purple-400 shadow-md group"
+            className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-purple-500/50 hover:border-purple-400 transition-all focus:outline-none focus:ring-2 focus:ring-purple-400 shadow-md group bg-purple-900"
             title={`${currentUser.displayName} (Profil Ayarları)`}
           >
-            {currentUser.avatarUrl ? (
-              <img src={currentUser.avatarUrl} alt={currentUser.displayName} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-purple-900 flex items-center justify-center font-bold text-white text-xs">
-                {currentUser.displayName.slice(0, 2).toUpperCase()}
-              </div>
-            )}
+            <SafeAvatar
+              src={currentUser.avatarUrl}
+              alt={currentUser.displayName}
+              fallbackText={currentUser.displayName.slice(0, 2).toUpperCase()}
+              className="w-full h-full object-cover"
+            />
             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border border-[#07050d]" />
           </button>
         )}

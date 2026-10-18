@@ -27,21 +27,26 @@ export const app = express();
 // Trust proxy for Render / cloud reverse proxies
 app.set('trust proxy', 1);
 
-// Security Headers
+// Security Headers: allow cross-origin resource access for frontend static sites
 app.use(
   helmet({
     contentSecurityPolicy: false, // Managed by reverse proxy or client if needed
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
   })
 );
 
-// CORS configuration
+// CORS configuration supporting credentials, attachments, and WebSocket handshakes
 app.use(
   cors({
     origin: (requestOrigin, callback) => {
       callback(null, isAllowedOrigin(requestOrigin));
     },
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Range', 'Accept'],
+    exposedHeaders: ['Content-Disposition', 'Content-Length', 'Content-Range'],
   })
 );
 

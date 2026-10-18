@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { api } from '../../services/api';
 import { Conversation } from '../../types';
+import { SafeAvatar } from '../common/SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 import { X, Upload, Trash2, Check, Image as ImageIcon, Loader2 } from 'lucide-react';
 
 interface GroupAvatarModalProps {
@@ -63,11 +65,11 @@ export const GroupAvatarModal: React.FC<GroupAvatarModalProps> = ({
         const res = await api.uploadGroupAvatar(conversation.id, selectedFile);
         finalUrl = res.avatarUrl;
       } else if (avatarUrl.trim()) {
-        const res = await api.uploadGroupAvatar(conversation.id, avatarUrl.trim());
+        const res = await api.uploadGroupAvatar(conversation.id, toSafeImageUrl(avatarUrl.trim()) || avatarUrl.trim());
         finalUrl = res.avatarUrl;
       }
 
-      onAvatarUpdated(finalUrl);
+      onAvatarUpdated(toSafeImageUrl(finalUrl) || null);
       setSuccess(true);
       setTimeout(() => {
         setSuccess(false);
@@ -138,13 +140,13 @@ export const GroupAvatarModal: React.FC<GroupAvatarModalProps> = ({
           {/* Logo Preview */}
           <div className="flex flex-col items-center justify-center p-4 bg-[#090710] border border-[#241c38] rounded-2xl">
             <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-purple-500 bg-[#161224] flex items-center justify-center shadow-lg shadow-purple-950/40 mb-3">
-              {currentPreview ? (
-                <img src={currentPreview} alt="Grup Logosu" className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-xl font-bold text-purple-300">
-                  {conversation.name.slice(0, 2).toUpperCase()}
-                </span>
-              )}
+              <SafeAvatar
+                src={currentPreview}
+                alt="Grup Logosu"
+                className="w-full h-full object-cover"
+                fallbackText={conversation.name}
+                size={80}
+              />
             </div>
 
             <input

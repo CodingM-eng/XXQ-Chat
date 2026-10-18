@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
+import { SafeAvatar } from './SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 import {
   X,
   User as UserIcon,
@@ -189,8 +191,8 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
         firstName: firstName.trim() || undefined,
         lastName: lastName.trim() || undefined,
         displayName: displayName.trim(),
-        avatarUrl: finalAvatarUrl,
-        bannerUrl: finalBannerUrl,
+        avatarUrl: finalAvatarUrl ? toSafeImageUrl(finalAvatarUrl) || undefined : undefined,
+        bannerUrl: finalBannerUrl !== undefined ? (toSafeImageUrl(finalBannerUrl) || null) : undefined,
         accentColor: accentColor || null,
         phoneNumber: phoneNumber.trim() || undefined,
         bio: bio.trim() || null,
@@ -273,20 +275,19 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               className="w-full h-28 rounded-2xl bg-[#18122c] border border-[#2b2046] overflow-hidden relative bg-cover bg-center mb-2 flex items-end p-3 shadow-inner"
               style={{
                 backgroundColor: accentColor || '#312356',
-                backgroundImage: bannerPreview ? `url(${bannerPreview})` : undefined,
+                backgroundImage: toSafeImageUrl(bannerPreview) ? `url(${toSafeImageUrl(bannerPreview)})` : undefined,
               }}
             >
               <div
                 className="w-14 h-14 rounded-xl overflow-hidden border-2 bg-[#120f1e] flex items-center justify-center text-white font-bold text-lg shadow-lg shrink-0"
                 style={{ borderColor: accentColor }}
               >
-                <img
+                <SafeAvatar
                   src={currentAvatarPreview}
                   alt="Önizleme"
                   className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = PRESET_AVATARS[0];
-                  }}
+                  fallbackText={displayName || user?.displayName || 'XXQ'}
+                  size={56}
                 />
               </div>
 
@@ -546,7 +547,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
                         : 'border-[#241c38] opacity-75 hover:opacity-100 hover:border-purple-700'
                     }`}
                   >
-                    <img src={url} alt={`Avatar ${idx + 1}`} className="w-full h-full object-cover" />
+                    <SafeAvatar src={url} alt={`Avatar ${idx + 1}`} className="w-full h-full object-cover" size={48} />
                     {selectedPreset === url && (
                       <div className="absolute inset-0 bg-purple-900/40 flex items-center justify-center">
                         <Check className="w-3.5 h-3.5 text-white stroke-[3]" />

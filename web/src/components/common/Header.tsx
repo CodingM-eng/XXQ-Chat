@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle, Mail, Users, UserPlus } from 'lucide-react';
+import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle, Mail, Users, UserPlus, User } from 'lucide-react';
+import { SafeAvatar } from './SafeAvatar';
 import { ProfileEditModal } from './ProfileEditModal';
 import { SearchModal } from '../chat/SearchModal';
 import { SupportModal } from './SupportModal';
@@ -199,11 +200,13 @@ export const Header: React.FC<HeaderProps> = ({
                 title="Profilimi Düzenle"
               >
                 <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-800 to-purple-400 flex items-center justify-center font-bold text-white text-xs shadow-inner uppercase overflow-hidden shrink-0 ring-1 ring-purple-600/30 group-hover:ring-purple-500">
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.displayName} className="w-full h-full object-cover" />
-                  ) : (
-                    user.displayName.slice(0, 2)
-                  )}
+                  <SafeAvatar
+                    src={user.avatarUrl}
+                    alt={user.displayName}
+                    fallbackText={user.displayName.slice(0, 2).toUpperCase()}
+                    fallbackIcon={<User className="w-4 h-4 text-purple-200" />}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
 
                 <div className="hidden xl:flex flex-col leading-tight">

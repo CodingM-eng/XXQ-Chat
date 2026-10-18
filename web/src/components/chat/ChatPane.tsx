@@ -43,11 +43,14 @@ import {
   Sparkles,
   Info,
   Share2,
+  User as UserIcon,
 } from 'lucide-react';
 import { ScreenShareModal } from './ScreenShareModal';
 import { GroupAvatarModal } from './GroupAvatarModal';
 import { GroupSettingsModal } from './GroupSettingsModal';
 import { ServerInviteModal } from './ServerInviteModal';
+import { SafeAvatar } from '../common/SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 
 interface ChatPaneProps {
   conversation: Conversation;
@@ -473,17 +476,13 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             {/* Conversation Avatar */}
             <div className="relative shrink-0">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center font-bold text-white text-sm shadow overflow-hidden border border-purple-500/30">
-                {isGroup ? (
-                  conversation.avatarUrl ? (
-                    <img src={conversation.avatarUrl} alt={conversation.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <Users className="w-5 h-5 text-purple-200" />
-                  )
-                ) : conversation.peer?.avatarUrl ? (
-                  <img src={conversation.peer.avatarUrl} alt={conversation.name} className="w-full h-full object-cover" />
-                ) : (
-                  conversation.name.slice(0, 2).toUpperCase()
-                )}
+                <SafeAvatar
+                  src={isGroup ? conversation.avatarUrl : (conversation.avatarUrl || conversation.peer?.avatarUrl)}
+                  alt={conversation.name}
+                  fallbackText={!isGroup ? conversation.name.slice(0, 2).toUpperCase() : undefined}
+                  fallbackIcon={isGroup ? <Users className="w-5 h-5 text-purple-200" /> : <UserIcon className="w-5 h-5 text-purple-200" />}
+                  className="w-full h-full object-cover"
+                />
               </div>
               {!isGroup && (
                 <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#151221]" />
@@ -1201,11 +1200,12 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                 <div key={p.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-950/60 border border-slate-800/80">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-8 h-8 rounded-xl bg-purple-900/50 flex items-center justify-center font-bold text-white text-xs overflow-hidden shrink-0">
-                      {p.avatarUrl ? (
-                        <img src={p.avatarUrl} alt={p.displayName} className="w-full h-full object-cover" />
-                      ) : (
-                        p.displayName.slice(0, 2).toUpperCase()
-                      )}
+                      <SafeAvatar
+                        src={p.avatarUrl}
+                        alt={p.displayName}
+                        fallbackText={p.displayName.slice(0, 2).toUpperCase()}
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-slate-200 truncate">{p.displayName}</p>
@@ -1276,7 +1276,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
               className="w-full h-24 bg-gradient-to-r from-purple-900 to-indigo-900 bg-cover bg-center relative"
               style={{
                 backgroundColor: inspectedUser.accentColor || '#3b2361',
-                backgroundImage: inspectedUser.bannerUrl ? `url(${inspectedUser.bannerUrl})` : undefined,
+                backgroundImage: toSafeImageUrl(inspectedUser.bannerUrl) ? `url(${toSafeImageUrl(inspectedUser.bannerUrl)})` : undefined,
               }}
             >
               <button
@@ -1296,11 +1296,13 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                     borderColor: inspectedUser.accentColor || '#7c3aed',
                   }}
                 >
-                  {inspectedUser.avatarUrl ? (
-                    <img src={inspectedUser.avatarUrl} alt={inspectedUser.displayName} className="w-full h-full object-cover" />
-                  ) : (
-                    inspectedUser.displayName.slice(0, 2).toUpperCase()
-                  )}
+                  <SafeAvatar
+                    src={inspectedUser.avatarUrl}
+                    alt={inspectedUser.displayName}
+                    fallbackText={inspectedUser.displayName.slice(0, 2).toUpperCase()}
+                    fallbackIcon={<UserIcon className="w-8 h-8 text-purple-200" />}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
 
                 {/* Free Personalization Badge */}

@@ -7,9 +7,10 @@ import {
   Search,
   X,
   MessageCircle,
-  MoreVertical,
   Heart,
+  User as UserIcon,
 } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
 
 interface MemberListPanelProps {
   conversation: Conversation;
@@ -125,11 +126,13 @@ export const MemberListPanel: React.FC<MemberListPanelProps> = ({
           {/* Avatar with Status Dot */}
           <div className="relative shrink-0">
             <div className="w-9 h-9 rounded-xl bg-purple-900/50 flex items-center justify-center font-bold text-white text-xs overflow-hidden border border-purple-500/30">
-              {member.avatarUrl ? (
-                <img src={member.avatarUrl} alt={member.displayName} className="w-full h-full object-cover" />
-              ) : (
-                member.displayName.slice(0, 2).toUpperCase()
-              )}
+              <SafeAvatar
+                src={member.avatarUrl}
+                alt={member.displayName}
+                fallbackText={member.displayName.slice(0, 2).toUpperCase()}
+                fallbackIcon={<UserIcon className="w-4 h-4 text-purple-200" />}
+                className="w-full h-full object-cover"
+              />
             </div>
             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#0c0a14]" />
           </div>

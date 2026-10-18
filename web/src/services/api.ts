@@ -72,7 +72,7 @@ class ApiService {
     return null;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, retries = 1): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
@@ -83,26 +83,52 @@ class ApiService {
       headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    let lastError: any = null;
+    const isIdempotent = !options.method || options.method === 'GET' || options.method === 'HEAD';
+    const maxAttempts = isIdempotent ? retries + 1 : 1;
 
-    if (!response.ok) {
-      let errorBody: any;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        errorBody = await response.json();
-      } catch {
-        errorBody = { error: 'NETWORK_ERROR', message: response.statusText };
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+          ...options,
+          headers,
+        });
+
+        if (!response.ok) {
+          let errorBody: any;
+          try {
+            errorBody = await response.json();
+          } catch {
+            errorBody = { error: 'NETWORK_ERROR', message: response.statusText };
+          }
+          const err = new Error(errorBody.message || errorBody.error || 'İstek başarısız oldu.');
+          (err as any).status = response.status;
+          (err as any).code = errorBody.error;
+          (err as any).body = errorBody;
+          throw err;
+        }
+
+        return await response.json();
+      } catch (err: any) {
+        lastError = err;
+        const isNetworkFailure = err.name === 'TypeError' || err.message === 'Failed to fetch' || err.code === 'NETWORK_ERROR';
+        if (isNetworkFailure && attempt < maxAttempts) {
+          await new Promise((res) => setTimeout(res, 1200));
+          continue;
+        }
+        break;
       }
-      const err = new Error(errorBody.message || errorBody.error || 'API Request Failed');
-      (err as any).status = response.status;
-      (err as any).code = errorBody.error;
-      (err as any).body = errorBody;
-      throw err;
     }
 
-    return response.json();
+    if (lastError && (lastError.name === 'TypeError' || lastError.message === 'Failed to fetch')) {
+      const friendlyError = new Error('Sunucuya bağlanılamadı. Sunucu uyku modundan (cold-start) uyanıyor veya internet bağlantınız kesilmiş olabilir. Lütfen "Yeniden Dene" seçeneğini kullanın.');
+      (friendlyError as any).status = 0;
+      (friendlyError as any).code = 'FAILED_TO_FETCH';
+      (friendlyError as any).isNetworkError = true;
+      throw friendlyError;
+    }
+
+    throw lastError;
   }
 
   // Auth endpoints
@@ -691,27 +717,36 @@ class ApiService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/attachments`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
+    try {
+      const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/attachments`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
 
-    if (!response.ok) {
-      let errorBody: any;
-      try {
-        errorBody = await response.json();
-      } catch {
-        errorBody = { message: 'Dosya yükleme başarısız oldu' };
+      if (!response.ok) {
+        let errorBody: any;
+        try {
+          errorBody = await response.json();
+        } catch {
+          errorBody = { message: 'Dosya yükleme başarısız oldu.' };
+        }
+        throw new Error(errorBody.message || 'Dosya yüklenemedi.');
       }
-      throw new Error(errorBody.message || 'Dosya yüklenemedi.');
-    }
 
-    return response.json();
+      return await response.json();
+    } catch (err: any) {
+      if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
+        throw new Error('Dosya yüklenirken sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edip tekrar deneyin.');
+      }
+      throw err;
+    }
   }
 
   getAttachmentUrl(conversationId: string, attachmentId: string): string {
-    return `${API_BASE}/api/conversations/${conversationId}/attachments/${attachmentId}`;
+    const token = this.getToken();
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+    return `${API_BASE}/api/conversations/${conversationId}/attachments/${attachmentId}${tokenParam}`;
   }
 
   async downloadAttachment(conversationId: string, attachmentId: string, fileName: string): Promise<void> {
@@ -721,23 +756,30 @@ class ApiService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/attachments/${attachmentId}`, {
-      headers,
-    });
+    try {
+      const res = await fetch(this.getAttachmentUrl(conversationId, attachmentId), {
+        headers,
+      });
 
-    if (!res.ok) {
-      throw new Error('Dosya indirilemedi.');
+      if (!res.ok) {
+        throw new Error('Dosya indirilemedi veya erişim reddedildi.');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
+        throw new Error('Dosya indirilirken sunucuya bağlanılamadı.');
+      }
+      throw err;
     }
-
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
   }
 
   async toggleReaction(

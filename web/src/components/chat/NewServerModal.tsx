@@ -23,6 +23,7 @@ import {
   Hash,
   HelpCircle as QuestionIcon,
 } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
 
 interface NewServerModalProps {
   isOpen: boolean;
@@ -443,13 +444,12 @@ export const NewServerModal: React.FC<NewServerModalProps> = ({
 
                   <div className="flex items-center gap-3">
                     <div className="w-14 h-14 rounded-2xl bg-[#171227] border border-[#2c2247] flex items-center justify-center overflow-hidden shrink-0">
-                      {logoPreview ? (
-                        <img src={logoPreview} alt="Logo Önizleme" className="w-full h-full object-cover" />
-                      ) : logoMode === 'url' && logoUrl.trim() ? (
-                        <img src={logoUrl} alt="Logo Önizleme" className="w-full h-full object-cover" onError={() => setError('Logo URL yüklenemedi')} />
-                      ) : (
-                        <ImageIcon className="w-6 h-6 text-purple-400/50" />
-                      )}
+                      <SafeAvatar
+                        src={logoPreview || (logoMode === 'url' && logoUrl.trim() ? logoUrl.trim() : null)}
+                        alt="Logo Önizleme"
+                        fallbackIcon={<ImageIcon className="w-6 h-6 text-purple-400/50" />}
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
                       {logoMode === 'upload' ? (
@@ -507,13 +507,12 @@ export const NewServerModal: React.FC<NewServerModalProps> = ({
 
                   <div className="flex items-center gap-3">
                     <div className="w-20 h-14 rounded-2xl bg-[#171227] border border-[#2c2247] flex items-center justify-center overflow-hidden shrink-0">
-                      {bannerPreview ? (
-                        <img src={bannerPreview} alt="Afiş Önizleme" className="w-full h-full object-cover" />
-                      ) : bannerMode === 'url' && bannerUrl.trim() ? (
-                        <img src={bannerUrl} alt="Afiş Önizleme" className="w-full h-full object-cover" onError={() => setError('Afiş URL yüklenemedi')} />
-                      ) : (
-                        <ImageIcon className="w-6 h-6 text-purple-400/50" />
-                      )}
+                      <SafeAvatar
+                        src={bannerPreview || (bannerMode === 'url' && bannerUrl.trim() ? bannerUrl.trim() : null)}
+                        alt="Afiş Önizleme"
+                        fallbackIcon={<ImageIcon className="w-6 h-6 text-purple-400/50" />}
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
                       {bannerMode === 'upload' ? (

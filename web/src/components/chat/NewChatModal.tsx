@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { User } from '../../types';
+import { SafeAvatar } from '../common/SafeAvatar';
 import { X, Search, UserPlus, Users, Loader2, MessageSquare, Check, ArrowRight } from 'lucide-react';
 
 interface NewChatModalProps {
@@ -192,11 +193,13 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-700 to-indigo-600 flex items-center justify-center font-bold text-white text-xs shadow overflow-hidden shrink-0">
-                          {u.avatarUrl ? (
-                            <img src={u.avatarUrl} alt={u.displayName} className="w-full h-full object-cover" />
-                          ) : (
-                            u.displayName.slice(0, 2).toUpperCase()
-                          )}
+                          <SafeAvatar
+                            src={u.avatarUrl}
+                            alt={u.displayName}
+                            className="w-full h-full object-cover"
+                            fallbackText={u.displayName}
+                            size={40}
+                          />
                         </div>
                         <div className="flex flex-col leading-tight">
                           <span className="font-semibold text-xs text-slate-200 group-hover:text-purple-300 transition-colors">
@@ -263,11 +266,13 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onS
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-xl bg-purple-900/40 border border-purple-700/40 flex items-center justify-center font-bold text-white text-xs overflow-hidden shrink-0">
-                        {u.avatarUrl ? (
-                          <img src={u.avatarUrl} alt={u.displayName} className="w-full h-full object-cover" />
-                        ) : (
-                          u.displayName.slice(0, 2).toUpperCase()
-                        )}
+                        <SafeAvatar
+                          src={u.avatarUrl}
+                          alt={u.displayName}
+                          className="w-full h-full object-cover"
+                          fallbackText={u.displayName}
+                          size={32}
+                        />
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-slate-200">{u.displayName}</p>

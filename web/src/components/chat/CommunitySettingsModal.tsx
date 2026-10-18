@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { Server, ServerCustomRole, ServerPermission, ServerJoinQuestion, MembershipInvitation, User } from '../../types';
+import { SafeAvatar } from '../common/SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 import {
   X,
   Settings,
@@ -156,8 +158,8 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
         description: description.trim() || null,
         rules: rules.trim() || null,
         welcomeMessage: welcomeMessage.trim() || null,
-        avatarUrl: avatarUrl.trim() || null,
-        bannerUrl: bannerUrl.trim() || null,
+        avatarUrl: toSafeImageUrl(avatarUrl.trim()) || null,
+        bannerUrl: toSafeImageUrl(bannerUrl.trim()) || null,
       });
       setSuccessMsg('Topluluk kimlik bilgileri güncellendi.');
       onServerUpdated(res.server);
@@ -458,11 +460,13 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
                   <label className="block text-slate-300 font-bold">Topluluk Logosu</label>
                   <div className="flex items-center gap-3">
                     <div className="w-16 h-16 rounded-2xl border-2 border-purple-500 bg-[#171128] overflow-hidden flex items-center justify-center text-white text-lg font-bold shrink-0 shadow-md">
-                      {avatarUrl ? (
-                        <img src={avatarUrl} alt="Logo" className="w-full h-full object-cover" />
-                      ) : (
-                        name.slice(0, 2).toUpperCase()
-                      )}
+                      <SafeAvatar
+                        src={avatarUrl}
+                        alt="Logo"
+                        className="w-full h-full object-cover"
+                        fallbackText={name}
+                        size={64}
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs cursor-pointer transition-colors shadow-sm">
@@ -497,8 +501,15 @@ export const CommunitySettingsModal: React.FC<CommunitySettingsModalProps> = ({
                 <div className="p-4 bg-[#0d0a17] border border-[#241c38] rounded-2xl space-y-3">
                   <label className="block text-slate-300 font-bold">Topluluk Afişi (Banner)</label>
                   <div className="w-full h-16 rounded-xl border border-purple-500/60 bg-[#171128] overflow-hidden flex items-center justify-center text-slate-400 relative">
-                    {bannerUrl ? (
-                      <img src={bannerUrl} alt="Banner" className="w-full h-full object-cover" />
+                    {toSafeImageUrl(bannerUrl) ? (
+                      <img
+                        src={toSafeImageUrl(bannerUrl)!}
+                        alt="Banner"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
                     ) : (
                       <span className="text-[11px]">Afiş Eklenmedi</span>
                     )}

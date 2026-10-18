@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { BrandLogo } from '../common/BrandLogo';
+import { SafeAvatar } from '../common/SafeAvatar';
+import { toSafeImageUrl } from '../../utils/sanitizeSvg';
 import { User as UserIcon, Shield, Sparkles, Check, Phone, ArrowRight, Loader2 } from 'lucide-react';
 
 const PRESET_AVATARS = [
@@ -37,7 +39,8 @@ export const OnboardingModal: React.FC = () => {
       return;
     }
 
-    const finalAvatar = useCustomUrl && customAvatarUrl.trim() ? customAvatarUrl.trim() : selectedAvatar;
+    const rawAvatar = useCustomUrl && customAvatarUrl.trim() ? customAvatarUrl.trim() : selectedAvatar;
+    const finalAvatar = toSafeImageUrl(rawAvatar) || undefined;
 
     try {
       setIsSubmitting(true);
@@ -134,13 +137,12 @@ export const OnboardingModal: React.FC = () => {
             <label className="block text-xs font-semibold text-slate-300 mb-2">Profil Resmi Seçin</label>
             <div className="flex items-center gap-3 mb-3">
               <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-purple-500 bg-slate-800 flex-shrink-0 shadow-lg shadow-purple-900/20">
-                <img
+                <SafeAvatar
                   src={useCustomUrl && customAvatarUrl.trim() ? customAvatarUrl.trim() : selectedAvatar}
                   alt="Seçili Avatar"
                   className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = PRESET_AVATARS[0];
-                  }}
+                  fallbackText={displayName || 'XXQ'}
+                  size={56}
                 />
               </div>
               <div className="text-xs text-slate-400">
@@ -165,7 +167,7 @@ export const OnboardingModal: React.FC = () => {
                       : 'border-slate-800 hover:border-slate-700 opacity-70 hover:opacity-100'
                   }`}
                 >
-                  <img src={url} alt={`Avatar ${idx + 1}`} className="w-full h-full object-cover" />
+                  <SafeAvatar src={url} alt={`Avatar ${idx + 1}`} className="w-full h-full object-cover" size={48} />
                   {!useCustomUrl && selectedAvatar === url && (
                     <div className="absolute inset-0 bg-purple-600/30 flex items-center justify-center">
                       <Check className="w-4 h-4 text-white" />

@@ -212,13 +212,19 @@ export async function verifyAuthToken(token: string): Promise<AuthUser | null> {
 
 // Express authentication middleware
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let token: string | undefined;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Yetkilendirme başlığı eksik veya geçersiz.' });
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split('Bearer ')[1].trim();
+  } else if (typeof req.query.token === 'string' && req.query.token.trim()) {
+    token = req.query.token.trim();
+  }
+
+  if (!token) {
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Yetkilendirme başlığı veya belirteci eksik veya geçersiz.' });
     return;
   }
 
-  const token = authHeader.split('Bearer ')[1].trim();
   const user = await verifyAuthToken(token);
 
   if (!user) {

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { SearchResults, Conversation } from '../../types';
 import { Search, X, MessageSquare, Users, User, ArrowRight, Loader2, Calendar } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -160,11 +161,13 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-purple-900/60 flex items-center justify-center font-bold text-white text-xs overflow-hidden shrink-0">
-                        {c.avatarUrl ? (
-                          <img src={c.avatarUrl} alt={c.name} className="w-full h-full object-cover" />
-                        ) : (
-                          c.name.slice(0, 2).toUpperCase()
-                        )}
+                        <SafeAvatar
+                          src={c.avatarUrl}
+                          alt={c.name}
+                          fallbackText={c.name.slice(0, 2).toUpperCase()}
+                          fallbackIcon={c.type === 'group' ? <Users className="w-4 h-4 text-purple-200" /> : <User className="w-4 h-4 text-purple-200" />}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-slate-200 group-hover:text-purple-300 truncate">
@@ -197,11 +200,13 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center font-bold text-white text-xs overflow-hidden shrink-0">
-                        {u.avatarUrl ? (
-                          <img src={u.avatarUrl} alt={u.displayName} className="w-full h-full object-cover" />
-                        ) : (
-                          u.displayName.slice(0, 2).toUpperCase()
-                        )}
+                        <SafeAvatar
+                          src={u.avatarUrl}
+                          alt={u.displayName}
+                          fallbackText={u.displayName.slice(0, 2).toUpperCase()}
+                          fallbackIcon={<User className="w-4 h-4 text-purple-200" />}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-slate-200 group-hover:text-purple-300 truncate">

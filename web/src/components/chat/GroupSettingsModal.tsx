@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Conversation, User, ConversationParticipant } from '../../types';
 import { api } from '../../services/api';
+import { SafeAvatar } from '../common/SafeAvatar';
 import {
   X,
   Settings,
@@ -458,11 +459,13 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
                     <div key={participant.id} className="py-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0 overflow-hidden">
-                          {participant.avatarUrl ? (
-                            <img src={participant.avatarUrl} alt={participant.displayName} className="w-full h-full object-cover" />
-                          ) : (
-                            participant.displayName.charAt(0).toUpperCase()
-                          )}
+                          <SafeAvatar
+                            src={participant.avatarUrl}
+                            alt={participant.displayName}
+                            className="w-full h-full object-cover"
+                            fallbackText={participant.displayName}
+                            size={36}
+                          />
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">

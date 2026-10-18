@@ -597,9 +597,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
 
         {/* Notifications */}
         {error && (
-          <div className="p-4 rounded-2xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-center justify-between animate-fade-in">
-            <span>{error}</span>
-            <button onClick={() => setError(null)}><X className="w-4 h-4" /></button>
+          <div className="p-4 rounded-2xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+            <span className="leading-relaxed">{error}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  loadAdminData();
+                }}
+                className="px-2.5 py-1 bg-rose-900/80 hover:bg-rose-800 text-white rounded-lg font-semibold flex items-center gap-1 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Yeniden Dene</span>
+              </button>
+              <button onClick={() => setError(null)} title="Kapat">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 

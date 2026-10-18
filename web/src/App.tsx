@@ -24,6 +24,7 @@ import { AuthModal } from './components/auth/AuthModal';
 import { AccessRestricted } from './components/auth/AccessRestricted';
 import { OnboardingModal } from './components/auth/OnboardingModal';
 import { BrandLogo } from './components/common/BrandLogo';
+import { SafeAvatar } from './components/common/SafeAvatar';
 import {
   Loader2,
   MessageSquare,
@@ -956,11 +957,13 @@ export const AppContent: React.FC = () => {
             </button>
 
             <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-purple-500 shadow-xl shadow-purple-950/50 mb-3 bg-[#181329] flex items-center justify-center text-white font-bold text-2xl">
-              {inspectedUser.avatarUrl ? (
-                <img src={inspectedUser.avatarUrl} alt={inspectedUser.displayName} className="w-full h-full object-cover" />
-              ) : (
-                inspectedUser.displayName.slice(0, 2).toUpperCase()
-              )}
+              <SafeAvatar
+                src={inspectedUser.avatarUrl}
+                alt={inspectedUser.displayName}
+                className="w-full h-full object-cover"
+                fallbackText={inspectedUser.displayName}
+                size={80}
+              />
             </div>
 
             <h3 className="text-base font-bold text-white mb-1">{inspectedUser.displayName}</h3>

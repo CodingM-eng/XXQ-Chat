@@ -1,5 +1,6 @@
 import React from 'react';
 import { Phone, PhoneOff, Video, Monitor } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
 
 export interface IncomingCallData {
   conversationId: string;
@@ -49,15 +50,13 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
         <div className="relative my-2">
           <div className="absolute inset-0 rounded-full bg-purple-600/30 animate-ping opacity-75" />
           <div className="relative w-24 h-24 rounded-full bg-gradient-to-tr from-purple-800 to-indigo-600 border-4 border-[#22183d] flex items-center justify-center text-white text-2xl font-bold overflow-hidden shadow-xl">
-            {incomingCall.callerAvatar ? (
-              <img
-                src={incomingCall.callerAvatar}
-                alt={incomingCall.callerName}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              incomingCall.callerName.slice(0, 2).toUpperCase()
-            )}
+            <SafeAvatar
+              src={incomingCall.callerAvatar}
+              alt={incomingCall.callerName}
+              className="w-full h-full object-cover"
+              fallbackText={incomingCall.callerName}
+              size={96}
+            />
           </div>
         </div>
 

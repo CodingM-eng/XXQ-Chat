@@ -1,22 +1,36 @@
 import React, { useState } from 'react';
 import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, Sparkles, User, AlertCircle, ArrowRight } from 'lucide-react';
+import { Shield, Sparkles, User, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { loginWithDev, loginWithGoogle, isFirebaseReady, error } = useAuth();
+  const { loginWithDev, loginWithGoogle, isFirebaseReady, error, retrySession, clearError } = useAuth();
   const [customEmail, setCustomEmail] = useState('');
   const [customName, setCustomName] = useState('');
   const [loading, setLoading] = useState(false);
   const [uiError, setUiError] = useState<string | null>(null);
 
+  const handleRetry = async () => {
+    try {
+      setLoading(true);
+      setUiError(null);
+      clearError();
+      await retrySession();
+    } catch (err: any) {
+      setUiError(err.message || 'Sunucuya yeniden bağlanılamadı.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDevLogin = async (email: string, name?: string) => {
     try {
       setLoading(true);
       setUiError(null);
+      clearError();
       await loginWithDev(email, name);
     } catch (err: any) {
-      setUiError(err.message || 'Giriş başarısız');
+      setUiError(err.message || 'Giriş başarısız oldu.');
     } finally {
       setLoading(false);
     }
@@ -26,6 +40,7 @@ export const AuthModal: React.FC = () => {
     try {
       setLoading(true);
       setUiError(null);
+      clearError();
       await loginWithGoogle();
     } catch (err: any) {
       setUiError(err.message || 'Google ile giriş başarısız oldu. Firebase yapılandırılmamışsa lütfen Test Girişini kullanın.');
@@ -53,9 +68,29 @@ export const AuthModal: React.FC = () => {
         </p>
 
         {(uiError || error) && (
-          <div className="w-full p-3 mb-4 rounded-xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-            <span>{uiError || error}</span>
+          <div className="w-full p-3 mb-4 rounded-xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex flex-col gap-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+              <span className="flex-1 leading-relaxed">{uiError || error}</span>
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={loading}
+                className="px-3 py-1.5 bg-rose-900/80 hover:bg-rose-800 text-white rounded-lg font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>Yeniden Dene</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {loading && (
+          <div className="w-full p-2.5 mb-4 rounded-xl bg-purple-950/60 border border-purple-800/40 text-purple-200 text-xs flex items-center justify-center gap-2 animate-pulse">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
+            <span>Sunucuya bağlanılıyor, lütfen bekleyin...</span>
           </div>
         )}
 

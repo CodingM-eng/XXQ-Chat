@@ -13,6 +13,7 @@ import {
   Hash,
   Megaphone,
 } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -198,16 +199,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       ) : (
                         <Hash className="w-5 h-5 text-purple-300" />
                       )
-                    ) : conv.avatarUrl || conv.peer?.avatarUrl ? (
-                      <img
-                        src={conv.avatarUrl || conv.peer?.avatarUrl || ''}
+                    ) : (
+                      <SafeAvatar
+                        src={conv.avatarUrl || conv.peer?.avatarUrl}
                         alt={conv.name}
+                        fallbackText={!isGroup ? conv.name.slice(0, 2).toUpperCase() : undefined}
+                        fallbackIcon={isGroup ? <Users className="w-5 h-5 text-purple-200" /> : <UserIcon className="w-5 h-5 text-purple-200" />}
                         className="w-full h-full object-cover"
                       />
-                    ) : isGroup ? (
-                      <Users className="w-6 h-6 text-purple-200" />
-                    ) : (
-                      conv.name.slice(0, 2)
                     )}
                   </div>
 

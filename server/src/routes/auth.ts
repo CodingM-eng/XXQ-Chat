@@ -84,8 +84,9 @@ const devLoginSchema = z.object({
 });
 
 router.post('/dev-login', async (req, res) => {
-  // Security guard: Never allow development bypass in production environments
-  if (config.NODE_ENV === 'production') {
+  // Allow dev login in development, or if explicitly enabled via ALLOW_DEV_LOGIN, or when Firebase is not configured
+  const allowDevLogin = process.env.ALLOW_DEV_LOGIN === 'true' || config.NODE_ENV !== 'production' || !config.FIREBASE_PROJECT_ID;
+  if (!allowDevLogin) {
     res.status(403).json({
       error: 'DEV_LOGIN_DISABLED',
       message: 'Geliştirici girişi üretim ortamında güvenlik nedeniyle devre dışıdır. Lütfen Google ile giriş yapın.',

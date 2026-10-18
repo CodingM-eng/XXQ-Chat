@@ -12,10 +12,12 @@ import {
   Loader2,
   Trash2,
   MessageSquare,
-  Shield,
   Heart,
   Ban,
+  Shield,
+  User as UserIcon,
 } from 'lucide-react';
+import { SafeAvatar } from '../common/SafeAvatar';
 
 interface FriendsModalProps {
   isOpen: boolean;
@@ -248,11 +250,13 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
                   <div key={f.id} className="py-3 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center font-bold text-white text-xs shrink-0 overflow-hidden">
-                        {f.avatarUrl ? (
-                          <img src={f.avatarUrl} alt={f.displayName} className="w-full h-full object-cover" />
-                        ) : (
-                          f.displayName?.slice(0, 2).toUpperCase()
-                        )}
+                        <SafeAvatar
+                          src={f.avatarUrl}
+                          alt={f.displayName}
+                          fallbackText={f.displayName?.slice(0, 2).toUpperCase()}
+                          fallbackIcon={<UserIcon className="w-4 h-4 text-purple-200" />}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
@@ -435,11 +439,13 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
                     <div key={bu.id} className="py-2.5 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <div className="w-9 h-9 rounded-2xl bg-[#1e1830] border border-[#31254e] flex items-center justify-center font-bold text-slate-300 text-xs shrink-0 overflow-hidden">
-                          {bu.avatarUrl ? (
-                            <img src={bu.avatarUrl} alt={bu.displayName} className="w-full h-full object-cover" />
-                          ) : (
-                            bu.displayName.slice(0, 2).toUpperCase()
-                          )}
+                          <SafeAvatar
+                            src={bu.avatarUrl}
+                            alt={bu.displayName}
+                            fallbackText={bu.displayName.slice(0, 2).toUpperCase()}
+                            fallbackIcon={<UserIcon className="w-4 h-4 text-slate-400" />}
+                            className="w-full h-full object-cover"
+                          />
                         </div>
                         <div className="min-w-0">
                           <span className="font-bold text-xs text-white block truncate">{bu.displayName}</span>
