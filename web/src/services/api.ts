@@ -1008,8 +1008,14 @@ class ApiService {
     return this.request('/api/drive/status');
   }
 
-  async syncDriveAccountQuota(id: string): Promise<{ success: boolean; quota: { spaceUsed: number; spaceTotal: number }; message: string }> {
+  async syncDriveAccountQuota(id: string): Promise<{ success: boolean; quota: { spaceUsed: number; spaceTotal: number }; folderId?: string; message: string }> {
     return this.request(`/api/drive/accounts/${id}/sync`, {
+      method: 'POST',
+    });
+  }
+
+  async initDriveAccountFolder(id: string): Promise<{ success: boolean; folderId: string; message: string }> {
+    return this.request(`/api/drive/accounts/${id}/init-folder`, {
       method: 'POST',
     });
   }

@@ -3,7 +3,7 @@ import request from 'supertest';
 import { app } from '../app.js';
 import { dataStore } from '../db/index.js';
 import { generateDevToken } from '../auth/index.js';
-import { GoogleDriveService } from '../services/drive.js';
+import { GoogleDriveService, DriveSetupError } from '../services/drive.js';
 import { encryptSecret, decryptSecret } from '../utils/crypto.js';
 
 describe('XXQ Chat Google Drive & Attachments Suite', () => {
@@ -377,4 +377,367 @@ describe('XXQ Chat Google Drive & Attachments Suite', () => {
     // Ensure dead code is NOT rendered in a copyable code-box
     expect(postRes.text).not.toContain('class="code-box"');
   });
+
+  describe('Google Drive Folder Creation, Reuse & Error Resilience', () => {
+    it('creates XXQ Chat folder successfully during connect flow and returns fully configured drive account', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'client-id-123');
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'secret-456');
+      vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('oauth2.googleapis.com/token')) {
+          return new Response(JSON.stringify({
+            access_token: 'fresh_access_token_123',
+            refresh_token: '1//fresh_refresh_token_456',
+            expires_in: 3600,
+            scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('userinfo')) {
+          return new Response(JSON.stringify({
+            email: 'drive-owner@company.com',
+            name: 'Drive Owner',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('files?') && decodeURIComponent(urlStr.replace(/\+/g, ' ')).includes("name = 'XXQ Chat'")) {
+          return new Response(JSON.stringify({ files: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('drive/v3/files') && !urlStr.includes('?')) {
+          return new Response(JSON.stringify({ id: 'fld_new_xxq_123' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('about')) {
+          return new Response(JSON.stringify({ storageQuota: { usage: '1048576', limit: '10737418240' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const account = await GoogleDriveService.exchangeCodeAndConnect('valid-google-code-123');
+      expect(account.email).toBe('drive-owner@company.com');
+      expect(account.folderId).toBe('fld_new_xxq_123');
+      expect(account.spaceUsed).toBe(1048576);
+      expect(account.spaceTotal).toBe(10737418240);
+
+      // Verify in DB
+      const dbAccount = await dataStore.getDriveAccountById(account.id);
+      expect(dbAccount).toBeDefined();
+      expect(dbAccount?.folderId).toBe('fld_new_xxq_123');
+    });
+
+    it('reuses existing XXQ Chat folder rather than creating a duplicate', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      let postCreateCalled = false;
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any, init?: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('files?') && decodeURIComponent(urlStr.replace(/\+/g, ' ')).includes("name = 'XXQ Chat'")) {
+          return new Response(JSON.stringify({
+            files: [{ id: 'fld_existing_999', name: 'XXQ Chat' }],
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.endsWith('drive/v3/files') && init?.method === 'POST') {
+          postCreateCalled = true;
+          return new Response(JSON.stringify({ id: 'duplicate_folder' }), { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const folderId = await GoogleDriveService.ensureAppFolder('access_token_abc');
+      expect(folderId).toBe('fld_existing_999');
+      expect(postCreateCalled).toBe(false); // Must NOT create duplicate
+    });
+
+    it('deduplicates concurrent in-flight ensureAppFolder calls for the same token', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      let searchCount = 0;
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('files?') && decodeURIComponent(urlStr.replace(/\+/g, ' ')).includes("name = 'XXQ Chat'")) {
+          searchCount++;
+          // simulate async latency
+          await new Promise((r) => setTimeout(r, 20));
+          return new Response(JSON.stringify({
+            files: [{ id: 'fld_concurrent_dedup', name: 'XXQ Chat' }],
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const [f1, f2, f3] = await Promise.all([
+        GoogleDriveService.ensureAppFolder('same_token_123'),
+        GoogleDriveService.ensureAppFolder('same_token_123'),
+        GoogleDriveService.ensureAppFolder('same_token_123'),
+      ]);
+
+      expect(f1).toBe('fld_concurrent_dedup');
+      expect(f2).toBe('fld_concurrent_dedup');
+      expect(f3).toBe('fld_concurrent_dedup');
+      expect(searchCount).toBe(1); // Deduped to exactly 1 request
+    });
+
+    it('detects missing drive.file scope and throws DriveSetupError with stage scope_verification without claiming code error', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'client-id-123');
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'secret-456');
+      vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('oauth2.googleapis.com/token')) {
+          // Token response without drive.file scope (user unchecked Drive permission on consent screen)
+          return new Response(JSON.stringify({
+            access_token: 'scope_lacking_token',
+            refresh_token: '1//refresh_token_no_scope',
+            expires_in: 3600,
+            scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      try {
+        await GoogleDriveService.exchangeCodeAndConnect('test-code-lacking-scope');
+        expect.unreachable('Should have thrown DriveSetupError');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(DriveSetupError);
+        expect(err.stage).toBe('scope_verification');
+        expect(err.code).toBe('ACCESS_TOKEN_SCOPE_INSUFFICIENT');
+        expect(err.userMessageTr).toContain('Google Drive erişim izni onaylanmadı (drive.file kapsamı eksik)');
+        expect(err.userMessageTr).not.toContain('Yetkilendirme kodu geçersiz');
+      }
+    });
+
+    it('handles Google Drive API disabled (SERVICE_DISABLED / 403) and identifies folder_search stage', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'client-id-123');
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'secret-456');
+      vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('oauth2.googleapis.com/token')) {
+          return new Response(JSON.stringify({
+            access_token: 'valid_token_disabled_api',
+            refresh_token: '1//refresh_token_valid',
+            expires_in: 3600,
+            scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('userinfo')) {
+          return new Response(JSON.stringify({ email: 'disabled-api-user@gmail.com' }), { status: 200 });
+        }
+        if (urlStr.includes('drive/v3/files')) {
+          // Google Drive API not enabled in Google Cloud Console
+          return new Response(JSON.stringify({
+            error: {
+              code: 403,
+              message: 'Google Drive API has not been used in project 123456789 before or it is disabled.',
+              status: 'PERMISSION_DENIED',
+              details: [
+                {
+                  '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                  reason: 'SERVICE_DISABLED',
+                  metadata: {
+                    service: 'drive.googleapis.com',
+                    consumer: 'projects/123456789',
+                  },
+                },
+              ],
+            },
+          }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      try {
+        await GoogleDriveService.exchangeCodeAndConnect('test-code-service-disabled');
+        expect.unreachable('Should have thrown DriveSetupError');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(DriveSetupError);
+        expect(err.stage).toBe('folder_search');
+        expect(err.code).toBe('SERVICE_DISABLED');
+        expect(err.userMessageTr).toContain('Google Drive API bu projede etkinleştirilmemiş (Google Cloud Proje No: 123456789)');
+        expect(err.userMessageTr).toContain('SERVICE_DISABLED');
+      }
+
+      // Crucially, the account credentials were encrypted and saved in DB so they are not lost!
+      const accounts = await dataStore.getDriveAccounts();
+      const saved = accounts.find((a) => a.email === 'disabled-api-user@gmail.com');
+      expect(saved).toBeDefined();
+      expect(saved?.folderId).toBeNull();
+    });
+
+    it('handles storage quota exceeded (storageQuotaExceeded / 403) during folder creation', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any, init?: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('files?') && decodeURIComponent(urlStr.replace(/\+/g, ' ')).includes("name = 'XXQ Chat'")) {
+          return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        }
+        if (urlStr.endsWith('drive/v3/files') && init?.method === 'POST') {
+          return new Response(JSON.stringify({
+            error: {
+              code: 403,
+              message: "The user's Drive storage quota has been exceeded.",
+              errors: [{ reason: 'storageQuotaExceeded' }],
+            },
+          }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      try {
+        await GoogleDriveService.ensureAppFolder('token_quota_full');
+        expect.unreachable('Should have thrown DriveSetupError');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(DriveSetupError);
+        expect(err.stage).toBe('folder_creation');
+        expect(err.userMessageTr).toContain('Google Drive depolama alanı kotası aşıldı');
+      }
+    });
+
+    it('handles revoked or unauthenticated credentials (UNAUTHENTICATED / 401)', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('drive/v3/files')) {
+          return new Response(JSON.stringify({
+            error: {
+              code: 401,
+              message: 'Invalid Credentials',
+              errors: [{ reason: 'authError' }],
+              status: 'UNAUTHENTICATED',
+            },
+          }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      try {
+        await GoogleDriveService.ensureAppFolder('revoked_token_123');
+        expect.unreachable('Should have thrown DriveSetupError');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(DriveSetupError);
+        expect(err.stage).toBe('folder_search');
+        expect(err.userMessageTr).toContain('Google Drive erişim belirteci geçersiz veya süresi dolmuş');
+      }
+    });
+
+    it('heals missing folder via syncAccountQuota or initAccountFolder using stored refresh token without needing an authorization code', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'client-id-123');
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'secret-456');
+
+      // Create an account with folderId null in DB
+      const account = await dataStore.addDriveAccount({
+        email: 'heal-test@company.com',
+        displayName: 'Heal Test',
+        encryptedRefreshToken: encryptSecret('saved_refresh_token_healer'),
+        folderId: null,
+      });
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any, init?: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('oauth2.googleapis.com/token')) {
+          return new Response(JSON.stringify({
+            access_token: 'refreshed_access_token_999',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('files?') && decodeURIComponent(urlStr.replace(/\+/g, ' ')).includes("name = 'XXQ Chat'")) {
+          return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        }
+        if (urlStr.endsWith('drive/v3/files') && init?.method === 'POST') {
+          return new Response(JSON.stringify({ id: 'fld_healed_success_456' }), { status: 200 });
+        }
+        if (urlStr.includes('about')) {
+          return new Response(JSON.stringify({ storageQuota: { usage: '2048', limit: '100000' } }), { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      // Sync heals the folder
+      const syncResult = await GoogleDriveService.syncAccountQuota(account);
+      expect(syncResult.folderId).toBe('fld_healed_success_456');
+
+      // Verify DB was updated
+      const updatedAccount = await dataStore.getDriveAccountById(account.id);
+      expect(updatedAccount?.folderId).toBe('fld_healed_success_456');
+
+      // initAccountFolder direct invocation test
+      const initFolderRes = await GoogleDriveService.initAccountFolder(updatedAccount!);
+      expect(initFolderRes).toBe('fld_healed_success_456');
+    });
+
+    it('callback endpoint renders Google Drive Klasörü Oluşturulamadı and informs user of folder failure instead of code error', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      const state = GoogleDriveService.generateState('admin_user_folder_test');
+
+      vi.spyOn(GoogleDriveService, 'exchangeCodeAndConnect').mockRejectedValueOnce(
+        new DriveSetupError(
+          'SERVICE_DISABLED',
+          'Google Drive API bu projede etkinleştirilmemiş (Google Cloud Proje No: 123456789) (SERVICE_DISABLED). Lütfen Google Cloud Console üzerinden Google Drive APIyi etkinleştirin.',
+          'folder_creation'
+        )
+      );
+
+      const res = await request(app).get(`/api/drive/callback?code=fresh-code-123&state=${state}`);
+      expect(res.status).toBe(400);
+      expect(res.text).toContain('Google Drive Klasörü Oluşturulamadı');
+      expect(res.text).toContain('Google hesap yetkilendirmesi başarıyla tamamlandı, ancak Google Drive API üzerinde "XXQ Chat" klasörü oluşturulurken veya aranırken bir hata oluştu');
+      expect(res.text).toContain('SERVICE_DISABLED');
+      // Must not display misleading authorization code error text
+      expect(res.text).not.toContain('Google yetkilendirme kodu doğrulanamadı: 400');
+    });
+
+    it('re-submitting an authorization code that failed at folder creation explains code was consumed and folder creation failed', async () => {
+      GoogleDriveService.resetCodeTracking();
+
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_ID', 'client-id-123');
+      vi.stubEnv('GOOGLE_DRIVE_CLIENT_SECRET', 'secret-456');
+      vi.stubEnv('GOOGLE_DRIVE_REDIRECT_URI', 'https://xxq-chat-backend.onrender.com/api/drive/callback');
+
+      vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('oauth2.googleapis.com/token')) {
+          return new Response(JSON.stringify({
+            access_token: 'token_exchange_ok',
+            refresh_token: '1//refresh_ok',
+            expires_in: 3600,
+            scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (urlStr.includes('userinfo')) {
+          return new Response(JSON.stringify({ email: 'retry-test@company.com' }), { status: 200 });
+        }
+        if (urlStr.includes('drive/v3/files')) {
+          return new Response(JSON.stringify({
+            error: { code: 403, message: 'Drive API disabled', status: 'PERMISSION_DENIED', details: [{ reason: 'SERVICE_DISABLED' }] },
+          }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const testCode = 'code_consumed_folder_failed_123';
+
+      // First run: folder creation fails
+      await expect(GoogleDriveService.exchangeCodeAndConnect(testCode)).rejects.toThrow(
+        /Google Drive API bu projede etkinleştirilmemiş/
+      );
+
+      // Second run with SAME code: accurately explains that code was consumed and folder creation failed
+      await expect(GoogleDriveService.exchangeCodeAndConnect(testCode)).rejects.toThrow(
+        /Bu yetkilendirme kodu Google ile başarıyla doğrulandı ancak 'XXQ Chat' klasörü oluşturulurken bir hata oluştu/
+      );
+    });
+  });
 });
+

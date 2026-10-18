@@ -1810,6 +1810,8 @@ export class SqliteStore implements DataStore {
           display_name = excluded.display_name,
           encrypted_refresh_token = excluded.encrypted_refresh_token,
           folder_id = excluded.folder_id,
+          space_used = excluded.space_used,
+          space_total = excluded.space_total,
           updated_at = excluded.updated_at
       `)
       .run(

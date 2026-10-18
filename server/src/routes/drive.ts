@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../auth/index.js';
 import { dataStore } from '../db/index.js';
-import { GoogleDriveService } from '../services/drive.js';
+import { GoogleDriveService, DriveSetupError } from '../services/drive.js';
 
 const router = Router();
 
@@ -84,7 +84,13 @@ router.post('/connect', requireAuth, requireAdmin, async (req, res) => {
     });
   } catch (err: any) {
     console.error('[DRIVE CONNECT ERROR]', err.message || err);
-    res.status(400).json({ error: 'OAUTH_ERROR', message: err.message || 'Google Drive yetkilendirme kodu doğrulanamadı.' });
+    const stage = err instanceof DriveSetupError ? err.stage : 'token_exchange';
+    const code = err instanceof DriveSetupError ? err.code : 'OAUTH_ERROR';
+    res.status(400).json({
+      error: code,
+      stage,
+      message: err.userMessageTr || err.message || 'Google Drive yetkilendirme kodu doğrulanamadı.',
+    });
   }
 });
 
@@ -123,6 +129,7 @@ router.get('/status', requireAuth, requireAdmin, async (req, res) => {
         id: acc.id,
         email: acc.email,
         displayName: acc.displayName,
+        folderId: acc.folderId || null,
         spaceUsed: acc.spaceUsed,
         spaceTotal: acc.spaceTotal,
         createdAt: acc.createdAt,
@@ -133,7 +140,34 @@ router.get('/status', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// POST /api/drive/accounts/:id/sync (Admin only) - syncs storage quota for a connected Drive account
+// POST /api/drive/accounts/:id/init-folder (Admin only) - initializes folder for account using refresh token
+router.post('/accounts/:id/init-folder', requireAuth, requireAdmin, async (req, res) => {
+  const id = req.params.id as string;
+  try {
+    const account = await dataStore.getDriveAccountById(id);
+    if (!account) {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'Drive hesabı bulunamadı.' });
+      return;
+    }
+
+    const folderId = await GoogleDriveService.initAccountFolder(account);
+    res.json({
+      success: true,
+      folderId,
+      message: `${account.email} için 'XXQ Chat' klasörü başarıyla oluşturuldu/bağlandı.`,
+    });
+  } catch (err: any) {
+    const stage = err instanceof DriveSetupError ? err.stage : 'folder_creation';
+    const code = err instanceof DriveSetupError ? err.code : 'FOLDER_ERROR';
+    res.status(400).json({
+      error: code,
+      stage,
+      message: err.userMessageTr || err.message || 'Drive klasörü oluşturulamadı.',
+    });
+  }
+});
+
+// POST /api/drive/accounts/:id/sync (Admin only) - syncs storage quota & re-attaches missing folder
 router.post('/accounts/:id/sync', requireAuth, requireAdmin, async (req, res) => {
   const id = req.params.id as string;
   try {
@@ -147,10 +181,17 @@ router.post('/accounts/:id/sync', requireAuth, requireAdmin, async (req, res) =>
     res.json({
       success: true,
       quota,
-      message: `${account.email} hesabı depolama kotası başarıyla güncellendi.`,
+      folderId: quota.folderId || account.folderId,
+      message: `${account.email} hesabı depolama kotası ve klasör bağlantısı başarıyla güncellendi.`,
     });
   } catch (err: any) {
-    res.status(500).json({ error: 'SYNC_ERROR', message: err.message });
+    const stage = err instanceof DriveSetupError ? err.stage : 'drive_api';
+    const code = err instanceof DriveSetupError ? err.code : 'SYNC_ERROR';
+    res.status(500).json({
+      error: code,
+      stage,
+      message: err.userMessageTr || err.message || 'Drive eşitleme başarısız oldu.',
+    });
   }
 });
 
@@ -249,6 +290,7 @@ router.all('/callback', async (req, res) => {
   // Perform single-use code exchange with the preserved matching redirectUri
   let connectedAccountEmail: string | null = null;
   let autoExchangeError: string | null = null;
+  let exchangeErrorObj: any = null;
 
   try {
     const redirectUri = stateCheck.redirectUri || GoogleDriveService.getRedirectUri();
@@ -262,7 +304,8 @@ router.all('/callback', async (req, res) => {
       ipAddress: req.ip,
     });
   } catch (err: any) {
-    autoExchangeError = err.message;
+    exchangeErrorObj = err;
+    autoExchangeError = err.userMessageTr || err.message || 'Google Drive yetkilendirme kodu doğrulanamadı.';
   }
 
   if (connectedAccountEmail) {
@@ -307,13 +350,34 @@ router.all('/callback', async (req, res) => {
       </html>
     `);
   } else {
+    const stage = (exchangeErrorObj as DriveSetupError)?.stage || 'token_exchange';
+    const isFolderStage = stage === 'folder_creation' || stage === 'folder_search';
+    const isScopeStage = stage === 'scope_verification';
+
+    let pageTitle = 'XXQ Chat - Google Drive Bağlantısı Başarısız';
+    let heading = 'Yetkilendirme Başarısız Oldu';
+    let subtitle = 'Google yetkilendirme kodu doğrulanamadı.';
+    let guidance = 'Google yetkilendirme kodları tek kullanımlık ve kısa ömürlüdür. Lütfen "Google ile Yetkilendir" butonuna tıklayarak yeni bir yetkilendirme akışı başlatın.';
+
+    if (isFolderStage) {
+      pageTitle = 'XXQ Chat - Google Drive Klasörü Oluşturulamadı';
+      heading = 'Google Drive Klasörü Oluşturulamadı';
+      subtitle = 'Google hesap yetkilendirmesi başarıyla tamamlandı, ancak Google Drive API üzerinde "XXQ Chat" klasörü oluşturulurken veya aranırken bir hata oluştu.';
+      guidance = 'Yetkilendirme kodu Google tarafından kullanılmıştır (aynı kod tekrar kullanılamaz). Lütfen Google Cloud Console\'da Google Drive API\'nin etkinleştirildiğini ve proje ayarlarını kontrol ettikten sonra Yönetim Paneline dönerek "Drive Ekle" butonuyla yeni bir oturum açma akışı başlatın veya kayıtlı hesabı eşitleyin.';
+    } else if (isScopeStage) {
+      pageTitle = 'XXQ Chat - Google Drive İzin Kapsamı Yetersiz';
+      heading = 'Google Drive İzin Kapsamı Yetersiz';
+      subtitle = 'Google hesabınız doğrulandı ancak Google Drive dosya yönetim izni (drive.file) onaylanmadı.';
+      guidance = 'XXQ Chat sohbet eklerini kaydedebilmek için dosya oluşturma ve yönetme iznine ihtiyaç duyar. Lütfen Google onay ekranında "Google Drive" kutucuğunun işaretli olduğundan emin olarak yeni bir onay akışı başlatın.';
+    }
+
     res.status(400).send(`
       <!DOCTYPE html>
       <html lang="tr">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>XXQ Chat - Google Drive Bağlantısı Başarısız</title>
+        <title>${pageTitle}</title>
         <style>
           body { background-color: #090710; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
           .card { background-color: #120f1e; border: 1px solid #7f1d1d; border-radius: 20px; padding: 32px; max-width: 520px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
@@ -327,10 +391,10 @@ router.all('/callback', async (req, res) => {
       <body>
         <div class="card">
           <div class="badge">✕</div>
-          <h1>Yetkilendirme Başarısız Oldu</h1>
-          <div class="err-box">${autoExchangeError || 'Google Drive yetkilendirme kodu doğrulanamadı.'}</div>
-          <p>Google yetkilendirme kodları tek kullanımlık ve kısa ömürlüdür. Bir kez başarısız olan veya kullanılan kod tekrar denenemez.</p>
-          <p>Lütfen XXQ Chat Yönetim Paneline dönerek <strong>"Drive Ekle"</strong> butonuna tıklayıp yeni bir oturum açma akışı başlatın.</p>
+          <h1>${heading}</h1>
+          <p style="color:#f87171; font-weight:600; font-size:13px; margin: 8px 0;">${subtitle}</p>
+          <div class="err-box">${autoExchangeError || 'Google Drive işlemi doğrulanamadı.'}</div>
+          <p style="font-size: 13px; line-height: 1.5; color: #94a3b8; margin: 12px 0;">${guidance}</p>
           <a href="${frontendUrl}" class="btn" id="returnBtn">XXQ Chat'e Dön</a>
         </div>
         <script>
@@ -338,7 +402,8 @@ router.all('/callback', async (req, res) => {
             if (window.opener) {
               window.opener.postMessage({
                 type: 'XXQ_DRIVE_OAUTH_FAILED',
-                error: ${JSON.stringify(autoExchangeError || 'Yetkilendirme doğrulanamadı.')}
+                error: ${JSON.stringify(autoExchangeError || 'Yetkilendirme doğrulanamadı.')},
+                stage: ${JSON.stringify(stage)}
               }, '*');
             }
           } catch (e) {}

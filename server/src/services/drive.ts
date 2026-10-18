@@ -5,13 +5,44 @@ import { decryptSecret, encryptSecret } from '../utils/crypto.js';
 import { dataStore } from '../db/index.js';
 import { DbDriveAccount } from '../db/types.js';
 
-const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
+const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
+
+export type DriveSetupStage =
+  | 'token_exchange'
+  | 'scope_verification'
+  | 'folder_search'
+  | 'folder_creation'
+  | 'drive_api'
+  | 'config';
+
+export class DriveSetupError extends Error {
+  public code: string;
+  public stage: DriveSetupStage;
+  public userMessageTr: string;
+  public details?: any;
+
+  constructor(
+    code: string,
+    userMessageTr: string,
+    stage: DriveSetupStage,
+    details?: any
+  ) {
+    super(userMessageTr);
+    this.name = 'DriveSetupError';
+    this.code = code;
+    this.stage = stage;
+    this.userMessageTr = userMessageTr;
+    this.details = details;
+  }
+}
 
 export interface ProcessedCodeEntry {
   timestamp: number;
-  status: 'pending' | 'success' | 'failed';
+  status: 'pending' | 'success' | 'code_exchange_failed' | 'folder_creation_failed' | 'failed';
   email?: string;
   error?: string;
+  stage?: DriveSetupStage;
+  accountId?: string;
 }
 
 export interface StateEntry {
@@ -23,6 +54,7 @@ export interface StateEntry {
 export class GoogleDriveService {
   private static activeStates = new Map<string, StateEntry>();
   private static processedCodes = new Map<string, ProcessedCodeEntry>();
+  private static folderCreationPromises = new Map<string, Promise<string>>();
 
   /**
    * Helper to strip outer quotes and whitespace from environment strings.
@@ -107,6 +139,105 @@ export class GoogleDriveService {
   static resetCodeTracking(): void {
     this.processedCodes.clear();
     this.activeStates.clear();
+    this.folderCreationPromises.clear();
+  }
+
+  /**
+   * Safely inspects Google Drive API v3 errors without exposing secrets, tokens, or private paths.
+   */
+  static sanitizeDriveApiError(
+    errBody: string,
+    status: number,
+    stage: 'folder_search' | 'folder_creation' | 'drive_api'
+  ): {
+    code: string;
+    description: string;
+    userMessageTr: string;
+    projectNumber?: string;
+  } {
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(errBody);
+    } catch {
+      // Non-JSON response
+    }
+
+    const errorObj = parsed.error || {};
+    const errorCode = String(errorObj.code || status || 'UNKNOWN');
+    const rawMessage = String(errorObj.message || errBody || '');
+    const firstError = Array.isArray(errorObj.errors) && errorObj.errors.length > 0 ? errorObj.errors[0] : {};
+    const firstDetail = Array.isArray(errorObj.details) && errorObj.details.length > 0 ? errorObj.details[0] : {};
+
+    const reason = String(firstError.reason || firstDetail.reason || errorObj.status || '');
+
+    // Extract project number / ID if present
+    let projectNumber: string | undefined = undefined;
+    if (firstDetail.metadata && firstDetail.metadata.consumer) {
+      projectNumber = String(firstDetail.metadata.consumer).replace(/^projects\//, '');
+    } else {
+      const match = rawMessage.match(/project\s+(\d+|[a-z0-9\-_]+)/i);
+      if (match) {
+        projectNumber = match[1];
+      }
+    }
+
+    // Sanitize any secrets/tokens from description
+    const sanitizedDesc = rawMessage
+      .replace(/client_secret=[^&\s]+/gi, 'client_secret=[REDACTED]')
+      .replace(/code=[^&\s]+/gi, 'code=[REDACTED]')
+      .replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, 'Bearer [REDACTED]')
+      .replace(/token=[^&\s]+/gi, 'token=[REDACTED]');
+
+    let userMessageTr: string;
+
+    const isServiceDisabled =
+      reason === 'SERVICE_DISABLED' ||
+      reason === 'accessNotConfigured' ||
+      rawMessage.toLowerCase().includes('has not been used in project') ||
+      rawMessage.toLowerCase().includes('is disabled');
+
+    const isScopeInsufficient =
+      reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' ||
+      reason === 'insufficientPermissions' ||
+      reason === 'insufficientFilePermissions' ||
+      rawMessage.toLowerCase().includes('insufficient authentication scopes');
+
+    const isQuotaExceeded =
+      reason === 'storageQuotaExceeded' ||
+      reason === 'quotaExceeded' ||
+      rawMessage.toLowerCase().includes('storage quota');
+
+    const isRateLimit =
+      reason === 'rateLimitExceeded' ||
+      reason === 'userRateLimitExceeded';
+
+    const isUnauthenticated =
+      status === 401 ||
+      reason === 'authError' ||
+      reason === 'UNAUTHENTICATED' ||
+      rawMessage.toLowerCase().includes('invalid credentials');
+
+    if (isServiceDisabled) {
+      const projText = projectNumber ? ` (Google Cloud Proje No: ${projectNumber})` : '';
+      userMessageTr = `Google Drive API bu projede etkinleştirilmemiş${projText} (SERVICE_DISABLED). Lütfen Google Cloud Console -> "APIs & Services" -> "Library" bölümünden "Google Drive API"yi etkinleştirin ve OAuth istemci kimliği ile projenin eşleştiğinden emin olun.`;
+    } else if (isScopeInsufficient) {
+      userMessageTr = `Google Drive izin kapsamı yetersiz (ACCESS_TOKEN_SCOPE_INSUFFICIENT). XXQ Chat'in klasör ve dosya oluşturabilmesi için 'drive.file' izni gereklidir. Lütfen Google onay ekranında "Google Drive" kutucuğunu işaretleyerek yeni bir onay akışı başlatın.`;
+    } else if (isQuotaExceeded) {
+      userMessageTr = `Google Drive depolama alanı kotası aşıldı (storageQuotaExceeded). Hesabınızda 'XXQ Chat' klasörü oluşturmak veya dosya yüklemek için yeterli alan bulunmuyor.`;
+    } else if (isRateLimit) {
+      userMessageTr = `Google Drive API istek limiti aşıldı (rateLimitExceeded). Lütfen birkaç dakika sonra tekrar deneyin.`;
+    } else if (isUnauthenticated) {
+      userMessageTr = `Google Drive erişim belirteci geçersiz veya süresi dolmuş (UNAUTHENTICATED). Lütfen yeni bir yetkilendirme akışı başlatın.`;
+    } else {
+      userMessageTr = `Google Drive ${stage === 'folder_creation' ? 'klasörü oluşturulurken' : 'klasör araması yapılırken'} hata oluştu (${reason || errorCode}: ${status}).`;
+    }
+
+    return {
+      code: reason || errorCode,
+      description: sanitizedDesc,
+      userMessageTr,
+      projectNumber,
+    };
   }
 
   /**
@@ -199,11 +330,12 @@ export class GoogleDriveService {
   /**
    * Exchanges authorization code for tokens, initializes XXQ Chat folder, and returns drive account details.
    * Enforces single-use semantics: rejects repeated code exchanges and prevents retrying with dead codes.
+   * Correctly separates OAuth code errors from Google Drive API folder creation errors.
    */
   static async exchangeCodeAndConnect(code: string, customRedirectUri?: string): Promise<DbDriveAccount> {
     const trimmedCode = code?.trim();
     if (!trimmedCode) {
-      throw new Error('Geçersiz veya boş yetkilendirme kodu.');
+      throw new DriveSetupError('INVALID_CODE', 'Geçersiz veya boş yetkilendirme kodu.', 'token_exchange');
     }
 
     const now = Date.now();
@@ -217,12 +349,28 @@ export class GoogleDriveService {
     const existing = this.processedCodes.get(trimmedCode);
     if (existing) {
       if (existing.status === 'success') {
-        throw new Error(
-          `Bu yetkilendirme kodu daha önce kullanıldı ve Google Drive hesabı (${existing.email || 'bağlandı'}) başarıyla bağlandı. Google yetkilendirme kodları tek kullanımlıktır. Yeni bir işlem için lütfen yeni bir yetkilendirme başlatın.`
+        throw new DriveSetupError(
+          'CODE_ALREADY_REDEEMED',
+          `Bu yetkilendirme kodu daha önce kullanıldı ve Google Drive hesabı (${existing.email || 'bağlandı'}) başarıyla bağlandı. Google yetkilendirme kodları tek kullanımlıktır. Yeni bir işlem için lütfen yeni bir yetkilendirme başlatın.`,
+          'token_exchange'
+        );
+      } else if (existing.status === 'folder_creation_failed') {
+        throw new DriveSetupError(
+          'FOLDER_CREATION_FAILED_PREVIOUSLY',
+          `Bu yetkilendirme kodu Google ile başarıyla doğrulandı ancak 'XXQ Chat' klasörü oluşturulurken bir hata oluştu: ${existing.error || 'Klasör hatası'}. Google yetkilendirme kodları tek kullanımlık olduğundan bu kod tekrar takas edilemez. Lütfen belirtilen sorunu giderdikten sonra "Google ile Yetkilendir" butonuna tıklayarak yeni bir onay akışı başlatın veya mevcut hesabı eşitleyin.`,
+          existing.stage || 'folder_creation'
+        );
+      } else if (existing.status === 'pending') {
+        throw new DriveSetupError(
+          'CODE_EXCHANGE_IN_PROGRESS',
+          'Bu yetkilendirme kodu için şu anda devam eden bir yetkilendirme işlemi bulunmaktadır.',
+          'token_exchange'
         );
       } else {
-        throw new Error(
-          'Bu yetkilendirme kodu daha önce kullanıldı veya başarısız bir denemede tüketildi. Google yetkilendirme kodları tek kullanımlıktır. Lütfen "Google ile Yetkilendir" butonuna tıklayarak yeni bir oturum açma akışı başlatın.'
+        throw new DriveSetupError(
+          'CODE_ALREADY_USED',
+          'Bu yetkilendirme kodu daha önce kullanıldı veya başarısız bir denemede tüketildi. Google yetkilendirme kodları tek kullanımlıktır. Lütfen "Google ile Yetkilendir" butonuna tıklayarak yeni bir oturum açma akışı başlatın.',
+          'token_exchange'
         );
       }
     }
@@ -240,7 +388,7 @@ export class GoogleDriveService {
       if (!clientId) missing.push('GOOGLE_DRIVE_CLIENT_ID');
       if (!clientSecret) missing.push('GOOGLE_DRIVE_CLIENT_SECRET');
       if (!redirectUri) missing.push('GOOGLE_DRIVE_REDIRECT_URI');
-      throw new Error(`Google Drive OAuth kimlik bilgileri eksik (${missing.join(', ')}).`);
+      throw new DriveSetupError('CONFIG_ERROR', `Google Drive OAuth kimlik bilgileri eksik (${missing.join(', ')}).`, 'config');
     }
 
     // 1. Exchange code for access & refresh tokens
@@ -258,53 +406,110 @@ export class GoogleDriveService {
         }),
       });
     } catch (networkErr: any) {
-      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'failed', error: networkErr.message });
-      throw new Error(`Google OAuth sunucusuna erişilemedi: ${networkErr.message}`);
+      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'code_exchange_failed', error: networkErr.message });
+      throw new DriveSetupError('NETWORK_ERROR', `Google OAuth sunucusuna erişilemedi: ${networkErr.message}`, 'token_exchange');
     }
 
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text();
       const sanitized = this.sanitizeOAuthError(errBody, tokenRes.status);
       console.error(`[DRIVE] Token exchange error: ${sanitized.code} - ${sanitized.description}`);
-      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'failed', error: sanitized.userMessageTr });
-      throw new Error(sanitized.userMessageTr);
+      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'code_exchange_failed', error: sanitized.userMessageTr });
+      throw new DriveSetupError(sanitized.code, sanitized.userMessageTr, 'token_exchange');
     }
 
     const tokenData = (await tokenRes.json()) as {
       access_token: string;
       refresh_token?: string;
       expires_in: number;
+      scope?: string;
     };
 
-    if (!tokenData.refresh_token) {
-      this.processedCodes.set(trimmedCode, { timestamp: Date.now(), status: 'failed', error: 'MISSING_REFRESH_TOKEN' });
-      throw new Error('Google Drive yenileme belirteci (refresh_token) alınamadı. Lütfen erişim iznini kaldırıp tekrar deneyin.');
+    // 2. Validate granted scopes (least-privilege drive.file check)
+    const grantedScopes = (tokenData.scope || '').split(/\s+/).filter(Boolean);
+    const hasDriveFileScope = grantedScopes.some(
+      (s) => s.includes('drive.file') || s.includes('/auth/drive')
+    );
+
+    if (tokenData.scope && !hasDriveFileScope) {
+      const scopeErr =
+        'Google Drive erişim izni onaylanmadı (drive.file kapsamı eksik). XXQ Chat sohbet eklerini kaydedebilmek için dosya oluşturma iznine ihtiyaç duyar. Lütfen Google onay ekranında "Google Drive" kutucuğunu işaretleyerek yeni bir onay akışı başlatın.';
+      this.processedCodes.set(trimmedCode, {
+        timestamp: Date.now(),
+        status: 'folder_creation_failed',
+        error: scopeErr,
+        stage: 'scope_verification',
+      });
+      throw new DriveSetupError('ACCESS_TOKEN_SCOPE_INSUFFICIENT', scopeErr, 'scope_verification');
     }
 
-    // 2. Fetch user email for this Google account
-    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-    });
+    // 3. Verify refresh_token presence
+    if (!tokenData.refresh_token) {
+      const refErr =
+        'Google Drive yenileme belirteci (refresh_token) alınamadı. Lütfen https://myaccount.google.com/permissions adresinden XXQ Chat erişimini kaldırıp tekrar deneyin.';
+      this.processedCodes.set(trimmedCode, {
+        timestamp: Date.now(),
+        status: 'folder_creation_failed',
+        error: refErr,
+        stage: 'token_exchange',
+      });
+      throw new DriveSetupError('MISSING_REFRESH_TOKEN', refErr, 'token_exchange');
+    }
+
+    // 4. Fetch user email for this Google account
     let email = 'bilinmeyen-drive@gmail.com';
     let displayName = 'Google Drive';
-
-    if (userRes.ok) {
-      const userData = (await userRes.json()) as any;
-      if (userData.email) email = userData.email;
-      if (userData.name) displayName = userData.name;
+    try {
+      const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      if (userRes.ok) {
+        const userData = (await userRes.json()) as any;
+        if (userData.email) email = userData.email;
+        if (userData.name) displayName = userData.name;
+      }
+    } catch (uErr) {
+      console.warn('[DRIVE] Could not fetch user profile details:', uErr);
     }
 
-    // 3. Encrypt refresh token
+    // 5. Encrypt and persist refresh token first so credentials are never lost if folder creation is interrupted
     const encryptedRefreshToken = encryptSecret(tokenData.refresh_token);
 
-    // 4. Create or locate dedicated 'XXQ Chat' folder in Drive
-    const folderId = await this.ensureAppFolder(tokenData.access_token);
+    let driveAccount = await dataStore.addDriveAccount({
+      email,
+      displayName,
+      encryptedRefreshToken,
+      folderId: null,
+      spaceUsed: 0,
+      spaceTotal: 0,
+    });
 
-    // 5. Get storage quota
+    // 6. Create or locate dedicated 'XXQ Chat' folder in Drive
+    let folderId: string;
+    try {
+      folderId = await this.ensureAppFolder(tokenData.access_token);
+    } catch (folderErr: any) {
+      const stage = folderErr instanceof DriveSetupError ? folderErr.stage : 'folder_creation';
+      const code = folderErr instanceof DriveSetupError ? folderErr.code : 'FOLDER_CREATION_FAILED';
+      const msg = folderErr.userMessageTr || folderErr.message || 'Google Drive klasörü oluşturulamadı.';
+
+      this.processedCodes.set(trimmedCode, {
+        timestamp: Date.now(),
+        status: 'folder_creation_failed',
+        email,
+        error: msg,
+        stage,
+        accountId: driveAccount.id,
+      });
+
+      console.error(`[DRIVE] Folder creation error during connect flow: ${code} - ${msg}`);
+      throw new DriveSetupError(code, msg, stage);
+    }
+
+    // 7. Get storage quota & attach folderId
     const quota = await this.fetchQuota(tokenData.access_token);
-
-    // 6. Save in database
-    const driveAccount = await dataStore.addDriveAccount({
+    driveAccount = await dataStore.addDriveAccount({
+      id: driveAccount.id,
       email,
       displayName,
       encryptedRefreshToken,
@@ -313,11 +518,12 @@ export class GoogleDriveService {
       spaceTotal: quota.spaceTotal,
     });
 
-    // Mark as successfully redeemed
+    // 8. Mark as completely successfully redeemed
     this.processedCodes.set(trimmedCode, {
       timestamp: Date.now(),
       status: 'success',
       email: driveAccount.email,
+      accountId: driveAccount.id,
     });
 
     return driveAccount;
@@ -331,7 +537,7 @@ export class GoogleDriveService {
     const clientSecret = this.getClientSecret();
 
     if (!clientId || !clientSecret) {
-      throw new Error('Google Drive API istemci bilgileri eksik (GOOGLE_DRIVE_CLIENT_ID veya GOOGLE_DRIVE_CLIENT_SECRET).');
+      throw new DriveSetupError('CONFIG_ERROR', 'Google Drive API istemci bilgileri eksik (GOOGLE_DRIVE_CLIENT_ID veya GOOGLE_DRIVE_CLIENT_SECRET).', 'config');
     }
 
     const refreshToken = decryptSecret(account.encryptedRefreshToken);
@@ -351,7 +557,7 @@ export class GoogleDriveService {
       const errText = await res.text();
       const sanitized = this.sanitizeOAuthError(errText, res.status);
       console.error(`[DRIVE] Refresh token error: ${sanitized.code} - ${sanitized.description}`);
-      throw new Error(`Google Drive erişim belirteci yenilenemedi (${sanitized.code}).`);
+      throw new DriveSetupError(sanitized.code, `Google Drive erişim belirteci yenilenemedi (${sanitized.code}).`, 'token_exchange');
     }
 
     const data = (await res.json()) as { access_token: string };
@@ -360,44 +566,123 @@ export class GoogleDriveService {
 
   /**
    * Ensures the 'XXQ Chat' folder exists on Google Drive.
+   * Safe for concurrent calls and retries:
+   * 1. Searches for existing 'XXQ Chat' folder created by this app.
+   * 2. If found, reuses existing folder rather than creating duplicates.
+   * 3. Handles concurrent calls using in-flight promise caching.
+   * 4. Accurately sanitizes and reports Drive API errors (disabled API, quota, scopes, etc.).
    */
   static async ensureAppFolder(accessToken: string): Promise<string> {
-    // Search for existing 'XXQ Chat' folder
-    const searchParams = new URLSearchParams({
-      q: "name = 'XXQ Chat' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-      fields: 'files(id, name)',
-    });
+    const trimmedToken = accessToken?.trim();
+    if (!trimmedToken) {
+      throw new DriveSetupError(
+        'INVALID_TOKEN',
+        'Google Drive erişim belirteci eksik veya geçersiz.',
+        'folder_creation'
+      );
+    }
 
-    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?${searchParams.toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    // Deduplicate concurrent in-flight requests for the same token
+    const inFlight = this.folderCreationPromises.get(trimmedToken);
+    if (inFlight) {
+      return inFlight;
+    }
 
-    if (searchRes.ok) {
-      const data = (await searchRes.json()) as { files?: Array<{ id: string; name: string }> };
-      if (data.files && data.files.length > 0) {
-        return data.files[0].id;
+    const promise = (async () => {
+      // 1. Search for existing 'XXQ Chat' folder created by this app
+      const searchParams = new URLSearchParams({
+        q: "name = 'XXQ Chat' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name, createdTime)',
+        spaces: 'drive',
+      });
+
+      let searchRes: Response;
+      try {
+        searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?${searchParams.toString()}`, {
+          headers: { Authorization: `Bearer ${trimmedToken}` },
+        });
+      } catch (netErr: any) {
+        throw new DriveSetupError(
+          'NETWORK_ERROR',
+          `Google Drive API sunucusuna bağlanılamadı: ${netErr.message}`,
+          'folder_search'
+        );
       }
-    }
 
-    // Create folder if not found
-    const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: 'XXQ Chat',
-        mimeType: 'application/vnd.google-apps.folder',
-      }),
+      if (!searchRes.ok) {
+        const errText = await searchRes.text();
+        const sanitized = this.sanitizeDriveApiError(errText, searchRes.status, 'folder_search');
+        console.error(`[DRIVE] Folder search failed: ${sanitized.code} - ${sanitized.description}`);
+        throw new DriveSetupError(sanitized.code, sanitized.userMessageTr, 'folder_search', { projectNumber: sanitized.projectNumber });
+      }
+
+      const searchData = (await searchRes.json()) as { files?: Array<{ id: string; name: string }> };
+      if (searchData.files && searchData.files.length > 0) {
+        // Reuse existing folder
+        return searchData.files[0].id;
+      }
+
+      // 2. Folder does not exist, create it with appProperties for reliable ownership
+      let createRes: Response;
+      try {
+        createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${trimmedToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: 'XXQ Chat',
+            mimeType: 'application/vnd.google-apps.folder',
+            description: 'XXQ Chat sohbet ekleri ve medya dosyaları klasörü',
+            appProperties: {
+              app: 'xxq-chat',
+              purpose: 'chat-attachments',
+            },
+          }),
+        });
+      } catch (netErr: any) {
+        throw new DriveSetupError(
+          'NETWORK_ERROR',
+          `Google Drive API sunucusuna bağlanılamadı: ${netErr.message}`,
+          'folder_creation'
+        );
+      }
+
+      if (!createRes.ok) {
+        const errText = await createRes.text();
+        const sanitized = this.sanitizeDriveApiError(errText, createRes.status, 'folder_creation');
+        console.error(`[DRIVE] Folder creation failed: ${sanitized.code} - ${sanitized.description}`);
+        throw new DriveSetupError(sanitized.code, sanitized.userMessageTr, 'folder_creation', { projectNumber: sanitized.projectNumber });
+      }
+
+      const folderData = (await createRes.json()) as { id: string };
+      if (!folderData.id) {
+        throw new DriveSetupError(
+          'INVALID_RESPONSE',
+          'Google Drive klasör oluşturma yanıtında klasör kimliği (ID) bulunamadı.',
+          'folder_creation'
+        );
+      }
+
+      return folderData.id;
+    })().finally(() => {
+      this.folderCreationPromises.delete(trimmedToken);
     });
 
-    if (!createRes.ok) {
-      throw new Error('XXQ Chat Google Drive klasörü oluşturulamadı.');
-    }
+    this.folderCreationPromises.set(trimmedToken, promise);
+    return promise;
+  }
 
-    const folderData = (await createRes.json()) as { id: string };
-    return folderData.id;
+  /**
+   * Initializes or re-attaches the 'XXQ Chat' folder for an existing connected account using its refresh token.
+   * Does NOT require an authorization code.
+   */
+  static async initAccountFolder(account: DbDriveAccount): Promise<string> {
+    const accessToken = await this.getAccessToken(account);
+    const folderId = await this.ensureAppFolder(accessToken);
+    await dataStore.updateDriveAccountFolder(account.id, folderId);
+    return folderId;
   }
 
   /**
@@ -593,12 +878,21 @@ export class GoogleDriveService {
   }
 
   /**
-   * Syncs and updates the quota for an existing connected Google Drive account.
+   * Syncs and updates the quota and folder connection for an existing connected Google Drive account.
    */
-  static async syncAccountQuota(account: DbDriveAccount): Promise<{ spaceUsed: number; spaceTotal: number }> {
+  static async syncAccountQuota(account: DbDriveAccount): Promise<{ spaceUsed: number; spaceTotal: number; folderId?: string }> {
     const accessToken = await this.getAccessToken(account);
+    let folderId = account.folderId;
+    if (!folderId) {
+      try {
+        folderId = await this.ensureAppFolder(accessToken);
+        await dataStore.updateDriveAccountFolder(account.id, folderId);
+      } catch (fErr) {
+        console.warn(`[DRIVE] Could not initialize missing folder for account ${account.email} during sync:`, fErr);
+      }
+    }
     const quota = await this.fetchQuota(accessToken);
     await dataStore.updateDriveAccountQuota(account.id, quota.spaceUsed, quota.spaceTotal);
-    return quota;
+    return { ...quota, folderId: folderId || undefined };
   }
 }

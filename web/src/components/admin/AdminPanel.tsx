@@ -146,8 +146,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
         setDriveConnecting(false);
         loadAdminData();
       } else if (event.data?.type === 'XXQ_DRIVE_OAUTH_FAILED') {
-        setError(event.data.error || 'Google Drive yetkilendirmesi doğrulanamadı.');
+        const stage = event.data.stage;
+        const err = event.data.error || 'Google Drive yetkilendirmesi doğrulanamadı.';
+        if (stage === 'folder_creation' || stage === 'folder_search') {
+          setError(`Google Drive hesabı doğrulandı fakat 'XXQ Chat' klasörü oluşturulamadı: ${err}`);
+        } else if (stage === 'scope_verification') {
+          setError(`Google Drive izin kapsamı yetersiz: ${err}`);
+        } else {
+          setError(err);
+        }
         setDriveConnecting(false);
+        loadAdminData();
       }
     };
 
@@ -1285,9 +1294,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-sm text-white">{acc.displayName || 'Google Drive'}</span>
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 text-[10px] font-bold border border-emerald-800">
-                                Aktif Depolama
-                              </span>
+                              {acc.folderId ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 text-[10px] font-bold border border-emerald-800">
+                                  Aktif Depolama
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 text-[10px] font-bold border border-amber-800">
+                                  Klasör Bekleniyor
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs text-slate-400">{acc.email}</p>
                           </div>
@@ -1300,7 +1315,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                             className="px-3 py-1.5 bg-[#251d3e] hover:bg-[#322754] text-slate-200 border border-[#3b2d63] rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
                           >
                             <RefreshCw className={`w-3.5 h-3.5 text-purple-400 ${syncingAccountId === acc.id ? 'animate-spin' : ''}`} />
-                            <span>Kotayı Eşitle</span>
+                            <span>{acc.folderId ? 'Kotayı Eşitle' : 'Klasör Oluştur / Eşitle'}</span>
                           </button>
                           <button
                             onClick={() => handleRemoveDrive(acc.id)}
