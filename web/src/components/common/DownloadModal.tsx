@@ -238,8 +238,22 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                     Windows 10 / 11 (64-bit) • Türkçe Kurulum Sihirbazı • Otomatik Masaüstü Kısayolu
                   </p>
                   <p className="text-[11px] text-purple-300 mt-1">
-                    Dosya: <code className="text-white">XXQ-Chat.exe</code> ({formatFileSize(downloadStatus?.windows?.fileSize) || '181.7 MB'})
+                    Dosya: <code className="text-white">{downloadStatus?.windows?.fileName || 'XXQ-Chat-Setup.exe'}</code> ({formatFileSize(downloadStatus?.windows?.fileSize) || '82.6 MB'})
                   </p>
+                  {downloadStatus?.windows?.sha256 && (
+                    <div className="mt-2 p-2 rounded-lg bg-black/40 border border-purple-500/20 text-[10px] text-slate-300 font-mono flex items-center justify-between gap-2 overflow-x-auto">
+                      <span className="text-purple-300 font-semibold shrink-0">SHA-256:</span>
+                      <span className="truncate select-all text-purple-100">{downloadStatus.windows.sha256}</span>
+                      <a
+                        href="/api/downloads/windows/sha256"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-purple-400 hover:text-purple-200 text-[10px] underline shrink-0 font-sans"
+                      >
+                        Özeti Doğrula
+                      </a>
+                    </div>
+                  )}
                 </div>
 
                 <a

@@ -8,15 +8,30 @@
   },
   "files": [
     "src/**/*",
-    {
-      "from": "../web/dist",
-      "to": "web",
-      "filter": ["**/*"]
-    }
+    "web/**/*"
   ],
   "win": {
-    "target": ["dir"],
-    "artifactName": "XXQ-Chat-${version}-${arch}.${ext}",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
     "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "shortcutName": "XXQ Chat",
+    "uninstallDisplayName": "XXQ Chat",
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "runAfterFinish": true,
+    "artifactName": "XXQ-Chat-Setup.exe"
   }
 }

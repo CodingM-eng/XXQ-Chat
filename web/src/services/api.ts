@@ -1197,6 +1197,7 @@ class ApiService {
       available: boolean;
       fileName: string;
       fileSize: number;
+      sha256?: string | null;
       downloadUrl: string | null;
       installGuide: string;
     };
@@ -1204,7 +1205,10 @@ class ApiService {
       available: boolean;
       fileName: string;
       fileSize: number;
+      sha256?: string | null;
       downloadUrl: string | null;
+      sha256Url?: string | null;
+      githubReleaseUrl?: string;
       installGuide: string;
     };
     mac: {
