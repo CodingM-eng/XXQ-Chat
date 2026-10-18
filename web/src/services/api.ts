@@ -1139,6 +1139,86 @@ class ApiService {
       body: JSON.stringify({ isFamily }),
     });
   }
+
+  // Tenor GIF Integration
+  async getGifStatus(): Promise<{
+    configured: boolean;
+    provider: string;
+    message: string;
+    policyNotice?: string;
+    attribution: { text: string; logoUrl: string; websiteUrl: string };
+  }> {
+    return this.request('/api/gifs/status');
+  }
+
+  async getGifCategories(): Promise<{ categories: Array<{ id: string; label: string; query: string }> }> {
+    return this.request('/api/gifs/categories');
+  }
+
+  async searchGifs(query: string, pos?: string, limit: number = 20): Promise<{
+    results: Array<{
+      id: string;
+      title: string;
+      url: string;
+      previewUrl: string;
+      width: number;
+      height: number;
+      source: 'tenor';
+    }>;
+    next: string | null;
+    attribution: { text: string; logoUrl: string; websiteUrl: string };
+  }> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    if (pos) params.set('pos', pos);
+    return this.request(`/api/gifs/search?${params.toString()}`);
+  }
+
+  async getFeaturedGifs(pos?: string, limit: number = 20): Promise<{
+    results: Array<{
+      id: string;
+      title: string;
+      url: string;
+      previewUrl: string;
+      width: number;
+      height: number;
+      source: 'tenor';
+    }>;
+    next: string | null;
+    attribution: { text: string; logoUrl: string; websiteUrl: string };
+  }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (pos) params.set('pos', pos);
+    return this.request(`/api/gifs/featured?${params.toString()}`);
+  }
+
+  // Release Downloads & Device Guidance
+  async getDownloadsStatus(): Promise<{
+    android: {
+      available: boolean;
+      fileName: string;
+      fileSize: number;
+      downloadUrl: string | null;
+      installGuide: string;
+    };
+    windows: {
+      available: boolean;
+      fileName: string;
+      fileSize: number;
+      downloadUrl: string | null;
+      installGuide: string;
+    };
+    mac: {
+      intel: { available: boolean; packageType: string; message: string };
+      appleSilicon: { available: boolean; message: string };
+    };
+    ios: {
+      available: boolean;
+      pwaOnly: boolean;
+      instructions: string[];
+    };
+  }> {
+    return this.request('/api/downloads/status');
+  }
 }
 
 export const api = new ApiService();

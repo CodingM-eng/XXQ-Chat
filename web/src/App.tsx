@@ -23,6 +23,8 @@ import { AdminPanel } from './components/admin/AdminPanel';
 import { AuthModal } from './components/auth/AuthModal';
 import { AccessRestricted } from './components/auth/AccessRestricted';
 import { OnboardingModal } from './components/auth/OnboardingModal';
+import { DownloadModal } from './components/common/DownloadModal';
+import { playNotificationChime } from './utils/sound';
 import { BrandLogo } from './components/common/BrandLogo';
 import { SafeAvatar } from './components/common/SafeAvatar';
 import {
@@ -48,13 +50,36 @@ export const AppContent: React.FC = () => {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected');
   const [typingUser, setTypingUser] = useState<string | null>(null);
+
+  // Muted conversation IDs persisted in localStorage
+  const [mutedConversationIds, setMutedConversationIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('xxq_muted_convs') || '[]');
+    } catch {
+      return [];
+    }
+  });
+
+  const handleToggleMuteConversation = (convId: string) => {
+    setMutedConversationIds((prev) => {
+      const updated = prev.includes(convId) ? prev.filter((id) => id !== convId) : [...prev, convId];
+      try {
+        localStorage.setItem('xxq_muted_convs', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to save muted conversations:', e);
+      }
+      return updated;
+    });
+  };
 
   // Drafts preserved per conversation ID
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   // Modals & Panels
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isNewServerOpen, setIsNewServerOpen] = useState(false);
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
@@ -147,6 +172,33 @@ export const AppContent: React.FC = () => {
     const socket = connectSocket();
 
     socket.on('message:new', (newMsg: Message) => {
+      // Notification sound & browser alert
+      if (newMsg.senderId !== user?.id) {
+        const isMuted = mutedConversationIds.includes(newMsg.conversationId);
+        if (!isMuted) {
+          const soundOn = localStorage.getItem('xxq_notification_sound') !== 'false';
+          if (soundOn) {
+            playNotificationChime();
+          }
+
+          const notifsOn = localStorage.getItem('xxq_notifications_enabled') !== 'false';
+          if (notifsOn && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
+            const previewsOn = localStorage.getItem('xxq_notification_previews') !== 'false';
+            if (previewsOn) {
+              new Notification(newMsg.senderName, {
+                body: newMsg.content || 'Yeni bir dosya veya medya paylaşıldı',
+                icon: '/favicon.ico',
+              });
+            } else {
+              new Notification('XXQ Chat', {
+                body: 'Yeni bir mesajınız var.',
+                icon: '/favicon.ico',
+              });
+            }
+          }
+        }
+      }
+
       // Append to active message thread if conversation matches
       if (newMsg.conversationId === selectedConvIdRef.current) {
         setMessages((prev) => {
@@ -190,13 +242,40 @@ export const AppContent: React.FC = () => {
 
     socket.on('connect', () => {
       setIsConnected(true);
+      setConnectionState('connected');
       if (selectedConvIdRef.current) {
         socket.emit('conversation:join', { conversationId: selectedConvIdRef.current });
         loadMessages(selectedConvIdRef.current);
       }
     });
 
-    socket.on('disconnect', () => setIsConnected(false));
+    socket.on('disconnect', () => {
+      setIsConnected(false);
+      setConnectionState('disconnected');
+    });
+
+    socket.io.on('reconnect_attempt', () => {
+      setConnectionState('reconnecting');
+    });
+
+    socket.io.on('reconnect_error', () => {
+      setConnectionState('reconnecting');
+    });
+
+    const handleWindowOnline = () => {
+      if (socket.connected) {
+        setIsConnected(true);
+        setConnectionState('connected');
+      } else {
+        setConnectionState('reconnecting');
+      }
+    };
+    const handleWindowOffline = () => {
+      setIsConnected(false);
+      setConnectionState('disconnected');
+    };
+    window.addEventListener('online', handleWindowOnline);
+    window.addEventListener('offline', handleWindowOffline);
 
     socket.on('call:incoming', (data: IncomingCallData) => {
       if (activeCallRef.current) {
@@ -269,6 +348,8 @@ export const AppContent: React.FC = () => {
     loadServers();
 
     return () => {
+      window.removeEventListener('online', handleWindowOnline);
+      window.removeEventListener('offline', handleWindowOffline);
       disconnectSocket();
     };
   }, [user?.id, whitelist?.isApproved, whitelist?.modeActive, loadConversations, loadServers, refreshSession]);
@@ -543,7 +624,7 @@ export const AppContent: React.FC = () => {
   }
 
   // 4. Authorized user but onboarding incomplete -> Profile onboarding modal
-  if (user && user.onboarded === false) {
+  if (user && (user.onboarded === false || !user.displayName?.trim())) {
     return <OnboardingModal />;
   }
 
@@ -570,6 +651,7 @@ export const AppContent: React.FC = () => {
           currentView={currentView}
           onNavigate={(view) => setCurrentView(view)}
           isConnected={isConnected}
+          connectionState={connectionState}
           onSelectConversation={(id) => {
             setSelectedConversationId(id);
             setCurrentView('chat');
@@ -612,6 +694,7 @@ export const AppContent: React.FC = () => {
               onOpenAdmin={() => setCurrentView('admin')}
               currentUser={user}
               onOpenProfile={() => setIsProfileOpen(true)}
+              onOpenDownloads={() => setIsDownloadModalOpen(true)}
             />
           </div>
 
@@ -641,6 +724,7 @@ export const AppContent: React.FC = () => {
               pendingInvitationsCount={pendingInvitationsCount}
               currentUser={user}
               onOpenProfile={() => setIsProfileOpen(true)}
+              mutedConversationIds={mutedConversationIds}
             />
           </div>
 
@@ -672,6 +756,8 @@ export const AppContent: React.FC = () => {
                 onToggleMemberList={() => setIsMemberListOpen(!isMemberListOpen)}
                 draftText={drafts[selectedConversation.id] || ''}
                 onDraftChange={(text) => handleDraftChange(selectedConversation.id, text)}
+                isMuted={mutedConversationIds.includes(selectedConversation.id)}
+                onToggleMute={handleToggleMuteConversation}
               />
             ) : (
               <EmptyState onOpenNewChat={() => setIsNewChatOpen(true)} />
@@ -1023,6 +1109,12 @@ export const AppContent: React.FC = () => {
         callState={activeCall}
         currentUser={user}
         onEndCall={() => setActiveCall(null)}
+      />
+
+      {/* Download Modal */}
+      <DownloadModal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
       />
     </div>
   );

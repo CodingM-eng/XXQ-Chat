@@ -92,10 +92,7 @@ export class GoogleDriveService {
     if (process.env.RENDER_EXTERNAL_URL?.trim()) {
       return `${process.env.RENDER_EXTERNAL_URL.trim().replace(/\/+$/, '')}/api/drive/callback`;
     }
-    if (process.env.NODE_ENV === 'production' || config.NODE_ENV === 'production') {
-      return 'https://xxq-chat-backend.onrender.com/api/drive/callback';
-    }
-    return `${(process.env.SERVER_BASE_URL || config.SERVER_BASE_URL || 'http://localhost:4000').trim().replace(/\/+$/, '')}/api/drive/callback`;
+    return 'https://xxq-chat-backend.onrender.com/api/drive/callback';
   }
 
   /**
@@ -146,25 +143,35 @@ export class GoogleDriveService {
    * Safely inspects Google Drive API v3 errors without exposing secrets, tokens, or private paths.
    */
   static sanitizeDriveApiError(
-    errBody: string,
-    status: number,
-    stage: 'folder_search' | 'folder_creation' | 'drive_api'
+    errBody: string | any,
+    status?: number,
+    stage: 'folder_search' | 'folder_creation' | 'drive_api' = 'drive_api'
   ): {
     code: string;
     description: string;
     userMessageTr: string;
+    messageTr: string;
     projectNumber?: string;
+    projectId?: string;
+    isServiceDisabled: boolean;
+    enableUrl: string;
   } {
     let parsed: any = {};
-    try {
-      parsed = JSON.parse(errBody);
-    } catch {
-      // Non-JSON response
+    if (typeof errBody === 'object' && errBody !== null) {
+      status = status || errBody.code || 400;
+      parsed = errBody.error ? errBody : { error: errBody };
+      errBody = JSON.stringify(errBody);
+    } else {
+      try {
+        parsed = JSON.parse(errBody || '{}');
+      } catch {
+        // Non-JSON response
+      }
     }
 
     const errorObj = parsed.error || {};
     const errorCode = String(errorObj.code || status || 'UNKNOWN');
-    const rawMessage = String(errorObj.message || errBody || '');
+    const rawMessage = String(errorObj.message || (typeof errBody === 'string' ? errBody : '') || '');
     const firstError = Array.isArray(errorObj.errors) && errorObj.errors.length > 0 ? errorObj.errors[0] : {};
     const firstDetail = Array.isArray(errorObj.details) && errorObj.details.length > 0 ? errorObj.details[0] : {};
 
@@ -194,7 +201,8 @@ export class GoogleDriveService {
       reason === 'SERVICE_DISABLED' ||
       reason === 'accessNotConfigured' ||
       rawMessage.toLowerCase().includes('has not been used in project') ||
-      rawMessage.toLowerCase().includes('is disabled');
+      rawMessage.toLowerCase().includes('is disabled') ||
+      rawMessage.includes('1096874707747');
 
     const isScopeInsufficient =
       reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' ||
@@ -217,9 +225,11 @@ export class GoogleDriveService {
       reason === 'UNAUTHENTICATED' ||
       rawMessage.toLowerCase().includes('invalid credentials');
 
+    const effectiveProjectNumber = projectNumber || (isServiceDisabled ? '1096874707747' : undefined);
+
     if (isServiceDisabled) {
-      const projText = projectNumber ? ` (Google Cloud Proje No: ${projectNumber})` : '';
-      userMessageTr = `Google Drive API bu projede etkinleştirilmemiş${projText} (SERVICE_DISABLED). Lütfen Google Cloud Console -> "APIs & Services" -> "Library" bölümünden "Google Drive API"yi etkinleştirin ve OAuth istemci kimliği ile projenin eşleştiğinden emin olun.`;
+      const pId = effectiveProjectNumber || '1096874707747';
+      userMessageTr = `Google Drive API bu projede etkinleştirilmemiş (Google Cloud Proje No: ${pId}): Google Cloud projenizde (${pId}) Google Drive API etkinleştirilmemiş (SERVICE_DISABLED). Bu durum bir kod hatası değildir; yöneticinin Google Cloud Console üzerinde Google Drive API servisini etkinleştirmesini gerektirir. Lütfen https://console.cloud.google.com/apis/library/drive.googleapis.com?project=${pId} adresine giderek "Etkinleştir" butonuna tıklayın ve OAuth istemci kimliğinin de bu projeye (${pId}) ait olduğundan emin olun. Etkinleştirdikten sonra Yönetici Panelinden "Klasör Oluştur / Eşitle" butonuna tıklayarak yeni bir koda ihtiyaç duymadan bağlantıyı tamamlayabilirsiniz.`;
     } else if (isScopeInsufficient) {
       userMessageTr = `Google Drive izin kapsamı yetersiz (ACCESS_TOKEN_SCOPE_INSUFFICIENT). XXQ Chat'in klasör ve dosya oluşturabilmesi için 'drive.file' izni gereklidir. Lütfen Google onay ekranında "Google Drive" kutucuğunu işaretleyerek yeni bir onay akışı başlatın.`;
     } else if (isQuotaExceeded) {
@@ -233,10 +243,14 @@ export class GoogleDriveService {
     }
 
     return {
-      code: reason || errorCode,
+      code: isServiceDisabled ? 'SERVICE_DISABLED' : (reason || errorCode),
       description: sanitizedDesc,
       userMessageTr,
-      projectNumber,
+      messageTr: userMessageTr,
+      projectNumber: effectiveProjectNumber,
+      projectId: effectiveProjectNumber,
+      isServiceDisabled,
+      enableUrl: `https://console.cloud.google.com/apis/library/drive.googleapis.com?project=${effectiveProjectNumber || '1096874707747'}`,
     };
   }
 

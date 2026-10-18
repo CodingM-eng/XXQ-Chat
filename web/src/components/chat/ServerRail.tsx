@@ -10,6 +10,7 @@ import {
   Shield,
   MessageSquare,
   Users,
+  Download,
 } from 'lucide-react';
 
 interface ServerRailProps {
@@ -27,6 +28,7 @@ interface ServerRailProps {
   onOpenAdmin?: () => void;
   currentUser?: User | null;
   onOpenProfile?: () => void;
+  onOpenDownloads?: () => void;
   className?: string;
 }
 
@@ -45,6 +47,7 @@ export const ServerRail: React.FC<ServerRailProps> = ({
   onOpenAdmin,
   currentUser,
   onOpenProfile,
+  onOpenDownloads,
   className = '',
 }) => {
   const isHomeActive = activeServerId === null;
@@ -179,6 +182,17 @@ export const ServerRail: React.FC<ServerRailProps> = ({
             title="Platform Yönetim Paneli"
           >
             <Shield className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Download App Button */}
+        {onOpenDownloads && (
+          <button
+            onClick={onOpenDownloads}
+            className="w-10 h-10 rounded-xl bg-[#171129] hover:bg-purple-600/30 text-purple-300 border border-[#261d40] flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400"
+            title="XXQ Chat İndir (Windows / Android / iOS / Mac)"
+          >
+            <Download className="w-4 h-4" />
           </button>
         )}
 

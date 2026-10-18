@@ -1,19 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, ShieldAlert, LogOut, Settings, Search, Sun, Moon, HelpCircle, Mail, Users, UserPlus, User } from 'lucide-react';
+import {
+  Shield,
+  ShieldAlert,
+  LogOut,
+  Settings,
+  Search,
+  Sun,
+  Moon,
+  HelpCircle,
+  Mail,
+  Users,
+  UserPlus,
+  User,
+  Download,
+  Database,
+} from 'lucide-react';
 import { SafeAvatar } from './SafeAvatar';
 import { ProfileEditModal } from './ProfileEditModal';
 import { SearchModal } from '../chat/SearchModal';
 import { SupportModal } from './SupportModal';
 import { InvitationsModal } from '../chat/InvitationsModal';
 import { FriendsModal } from '../chat/FriendsModal';
+import { DownloadModal } from './DownloadModal';
+import { DataStorageModal } from './DataStorageModal';
 import { api } from '../../services/api';
 
 interface HeaderProps {
   currentView: 'chat' | 'admin';
   onNavigate: (view: 'chat' | 'admin') => void;
   isConnected: boolean;
+  connectionState?: 'connected' | 'reconnecting' | 'disconnected';
   onSelectConversation?: (conversationId: string) => void;
   onStartDirectChat?: (email: string) => void;
 }
@@ -22,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   currentView,
   onNavigate,
   isConnected,
+  connectionState,
   onSelectConversation,
   onStartDirectChat,
 }) => {
@@ -30,9 +49,13 @@ export const Header: React.FC<HeaderProps> = ({
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
   const [isInvitationsOpen, setIsInvitationsOpen] = useState(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [isDataStorageModalOpen, setIsDataStorageModalOpen] = useState(false);
   const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
   const [isFriendsOpen, setIsFriendsOpen] = useState(false);
   const [pendingFriendRequestsCount, setPendingFriendRequestsCount] = useState(0);
+
+  const effectiveState = connectionState || (isConnected ? 'connected' : 'disconnected');
 
   const loadInvitationsCount = async () => {
     if (!user) return;
@@ -67,16 +90,21 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {/* Real-time Connection Status Indicator */}
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#151124] border border-[#261e3d] text-xs text-slate-300">
-            {isConnected ? (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#151124] border border-[#261e3d] text-xs text-slate-300">
+            {effectiveState === 'connected' ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[11px] font-medium text-emerald-400">Canlı Bağlantı</span>
+                <span className="text-[11px] font-medium text-emerald-400">Çevrimiçi</span>
+              </>
+            ) : effectiveState === 'reconnecting' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                <span className="text-[11px] font-medium text-amber-400">Yeniden Bağlanıyor...</span>
               </>
             ) : (
               <>
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
-                <span className="text-[11px] font-medium text-amber-400">Bağlanıyor...</span>
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <span className="text-[11px] font-medium text-rose-400">Çevrimdışı</span>
               </>
             )}
           </div>
@@ -149,6 +177,25 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
           )}
+
+          {/* Download App Modal Button */}
+          <button
+            onClick={() => setIsDownloadModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-xs font-semibold text-purple-300 hover:text-white transition-colors"
+            title="XXQ Chat Uygulamasını İndir (Windows / Android / iOS / Mac)"
+          >
+            <Download className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline">İndir</span>
+          </button>
+
+          {/* Data & Storage Modal Button */}
+          <button
+            onClick={() => setIsDataStorageModalOpen(true)}
+            className="p-1.5 rounded-xl bg-[#151124] hover:bg-[#201836] border border-[#2a2143] text-slate-300 hover:text-purple-300 transition-colors"
+            title="Veri ve Depolama (Kotalar ve Önbellek)"
+          >
+            <Database className="w-4 h-4 text-purple-400" />
+          </button>
 
           {/* Theme Toggle Button (Dark / Light) */}
           <button
@@ -290,6 +337,18 @@ export const Header: React.FC<HeaderProps> = ({
             onStartDirectChat(targetUser.email);
           }
         }}
+      />
+
+      {/* Download App Modal */}
+      <DownloadModal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+      />
+
+      {/* Data & Storage Modal */}
+      <DataStorageModal
+        isOpen={isDataStorageModalOpen}
+        onClose={() => setIsDataStorageModalOpen(false)}
       />
     </>
   );

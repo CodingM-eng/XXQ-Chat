@@ -18,6 +18,7 @@ import {
   CheckCheck,
   Sparkles,
   User as UserIcon,
+  BellOff,
 } from 'lucide-react';
 import { SafeAvatar } from '../common/SafeAvatar';
 import { toSafeImageUrl } from '../../utils/sanitizeSvg';
@@ -38,6 +39,7 @@ interface ChannelSidebarProps {
   pendingInvitationsCount?: number;
   currentUser: User | null;
   onOpenProfile: () => void;
+  mutedConversationIds?: string[];
   className?: string;
 }
 
@@ -57,6 +59,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   pendingInvitationsCount = 0,
   currentUser,
   onOpenProfile,
+  mutedConversationIds = [],
   className = '',
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -372,8 +375,13 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                     {/* Content Preview */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-0.5">
-                        <span className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
-                          {conv.name}
+                        <span className={`text-xs font-bold truncate flex items-center gap-1.5 ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                          <span className="truncate">{conv.name}</span>
+                          {mutedConversationIds.includes(conv.id) && (
+                            <span title="Sessize Alındı" className="inline-flex items-center shrink-0">
+                              <BellOff className="w-3 h-3 text-slate-500" />
+                            </span>
+                          )}
                         </span>
                         {conv.lastMessage && (
                           <span className="text-[10px] text-slate-500 shrink-0 ml-1">
@@ -466,6 +474,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                       <div className="flex items-center gap-2 min-w-0">
                         <Hash className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-purple-300' : 'text-purple-400'}`} />
                         <span className="truncate">{channel.name}</span>
+                        {mutedConversationIds.includes(channel.id) && (
+                          <span title="Sessize Alındı" className="inline-flex items-center shrink-0">
+                            <BellOff className="w-3 h-3 text-slate-500" />
+                          </span>
+                        )}
                       </div>
                       {channel.unreadCount > 0 && (
                         <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />

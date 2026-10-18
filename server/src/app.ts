@@ -15,6 +15,8 @@ import { supportRouter } from './routes/support.js';
 import { serversRouter } from './routes/servers.js';
 import { invitationsRouter } from './routes/invitations.js';
 import { friendsRouter } from './routes/friends.js';
+import { gifsRouter } from './routes/gifs.js';
+import { downloadsRouter } from './routes/downloads.js';
 import { isAllowedOrigin } from './utils/cors.js';
 
 // Asynchronously initialize database
@@ -123,6 +125,8 @@ app.use('/api/drive', driveRouter);
 app.use('/api/telegram', telegramRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/support', supportRouter);
+app.use('/api/gifs', gifsRouter);
+app.use('/api/downloads', downloadsRouter);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

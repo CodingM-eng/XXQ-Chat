@@ -45,6 +45,7 @@ import {
   Layers,
   Server as ServerIcon,
   Heart,
+  AlertCircle,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -1344,6 +1345,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                           En az ayrıcalıklı <code>drive.file</code> kapsamı ile sadece XXQ Chat tarafından yüklenen dosyalar yönetilir.
                         </p>
                       </div>
+
+                      {!acc.folderId && (
+                        <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200/90 space-y-2.5 animate-fade-in">
+                          <div className="flex items-center gap-2 font-bold text-amber-300">
+                            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                            <span>Google Cloud Drive API Etkinleştirme Gerekli (Proje: 1096874707747)</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            Google hesabı doğrulandı ancak Google Drive API üzerinde 'XXQ Chat' klasörü henüz oluşturulamadı. Bu durum <strong>1096874707747</strong> numaralı Google Cloud projenizde <em>Google Drive API</em> servisinin etkinleştirilmemiş olmasından kaynaklanır (SERVICE_DISABLED). Bu bir kod hatası değildir.
+                          </p>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Ayrıca Render'da tanımlı <code>GOOGLE_DRIVE_CLIENT_ID</code> ile etkinleştirdiğiniz Drive API'nin aynı Google Cloud projesine (1096874707747) ait olduğunu doğrulayın.
+                          </p>
+                          <div className="flex items-center gap-2.5 pt-1 flex-wrap">
+                            <a
+                              href="https://console.cloud.google.com/apis/library/drive.googleapis.com?project=1096874707747"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 text-white font-semibold text-[11px] shadow-sm transition-colors"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Google Cloud Console'da Drive API'yi Aç</span>
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleSyncDriveQuota(acc.id)}
+                              disabled={syncingAccountId === acc.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-600 text-white font-semibold text-[11px] shadow-sm transition-colors"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${syncingAccountId === acc.id ? 'animate-spin' : ''}`} />
+                              <span>Etkinleştirdim, Klasörü Oluştur / Eşitle</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

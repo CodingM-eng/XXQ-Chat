@@ -357,13 +357,34 @@ router.all('/callback', async (req, res) => {
     let pageTitle = 'XXQ Chat - Google Drive Bağlantısı Başarısız';
     let heading = 'Yetkilendirme Başarısız Oldu';
     let subtitle = 'Google yetkilendirme kodu doğrulanamadı.';
-    let guidance = 'Google yetkilendirme kodları tek kullanımlık ve kısa ömürlüdür. Lütfen "Google ile Yetkilendir" butonuna tıklayarak yeni bir yetkilendirme akışı başlatın.';
+    let guidance = 'Google yetkilendirme kodları tek kullanımlık ve kısa ömürlüdür. Bir kez başarısız olan veya kullanılan kod tekrar denenemez. Lütfen yeni bir yetkilendirme akışı başlatın.';
+    const isServiceDisabled =
+      (exchangeErrorObj as DriveSetupError)?.code === 'SERVICE_DISABLED' ||
+      autoExchangeError?.includes('SERVICE_DISABLED');
+
+    let gcpDirectLink = '';
+
+    if (isServiceDisabled) {
+      const projNum = (exchangeErrorObj as DriveSetupError)?.details?.projectNumber || '1096874707747';
+      gcpDirectLink = `<a href="https://console.cloud.google.com/apis/library/drive.googleapis.com?project=${projNum}" target="_blank" rel="noopener noreferrer" class="btn" style="background-color:#0284c7; margin-right:10px;">Google Cloud'da API'yi Aç</a>`;
+    }
 
     if (isFolderStage) {
       pageTitle = 'XXQ Chat - Google Drive Klasörü Oluşturulamadı';
       heading = 'Google Drive Klasörü Oluşturulamadı';
       subtitle = 'Google hesap yetkilendirmesi başarıyla tamamlandı, ancak Google Drive API üzerinde "XXQ Chat" klasörü oluşturulurken veya aranırken bir hata oluştu.';
-      guidance = 'Yetkilendirme kodu Google tarafından kullanılmıştır (aynı kod tekrar kullanılamaz). Lütfen Google Cloud Console\'da Google Drive API\'nin etkinleştirildiğini ve proje ayarlarını kontrol ettikten sonra Yönetim Paneline dönerek "Drive Ekle" butonuyla yeni bir oturum açma akışı başlatın veya kayıtlı hesabı eşitleyin.';
+      if (isServiceDisabled) {
+        const projNum = (exchangeErrorObj as DriveSetupError)?.details?.projectNumber || '1096874707747';
+        guidance = `Google Cloud projenizde (${projNum}) Google Drive API servisi henüz etkinleştirilmemiş (SERVICE_DISABLED). Bu durum bir uygulama kodu hatası değildir. Lütfen Google Cloud Console üzerinden Google Drive API'yi etkinleştirin ve ardından Yönetim Panelinden "Klasör Oluştur / Eşitle" butonuna tıklayarak kurulumu tamamlayın.`;
+      } else {
+        guidance = 'Yetkilendirme kodu Google tarafından kullanılmıştır (aynı kod tekrar kullanılamaz). Lütfen Google Cloud Console\'da Google Drive API\'nin etkinleştirildiğini ve proje ayarlarını kontrol ettikten sonra Yönetim Paneline dönerek "Drive Ekle" butonuyla yeni bir oturum açma akışı başlatın veya kayıtlı hesabı eşitleyin.';
+      }
+    } else if (isServiceDisabled) {
+      const projNum = (exchangeErrorObj as DriveSetupError)?.details?.projectNumber || '1096874707747';
+      pageTitle = 'XXQ Chat - Google Drive API Etkinleştirilmelidir';
+      heading = 'Google Cloud Projesinde Drive API Etkinleştirilmelidir';
+      subtitle = `Google Cloud Console üzerinde projenizde (${projNum}) Google Drive API servisi henüz etkinleştirilmemiş (SERVICE_DISABLED). Bu durum bir uygulama kodu hatası değildir.`;
+      guidance = `1. Aşağıdaki butondan Google Cloud Console'u açıp "Google Drive API" servisini etkinleştirin.<br>2. OAuth istemci kimliğinizin (GOOGLE_DRIVE_CLIENT_ID) ve etkinleştirdiğiniz Drive API'nin aynı projeye (${projNum}) ait olduğunu doğrulayın.<br>3. Etkinleştirdikten sonra yeni bir onay koduna gerek kalmadan, Yönetici Panelinden "Klasör Oluştur / Eşitle" butonuna tıklayarak kurulumu hemen tamamlayabilirsiniz.`;
     } else if (isScopeStage) {
       pageTitle = 'XXQ Chat - Google Drive İzin Kapsamı Yetersiz';
       heading = 'Google Drive İzin Kapsamı Yetersiz';
@@ -380,12 +401,14 @@ router.all('/callback', async (req, res) => {
         <title>${pageTitle}</title>
         <style>
           body { background-color: #090710; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
-          .card { background-color: #120f1e; border: 1px solid #7f1d1d; border-radius: 20px; padding: 32px; max-width: 520px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+          .card { background-color: #120f1e; border: 1px solid #7f1d1d; border-radius: 20px; padding: 32px; max-width: 540px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
           .badge { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 18px; background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.4); color: #f87171; margin-bottom: 16px; font-size: 24px; }
           h1 { color: #f87171; font-size: 20px; margin-top: 0; margin-bottom: 8px; }
           p { color: #94a3b8; font-size: 13px; line-height: 1.5; margin: 8px 0; }
           .err-box { background: #1a0f18; border: 1px solid #831843; border-radius: 12px; padding: 12px; color: #fca5a5; font-size: 12px; line-height: 1.5; margin: 16px 0; text-align: left; }
-          .btn { display: inline-block; background-color: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 13px; margin-top: 16px; border: none; cursor: pointer; }
+          .actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+          .btn { display: inline-block; background-color: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 13px; border: none; cursor: pointer; transition: background-color 0.2s; }
+          .btn:hover { opacity: 0.9; }
         </style>
       </head>
       <body>
@@ -394,8 +417,11 @@ router.all('/callback', async (req, res) => {
           <h1>${heading}</h1>
           <p style="color:#f87171; font-weight:600; font-size:13px; margin: 8px 0;">${subtitle}</p>
           <div class="err-box">${autoExchangeError || 'Google Drive işlemi doğrulanamadı.'}</div>
-          <p style="font-size: 13px; line-height: 1.5; color: #94a3b8; margin: 12px 0;">${guidance}</p>
-          <a href="${frontendUrl}" class="btn" id="returnBtn">XXQ Chat'e Dön</a>
+          <p style="font-size: 13px; line-height: 1.6; color: #94a3b8; margin: 12px 0; text-align: left;">${guidance}</p>
+          <div class="actions">
+            ${gcpDirectLink}
+            <a href="${frontendUrl}" class="btn" id="returnBtn">XXQ Chat'e Dön</a>
+          </div>
         </div>
         <script>
           try {

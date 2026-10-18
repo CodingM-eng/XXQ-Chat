@@ -298,6 +298,7 @@ export interface DriveAccount {
   email: string;
   displayName?: string | null;
   folderId?: string | null;
+  folderName?: string | null;
   spaceUsed?: number | null;
   spaceTotal?: number | null;
   createdAt: string;

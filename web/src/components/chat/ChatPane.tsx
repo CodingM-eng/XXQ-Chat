@@ -44,6 +44,10 @@ import {
   Info,
   Share2,
   User as UserIcon,
+  Bell,
+  BellOff,
+  RotateCw,
+  ExternalLink,
 } from 'lucide-react';
 import { ScreenShareModal } from './ScreenShareModal';
 import { GroupAvatarModal } from './GroupAvatarModal';
@@ -51,6 +55,7 @@ import { GroupSettingsModal } from './GroupSettingsModal';
 import { ServerInviteModal } from './ServerInviteModal';
 import { SafeAvatar } from '../common/SafeAvatar';
 import { toSafeImageUrl } from '../../utils/sanitizeSvg';
+import { GifPickerModal, SelectedGif } from './GifPickerModal';
 
 interface ChatPaneProps {
   conversation: Conversation;
@@ -75,6 +80,8 @@ interface ChatPaneProps {
   onToggleMemberList?: () => void;
   draftText?: string;
   onDraftChange?: (text: string) => void;
+  isMuted?: boolean;
+  onToggleMute?: (conversationId: string) => void;
 }
 
 export const ChatPane: React.FC<ChatPaneProps> = ({
@@ -93,6 +100,8 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   onToggleMemberList,
   draftText = '',
   onDraftChange,
+  isMuted = false,
+  onToggleMute,
 }) => {
   const [inputText, setInputText] = useState(draftText);
   const [sending, setSending] = useState(false);
@@ -103,6 +112,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isGifPickerOpen, setIsGifPickerOpen] = useState(false);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [showGroupMembersModal, setShowGroupMembersModal] = useState(false);
   const [isScreenShareOpen, setIsScreenShareOpen] = useState(false);
@@ -111,6 +121,27 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   const [isServerInviteOpen, setIsServerInviteOpen] = useState(false);
   const [isCallMenuOpen, setIsCallMenuOpen] = useState(false);
   const callMenuRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectGif = async (gif: SelectedGif) => {
+    setIsGifPickerOpen(false);
+    const gifAttachment: Attachment = {
+      id: `gif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      conversationId: conversation.id,
+      uploaderId: currentUser?.id || '',
+      driveAccountId: 'tenor_gif',
+      driveFileId: gif.url,
+      fileName: `${gif.title || 'tenor'}.gif`,
+      fileSize: 0,
+      mimeType: 'image/gif',
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      await onSendMessage('', undefined, replyTarget?.id, undefined, [gifAttachment], 'image');
+      setReplyTarget(null);
+    } catch (e) {
+      console.error('Failed to send GIF message:', e);
+    }
+  };
 
   // File upload state
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -667,6 +698,23 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             </>
           )}
 
+          {/* Conversation Mute Toggle */}
+          {onToggleMute && (
+            <button
+              type="button"
+              onClick={() => onToggleMute(conversation.id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all ${
+                isMuted
+                  ? 'bg-rose-950/70 border-rose-800 text-rose-300 shadow-sm'
+                  : 'bg-[#1c182b] hover:bg-[#26203b] border-[#2e2648] text-slate-300 hover:text-white'
+              }`}
+              title={isMuted ? 'Sohbetin sesini aç' : 'Sohbeti sessize al'}
+            >
+              {isMuted ? <BellOff className="w-4 h-4 text-rose-400" /> : <Bell className="w-4 h-4 text-purple-400" />}
+              <span className="hidden sm:inline">{isMuted ? 'Sessiz' : 'Sessize Al'}</span>
+            </button>
+          )}
+
           {/* Member List Toggle Button */}
           {onToggleMemberList && (
             <button
@@ -806,23 +854,38 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                         const isAudio = att.mimeType?.startsWith('audio/') || msg.type === 'voice';
 
                         if (isImg) {
+                          const isTenorGif = att.driveAccountId === 'tenor_gif' || att.driveFileId?.startsWith('http');
+                          const imgSrc = isTenorGif ? att.driveFileId : api.getAttachmentUrl(conversation.id, att.id);
+
                           return (
                             <div key={att.id} className="rounded-xl overflow-hidden bg-black/20 border border-white/10 relative group/att">
                               <img
-                                src={api.getAttachmentUrl(conversation.id, att.id)}
+                                src={imgSrc}
                                 alt={att.fileName}
                                 loading="lazy"
                                 className="max-h-60 w-auto rounded-lg object-contain cursor-pointer"
-                                onClick={() => window.open(api.getAttachmentUrl(conversation.id, att.id), '_blank')}
+                                onClick={() => window.open(imgSrc, '_blank')}
                               />
-                              <button
-                                type="button"
-                                onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
-                                className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 text-white rounded-lg opacity-0 group-hover/att:opacity-100 transition-opacity"
-                                title="Görseli İndir"
-                              >
-                                <Download className="w-4 h-4" />
-                              </button>
+                              {!isTenorGif ? (
+                                <button
+                                  type="button"
+                                  onClick={() => api.downloadAttachment(conversation.id, att.id, att.fileName)}
+                                  className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 text-white rounded-lg opacity-0 group-hover/att:opacity-100 transition-opacity"
+                                  title="Görseli İndir"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <a
+                                  href={imgSrc}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 text-white rounded-lg opacity-0 group-hover/att:opacity-100 transition-opacity"
+                                  title="Tenor GIF Bağlantısını Aç"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                              )}
                             </div>
                           );
                         }
@@ -919,7 +982,20 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                             : 'Gönderildi'
                         }
                       >
-                        {msg.status === 'read' || (msg.readBy && msg.readBy.length > 0) ? (
+                        {(msg as any).status === 'failed' ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSendMessage(msg.content, undefined, msg.replyTo?.id, undefined, msg.attachments || undefined, msg.type);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] text-rose-300 hover:text-white bg-rose-950/80 hover:bg-rose-900 px-1.5 py-0.5 rounded-lg border border-rose-700/60 shadow-sm transition-colors"
+                            title="Gönderim başarısız oldu. Yeniden denemek için tıklayın."
+                          >
+                            <RotateCw className="w-2.5 h-2.5" />
+                            <span>Tekrar Dene</span>
+                          </button>
+                        ) : msg.status === 'read' || (msg.readBy && msg.readBy.length > 0) ? (
                           <CheckCheck className="w-3.5 h-3.5 text-purple-200" />
                         ) : msg.status === 'delivered' ? (
                           <CheckCheck className="w-3.5 h-3.5 text-slate-400" />
@@ -1109,16 +1185,26 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
             )}
 
             {!isRecordingVoice && (
-              <button
-                type="button"
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className={`p-2 transition-colors rounded-xl ${
-                  showEmojiPicker ? 'text-purple-400 bg-purple-950/60' : 'text-slate-400 hover:text-slate-200 hover:bg-[#26203b]'
-                }`}
-                title="Emoji Ekle"
-              >
-                <Smile className="w-5 h-5" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsGifPickerOpen(true)}
+                  className="px-2 py-1 text-[11px] font-black text-purple-400 hover:text-white hover:bg-purple-600/30 rounded-xl transition-colors border border-purple-500/30 shrink-0"
+                  title="Tenor GIF Seç"
+                >
+                  GIF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                  className={`p-2 transition-colors rounded-xl ${
+                    showEmojiPicker ? 'text-purple-400 bg-purple-950/60' : 'text-slate-400 hover:text-slate-200 hover:bg-[#26203b]'
+                  }`}
+                  title="Emoji Ekle"
+                >
+                  <Smile className="w-5 h-5" />
+                </button>
+              </>
             )}
 
             {isRecordingVoice ? (
@@ -1462,6 +1548,13 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           </div>
         </div>
       )}
+
+      {/* Tenor GIF Picker Modal */}
+      <GifPickerModal
+        isOpen={isGifPickerOpen}
+        onClose={() => setIsGifPickerOpen(false)}
+        onSelect={handleSelectGif}
+      />
     </main>
   );
 };

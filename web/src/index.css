@@ -25,25 +25,46 @@ html.light * {
 
 /* Background overrides: App root, backdrops, panels, sidebars, modals */
 html.light .bg-\[\#07050d\],
+html.light .bg-\[\#080611\],
 html.light .bg-\[\#08070b\],
 html.light .bg-\[\#090710\],
 html.light .bg-\[\#0b0914\],
+html.light .bg-\[\#0c0a13\],
 html.light .bg-\[\#0c0a14\],
 html.light .bg-\[\#0c0a14\]\/90,
+html.light .bg-\[\#0c0a15\],
+html.light .bg-\[\#0c0a16\],
+html.light .bg-\[\#0d0a17\],
+html.light .bg-\[\#0e0a1b\],
+html.light .bg-\[\#0e0c18\],
+html.light .bg-\[\#0f0d19\],
+html.light .bg-\[\#0f0d1a\],
 html.light .bg-slate-950,
 html.light .bg-slate-950\/80,
 html.light .bg-slate-950\/90 {
   background-color: #f7f6fc !important;
 }
 
+/* Card, panel, and modal surfaces */
 html.light .bg-\[\#120f1e\],
 html.light .bg-\[\#0f0d15\],
+html.light .bg-\[\#100d1c\],
 html.light .bg-\[\#110e1a\],
+html.light .bg-\[\#120e20\],
+html.light .bg-\[\#120e21\],
+html.light .bg-\[\#120e22\],
+html.light .bg-\[\#120f20\],
+html.light .bg-\[\#120f21\],
 html.light .bg-\[\#130f21\],
+html.light .bg-\[\#140f21\],
 html.light .bg-\[\#140f24\],
+html.light .bg-\[\#141021\],
+html.light .bg-\[\#151024\],
 html.light .bg-\[\#151124\],
+html.light .bg-\[\#151221\],
 html.light .bg-\[\#151221\]\/90,
 html.light .bg-\[\#161129\],
+html.light .bg-\[\#161224\],
 html.light .bg-\[\#161226\],
 html.light .bg-slate-900,
 html.light .bg-slate-900\/80,
@@ -52,18 +73,51 @@ html.light .bg-slate-900\/95 {
   background-color: #ffffff !important;
 }
 
+/* Secondary / nested surfaces */
+html.light .bg-\[\#171126\],
+html.light .bg-\[\#171128\],
+html.light .bg-\[\#171129\],
+html.light .bg-\[\#171224\],
+html.light .bg-\[\#171226\],
+html.light .bg-\[\#171227\],
 html.light .bg-\[\#171520\],
+html.light .bg-\[\#18122c\],
 html.light .bg-\[\#181329\],
+html.light .bg-\[\#181427\],
+html.light .bg-\[\#1a1330\],
+html.light .bg-\[\#1a142c\],
 html.light .bg-\[\#1b152d\],
-html.light .bg-\[\#1c182b\],
+html.light .bg-\[\#1b172a\],
 html.light .bg-\[\#1c162e\],
+html.light .bg-\[\#1c182b\],
+html.light .bg-\[\#1d1730\],
 html.light .bg-\[\#1d1a29\],
+html.light .bg-\[\#1e1732\],
+html.light .bg-\[\#1e1733\],
+html.light .bg-\[\#1e1830\],
+html.light .bg-\[\#1f1832\],
+html.light .bg-\[\#1f1833\],
+html.light .bg-\[\#201833\],
+html.light .bg-\[\#201834\],
 html.light .bg-\[\#201836\],
+html.light .bg-\[\#201a35\],
+html.light .bg-\[\#211a33\],
+html.light .bg-\[\#211a36\],
+html.light .bg-\[\#231a3d\],
+html.light .bg-\[\#231b3b\],
+html.light .bg-\[\#251b42\],
+html.light .bg-\[\#251d3e\],
+html.light .bg-\[\#26203b\],
+html.light .bg-\[\#271f42\],
+html.light .bg-\[\#28223d\],
+html.light .bg-\[\#2b2144\],
+html.light .bg-\[\#2b2148\],
+html.light .bg-\[\#2b2444\],
 html.light .bg-slate-800,
 html.light .bg-slate-800\/50,
 html.light .bg-slate-800\/60,
 html.light .bg-slate-800\/80 {
-  background-color: #f3f0fa !important;
+  background-color: #f3effa !important;
 }
 
 /* Hover surfaces */
@@ -73,7 +127,15 @@ html.light .hover\:bg-slate-900:hover,
 html.light .hover\:bg-\[\#161129\]:hover,
 html.light .hover\:bg-\[\#140f21\]:hover,
 html.light .hover\:bg-\[\#151024\]:hover,
-html.light .hover\:bg-purple-950\/40:hover {
+html.light .hover\:bg-\[\#181329\]:hover,
+html.light .hover\:bg-\[\#201836\]:hover,
+html.light .hover\:bg-\[\#201a35\]:hover,
+html.light .hover\:bg-\[\#251d3e\]:hover,
+html.light .hover\:bg-\[\#26203b\]:hover,
+html.light .hover\:bg-\[\#28223d\]:hover,
+html.light .hover\:bg-\[\#2b2444\]:hover,
+html.light .hover\:bg-purple-950\/40:hover,
+html.light .hover\:bg-purple-900\/50:hover {
   background-color: #ede9fe !important;
 }
 
@@ -82,12 +144,12 @@ html.light .bg-black\/85,
 html.light .bg-black\/80,
 html.light .bg-black\/70,
 html.light .bg-black\/60,
-html.light .bg-black\/50 {
+html.light .bg-black\/50,
+html.light .bg-black\/40 {
   background-color: rgba(15, 23, 42, 0.45) !important;
 }
 
-/* Text color overrides */
-html.light .text-white,
+/* Text color overrides for light surfaces */
 html.light .text-slate-100,
 html.light .text-slate-200 {
   color: #0f172a !important;
@@ -105,6 +167,36 @@ html.light .text-slate-500 {
   color: #64748b !important;
 }
 
+/* Crucial: Preserve crisp white text inside buttons, badges, and colored bubbles */
+html.light .bg-purple-600,
+html.light .bg-purple-600 *,
+html.light .bg-purple-700,
+html.light .bg-purple-700 *,
+html.light .bg-indigo-600,
+html.light .bg-indigo-600 *,
+html.light .bg-pink-600,
+html.light .bg-pink-600 *,
+html.light .bg-rose-600,
+html.light .bg-rose-600 *,
+html.light .bg-emerald-600,
+html.light .bg-emerald-600 *,
+html.light .bg-cyan-700,
+html.light .bg-cyan-700 *,
+html.light .bg-gradient-to-r,
+html.light .bg-gradient-to-r *,
+html.light .bg-gradient-to-tr,
+html.light .bg-gradient-to-tr *,
+html.light .badge-accent,
+html.light .badge-accent * {
+  color: #ffffff !important;
+}
+
+/* Sent message bubble in chat */
+html.light .bg-purple-600.text-white {
+  background-color: #7c3aed !important;
+  color: #ffffff !important;
+}
+
 /* Borders */
 html.light .border-\[\#1e172e\],
 html.light .border-\[\#1f1930\],
@@ -117,9 +209,14 @@ html.light .border-\[\#26203b\],
 html.light .border-\[\#2a2244\],
 html.light .border-\[\#2a2538\],
 html.light .border-\[\#2a2143\],
+html.light .border-\[\#2b2444\],
+html.light .border-\[\#2d2247\],
 html.light .border-\[\#2e2648\],
+html.light .border-\[\#292243\],
+html.light .border-\[\#3b2d63\],
 html.light .border-slate-800,
 html.light .border-slate-800\/80,
+html.light .border-slate-800\/60,
 html.light .border-slate-700,
 html.light .border-slate-700\/60 {
   border-color: #e2d9f3 !important;
@@ -131,7 +228,7 @@ html.light textarea,
 html.light select {
   background-color: #ffffff !important;
   color: #0f172a !important;
-  border-color: #e2d9f3 !important;
+  border-color: #d8cef0 !important;
 }
 
 html.light input::placeholder,
@@ -140,13 +237,17 @@ html.light textarea::placeholder {
 }
 
 /* Soft purple badges & highlights */
+html.light .bg-purple-950\/80,
+html.light .bg-purple-950\/70,
+html.light .bg-purple-950\/60,
 html.light .bg-purple-950\/40,
 html.light .bg-purple-950\/30,
 html.light .bg-purple-950\/20,
-html.light .bg-purple-900\/40,
+html.light .bg-purple-900\/60,
 html.light .bg-purple-900\/50,
-html.light .bg-purple-900\/60 {
+html.light .bg-purple-900\/40 {
   background-color: #ede9fe !important;
+  color: #5b21b6 !important;
 }
 
 /* Custom Sleek Scrollbar */

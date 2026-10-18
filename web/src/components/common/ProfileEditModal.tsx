@@ -16,6 +16,7 @@ import {
   Trash2,
   Shield,
 } from 'lucide-react';
+import { GifPickerModal, SelectedGif } from '../chat/GifPickerModal';
 
 const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -67,6 +68,15 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
   const [bannerPreview, setBannerPreview] = useState<string | null>(user?.bannerUrl || null);
   const [customBannerUrl, setCustomBannerUrl] = useState(user?.bannerUrl || '');
   const [removeBannerRequested, setRemoveBannerRequested] = useState(false);
+  const [isGifPickerOpen, setIsGifPickerOpen] = useState(false);
+
+  const handleSelectBannerGif = (gif: SelectedGif) => {
+    setIsGifPickerOpen(false);
+    setCustomBannerUrl(gif.url);
+    setBannerPreview(gif.url);
+    setBannerMode('url');
+    setRemoveBannerRequested(false);
+  };
 
   // Accent color
   const [accentColor, setAccentColor] = useState<string>(user?.accentColor || '#8b5cf6');
@@ -319,6 +329,15 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Afiş Yükle</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsGifPickerOpen(true)}
+                className="px-3 py-1.5 bg-purple-900/40 hover:bg-purple-900/60 border border-purple-600/40 text-purple-200 rounded-xl font-semibold transition-colors flex items-center gap-1.5"
+                title="Tenor animasyonlu GIF seç"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>Tenor GIF</span>
               </button>
               <div className="flex-1">
                 <input
@@ -619,6 +638,14 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
           </div>
         </form>
       </div>
+
+      {/* Tenor GIF Picker Modal */}
+      <GifPickerModal
+        isOpen={isGifPickerOpen}
+        onClose={() => setIsGifPickerOpen(false)}
+        onSelect={handleSelectBannerGif}
+        title="Afiş için Tenor GIF Seç"
+      />
     </div>
   );
 };

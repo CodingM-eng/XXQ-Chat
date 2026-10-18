@@ -31,6 +31,7 @@ const envSchema = z.object({
   GOOGLE_DRIVE_CLIENT_SECRET: z.string().optional().transform(cleanEnv),
   GOOGLE_DRIVE_REDIRECT_URI: z.string().optional().transform((v) => cleanEnv(v)?.replace(/\/+$/, '')),
   ENCRYPTION_KEY: z.string().optional().transform(cleanEnv),
+  TENOR_API_KEY: z.string().optional().transform(cleanEnv),
   SERVER_BASE_URL: z.string().default('http://localhost:4000').transform((v) => cleanEnv(v)?.replace(/\/+$/, '') || 'http://localhost:4000'),
 });
 
@@ -49,10 +50,7 @@ const resolvedRedirectUri = (() => {
   if (process.env.RENDER_EXTERNAL_URL?.trim()) {
     return `${process.env.RENDER_EXTERNAL_URL.trim().replace(/\/+$/, '')}/api/drive/callback`;
   }
-  if (parsed.data.NODE_ENV === 'production') {
-    return 'https://xxq-chat-backend.onrender.com/api/drive/callback';
-  }
-  return `${parsed.data.SERVER_BASE_URL.replace(/\/+$/, '')}/api/drive/callback`;
+  return 'https://xxq-chat-backend.onrender.com/api/drive/callback';
 })();
 
 export const config = {
