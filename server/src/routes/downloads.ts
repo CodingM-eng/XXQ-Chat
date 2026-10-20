@@ -78,8 +78,8 @@ router.get('/status', (req: Request, res: Response) => {
     android: {
       available: true,
       fileName: 'XXQ-Chat-Android-debug.apk',
-      fileSize: androidStat?.size || 0,
-      sha256: androidSha256,
+      fileSize: androidStat?.size || 11986420,
+      sha256: androidSha256 || 'D276F98B5893598BB5F8DC3831DE6D48724510909C3C7B3C4172AA7406736122',
       downloadUrl: '/api/downloads/android',
       githubDirectUrl: `${GITHUB_RELEASE_BASE}/XXQ-Chat-Android-debug.apk`,
       githubReleaseUrl: `${GITHUB_REPO_URL}/releases/tag/${CURRENT_RELEASE_TAG}`,
@@ -89,8 +89,8 @@ router.get('/status', (req: Request, res: Response) => {
     windows: {
       available: true,
       fileName: 'XXQ-Chat-Setup.exe',
-      fileSize: windowsStat?.size || 82587999,
-      sha256: windowsSha256 || '112c59b17d08774003baff36f26e5df05f0a7b9f0cc2b5c450838e0b3b0ed381',
+      fileSize: windowsStat?.size || 82587967,
+      sha256: windowsSha256 || 'CDF8400372B79447C26F189CB59D994D3D3C6809701961E85B2F6CDCC2198A5F',
       downloadUrl: '/api/downloads/windows',
       sha256Url: '/api/downloads/windows/sha256',
       githubDirectUrl: `${GITHUB_RELEASE_BASE}/XXQ-Chat-Setup.exe`,
