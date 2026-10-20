@@ -40,6 +40,7 @@ interface ChannelSidebarProps {
   currentUser: User | null;
   onOpenProfile: () => void;
   mutedConversationIds?: string[];
+  onlineUserIds?: Set<string>;
   className?: string;
 }
 
@@ -60,6 +61,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   currentUser,
   onOpenProfile,
   mutedConversationIds = [],
+  onlineUserIds,
   className = '',
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -368,7 +370,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         />
                       </div>
                       {!isGroup && (
-                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#0c0a14]" />
+                        <span
+                          className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[#0c0a14] ${
+                            conv.peer && onlineUserIds?.has(conv.peer.id) ? 'bg-emerald-500' : 'bg-slate-500'
+                          }`}
+                          title={conv.peer && onlineUserIds?.has(conv.peer.id) ? 'Çevrimiçi' : 'Çevrimdışı'}
+                        />
                       )}
                     </div>
 

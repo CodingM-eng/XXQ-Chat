@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -18,14 +18,15 @@ import {
   Database,
 } from 'lucide-react';
 import { SafeAvatar } from './SafeAvatar';
-import { ProfileEditModal } from './ProfileEditModal';
-import { SearchModal } from '../chat/SearchModal';
-import { SupportModal } from './SupportModal';
-import { InvitationsModal } from '../chat/InvitationsModal';
-import { FriendsModal } from '../chat/FriendsModal';
-import { DownloadModal } from './DownloadModal';
-import { DataStorageModal } from './DataStorageModal';
 import { api } from '../../services/api';
+
+const ProfileEditModal = lazy(() => import('./ProfileEditModal').then((m) => ({ default: m.ProfileEditModal })));
+const SearchModal = lazy(() => import('../chat/SearchModal').then((m) => ({ default: m.SearchModal })));
+const SupportModal = lazy(() => import('./SupportModal').then((m) => ({ default: m.SupportModal })));
+const InvitationsModal = lazy(() => import('../chat/InvitationsModal').then((m) => ({ default: m.InvitationsModal })));
+const FriendsModal = lazy(() => import('../chat/FriendsModal').then((m) => ({ default: m.FriendsModal })));
+const DownloadModal = lazy(() => import('./DownloadModal').then((m) => ({ default: m.DownloadModal })));
+const DataStorageModal = lazy(() => import('./DataStorageModal').then((m) => ({ default: m.DataStorageModal })));
 
 interface HeaderProps {
   currentView: 'chat' | 'admin';
@@ -283,73 +284,76 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </header>
 
-      {/* Profile Edit Modal */}
-      <ProfileEditModal
-        isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-      />
+      {/* Modals & Overlays (Lazy Loaded) */}
+      <Suspense fallback={null}>
+        {/* Profile Edit Modal */}
+        <ProfileEditModal
+          isOpen={isProfileModalOpen}
+          onClose={() => setIsProfileModalOpen(false)}
+        />
 
-      {/* Global Search Modal */}
-      <SearchModal
-        isOpen={isSearchModalOpen}
-        onClose={() => setIsSearchModalOpen(false)}
-        onSelectConversation={(convId) => {
-          if (onSelectConversation) {
-            onSelectConversation(convId);
-          }
-        }}
-        onStartDirectChat={(email) => {
-          if (onStartDirectChat) {
-            onStartDirectChat(email);
-          }
-        }}
-      />
+        {/* Global Search Modal */}
+        <SearchModal
+          isOpen={isSearchModalOpen}
+          onClose={() => setIsSearchModalOpen(false)}
+          onSelectConversation={(convId) => {
+            if (onSelectConversation) {
+              onSelectConversation(convId);
+            }
+          }}
+          onStartDirectChat={(email) => {
+            if (onStartDirectChat) {
+              onStartDirectChat(email);
+            }
+          }}
+        />
 
-      {/* Problem Report Modal */}
-      <SupportModal
-        isOpen={isSupportModalOpen}
-        onClose={() => setIsSupportModalOpen(false)}
-      />
+        {/* Problem Report Modal */}
+        <SupportModal
+          isOpen={isSupportModalOpen}
+          onClose={() => setIsSupportModalOpen(false)}
+        />
 
-      {/* Invitations Modal */}
-      <InvitationsModal
-        isOpen={isInvitationsOpen}
-        onClose={() => {
-          setIsInvitationsOpen(false);
-          loadInvitationsCount();
-        }}
-        onInvitationAccepted={(targetId) => {
-          setIsInvitationsOpen(false);
-          loadInvitationsCount();
-          onSelectConversation?.(targetId);
-        }}
-      />
+        {/* Invitations Modal */}
+        <InvitationsModal
+          isOpen={isInvitationsOpen}
+          onClose={() => {
+            setIsInvitationsOpen(false);
+            loadInvitationsCount();
+          }}
+          onInvitationAccepted={(targetId) => {
+            setIsInvitationsOpen(false);
+            loadInvitationsCount();
+            onSelectConversation?.(targetId);
+          }}
+        />
 
-      {/* Friends Modal */}
-      <FriendsModal
-        isOpen={isFriendsOpen}
-        onClose={() => {
-          setIsFriendsOpen(false);
-          loadInvitationsCount();
-        }}
-        onStartDirectChat={(targetUser) => {
-          if (targetUser.email && onStartDirectChat) {
-            onStartDirectChat(targetUser.email);
-          }
-        }}
-      />
+        {/* Friends Modal */}
+        <FriendsModal
+          isOpen={isFriendsOpen}
+          onClose={() => {
+            setIsFriendsOpen(false);
+            loadInvitationsCount();
+          }}
+          onStartDirectChat={(targetUser) => {
+            if (targetUser.email && onStartDirectChat) {
+              onStartDirectChat(targetUser.email);
+            }
+          }}
+        />
 
-      {/* Download App Modal */}
-      <DownloadModal
-        isOpen={isDownloadModalOpen}
-        onClose={() => setIsDownloadModalOpen(false)}
-      />
+        {/* Download App Modal */}
+        <DownloadModal
+          isOpen={isDownloadModalOpen}
+          onClose={() => setIsDownloadModalOpen(false)}
+        />
 
-      {/* Data & Storage Modal */}
-      <DataStorageModal
-        isOpen={isDataStorageModalOpen}
-        onClose={() => setIsDataStorageModalOpen(false)}
-      />
+        {/* Data & Storage Modal */}
+        <DataStorageModal
+          isOpen={isDataStorageModalOpen}
+          onClose={() => setIsDataStorageModalOpen(false)}
+        />
+      </Suspense>
     </>
   );
 };

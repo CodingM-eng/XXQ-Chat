@@ -20,6 +20,7 @@ interface MemberListPanelProps {
   onClose?: () => void;
   isMobileOrDrawer?: boolean;
   onStartDirectChat?: (userId: string) => void;
+  onlineUserIds?: Set<string>;
 }
 
 export const MemberListPanel: React.FC<MemberListPanelProps> = ({
@@ -30,8 +31,14 @@ export const MemberListPanel: React.FC<MemberListPanelProps> = ({
   onClose,
   isMobileOrDrawer = false,
   onStartDirectChat,
+  onlineUserIds,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+
+  const isUserOnline = (id: string) => {
+    if (id === currentUser?.id) return true;
+    return onlineUserIds ? onlineUserIds.has(id) : false;
+  };
 
   // Collect member entries from server or conversation participants
   type MemberItem = {
@@ -49,35 +56,47 @@ export const MemberListPanel: React.FC<MemberListPanelProps> = ({
   let members: MemberItem[] = [];
 
   if (server && server.members && server.members.length > 0) {
-    members = server.members.map((m) => ({
-      id: m.id,
-      displayName: m.displayName,
-      avatarUrl: m.avatarUrl,
-      role: m.role || (m.id === server.ownerId ? 'owner' : 'member'),
-      customTag: m.customTag,
-      isAdmin: m.role === 'admin' || m.role === 'owner',
-      isModerator: m.role === 'moderator',
-      isOnline: true,
-    }));
+    members = server.members.map((m) => {
+      const isAdm = m.role === 'admin' || m.role === 'owner' || m.id === server.ownerId || (m as any).email?.toLowerCase() === 'codingdevelopia@gmail.com';
+      const isMod = !isAdm && (m.role === 'moderator' || (m as any).isModerator);
+      return {
+        id: m.id,
+        displayName: m.displayName,
+        avatarUrl: m.avatarUrl,
+        role: m.role || (m.id === server.ownerId ? 'owner' : 'member'),
+        customTag: m.customTag,
+        isAdmin: isAdm,
+        isModerator: isMod,
+        isOnline: isUserOnline(m.id),
+      };
+    });
   } else if (conversation.participants && conversation.participants.length > 0) {
-    members = conversation.participants.map((p) => ({
-      id: p.id,
-      displayName: p.displayName,
-      avatarUrl: p.avatarUrl,
-      role: p.role || (p.isAdmin ? 'admin' : 'member'),
-      customTag: p.customTag,
-      isAdmin: p.isAdmin,
-      isModerator: p.role === 'moderator',
-      isOnline: true,
-    }));
+    members = conversation.participants.map((p) => {
+      const isAdm = p.isAdmin || p.role === 'admin' || (p as any).email?.toLowerCase() === 'codingdevelopia@gmail.com';
+      const isMod = !isAdm && (p.role === 'moderator' || (p as any).isModerator);
+      return {
+        id: p.id,
+        displayName: p.displayName,
+        avatarUrl: p.avatarUrl,
+        role: p.role || (isAdm ? 'admin' : 'member'),
+        customTag: p.customTag,
+        isAdmin: isAdm,
+        isModerator: isMod,
+        isOnline: isUserOnline(p.id),
+      };
+    });
   } else if (conversation.peer) {
+    const isPeerAdm = (conversation.peer as any).isAdmin || (conversation.peer as any).email?.toLowerCase() === 'codingdevelopia@gmail.com';
+    const isPeerMod = !isPeerAdm && (conversation.peer as any).isModerator;
     members = [
       {
         id: conversation.peer.id,
         displayName: conversation.peer.displayName,
         avatarUrl: conversation.peer.avatarUrl,
-        role: 'member',
-        isOnline: true,
+        role: isPeerAdm ? 'admin' : isPeerMod ? 'moderator' : 'member',
+        isAdmin: isPeerAdm,
+        isModerator: isPeerMod,
+        isOnline: isUserOnline(conversation.peer.id),
       },
       ...(currentUser
         ? [
@@ -85,7 +104,9 @@ export const MemberListPanel: React.FC<MemberListPanelProps> = ({
               id: currentUser.id,
               displayName: currentUser.displayName,
               avatarUrl: currentUser.avatarUrl,
-              role: 'member' as const,
+              role: (currentUser.isAdmin || currentUser.email?.toLowerCase() === 'codingdevelopia@gmail.com' ? 'admin' : currentUser.isModerator ? 'moderator' : 'member') as 'admin' | 'moderator' | 'member',
+              isAdmin: currentUser.isAdmin || currentUser.email?.toLowerCase() === 'codingdevelopia@gmail.com',
+              isModerator: !currentUser.isAdmin && currentUser.email?.toLowerCase() !== 'codingdevelopia@gmail.com' && currentUser.isModerator,
               isOnline: true,
             },
           ]
@@ -134,7 +155,12 @@ export const MemberListPanel: React.FC<MemberListPanelProps> = ({
                 className="w-full h-full object-cover"
               />
             </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#0c0a14]" />
+            <span
+              className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[#0c0a14] ${
+                member.isOnline ? 'bg-emerald-500' : 'bg-slate-500'
+              }`}
+              title={member.isOnline ? 'Çevrimiçi' : 'Çevrimdışı'}
+            />
           </div>
 
           <div className="min-w-0">

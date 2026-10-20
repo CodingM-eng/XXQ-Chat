@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { useAuth } from './context/AuthContext';
 import { api } from './services/api';
 import { connectSocket, disconnectSocket, getSocket } from './services/socket';
@@ -9,21 +9,9 @@ import { ChannelSidebar } from './components/chat/ChannelSidebar';
 import { MemberListPanel } from './components/chat/MemberListPanel';
 import { ChatPane } from './components/chat/ChatPane';
 import { EmptyState } from './components/chat/EmptyState';
-import { NewChatModal } from './components/chat/NewChatModal';
-import { NewServerModal } from './components/chat/NewServerModal';
-import { CreateChannelModal } from './components/chat/CreateChannelModal';
-import { ServerInviteModal } from './components/chat/ServerInviteModal';
-import { CommunitySettingsModal } from './components/chat/CommunitySettingsModal';
-import { JoinCommunityModal } from './components/chat/JoinCommunityModal';
-import { FriendsModal } from './components/chat/FriendsModal';
-import { InvitationsModal } from './components/chat/InvitationsModal';
-import { ProfileEditModal } from './components/common/ProfileEditModal';
-import { SearchModal } from './components/chat/SearchModal';
-import { AdminPanel } from './components/admin/AdminPanel';
 import { AuthModal } from './components/auth/AuthModal';
 import { AccessRestricted } from './components/auth/AccessRestricted';
 import { OnboardingModal } from './components/auth/OnboardingModal';
-import { DownloadModal } from './components/common/DownloadModal';
 import { playNotificationChime } from './utils/sound';
 import { BrandLogo } from './components/common/BrandLogo';
 import { SafeAvatar } from './components/common/SafeAvatar';
@@ -38,8 +26,24 @@ import {
   Plus,
   Globe,
 } from 'lucide-react';
-import { IncomingCallModal, IncomingCallData } from './components/chat/IncomingCallModal';
-import { ActiveCallModal, ActiveCallState } from './components/chat/ActiveCallModal';
+import type { IncomingCallData } from './components/chat/IncomingCallModal';
+import type { ActiveCallState } from './components/chat/ActiveCallModal';
+
+// Performance optimization: Lazy-load non-critical modals and heavy admin chunks
+const AdminPanel = lazy(() => import('./components/admin/AdminPanel').then((m) => ({ default: m.AdminPanel })));
+const DownloadModal = lazy(() => import('./components/common/DownloadModal').then((m) => ({ default: m.DownloadModal })));
+const ActiveCallModal = lazy(() => import('./components/chat/ActiveCallModal').then((m) => ({ default: m.ActiveCallModal })));
+const IncomingCallModal = lazy(() => import('./components/chat/IncomingCallModal').then((m) => ({ default: m.IncomingCallModal })));
+const NewChatModal = lazy(() => import('./components/chat/NewChatModal').then((m) => ({ default: m.NewChatModal })));
+const NewServerModal = lazy(() => import('./components/chat/NewServerModal').then((m) => ({ default: m.NewServerModal })));
+const CreateChannelModal = lazy(() => import('./components/chat/CreateChannelModal').then((m) => ({ default: m.CreateChannelModal })));
+const ServerInviteModal = lazy(() => import('./components/chat/ServerInviteModal').then((m) => ({ default: m.ServerInviteModal })));
+const CommunitySettingsModal = lazy(() => import('./components/chat/CommunitySettingsModal').then((m) => ({ default: m.CommunitySettingsModal })));
+const JoinCommunityModal = lazy(() => import('./components/chat/JoinCommunityModal').then((m) => ({ default: m.JoinCommunityModal })));
+const FriendsModal = lazy(() => import('./components/chat/FriendsModal').then((m) => ({ default: m.FriendsModal })));
+const InvitationsModal = lazy(() => import('./components/chat/InvitationsModal').then((m) => ({ default: m.InvitationsModal })));
+const ProfileEditModal = lazy(() => import('./components/common/ProfileEditModal').then((m) => ({ default: m.ProfileEditModal })));
+const SearchModal = lazy(() => import('./components/chat/SearchModal').then((m) => ({ default: m.SearchModal })));
 
 export const AppContent: React.FC = () => {
   const { user, whitelist, isLoading, refreshSession, theme, toggleTheme } = useAuth();
@@ -52,6 +56,7 @@ export const AppContent: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected');
   const [typingUser, setTypingUser] = useState<string | null>(null);
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
 
   // Muted conversation IDs persisted in localStorage
   const [mutedConversationIds, setMutedConversationIds] = useState<string[]>(() => {
@@ -156,6 +161,35 @@ export const AppContent: React.FC = () => {
     }
   }, [user?.id]);
 
+  // Truthful online presence querying
+  const queryPresence = useCallback(() => {
+    const socket = getSocket();
+    if (!socket || !socket.connected) return;
+
+    const userIds = new Set<string>();
+    conversations.forEach((c) => {
+      if (c.peer?.id) userIds.add(c.peer.id);
+      if (c.participants) c.participants.forEach((p) => userIds.add(p.id));
+    });
+    servers.forEach((s) => {
+      if (s.members) s.members.forEach((m) => userIds.add(m.id));
+    });
+
+    if (userIds.size > 0) {
+      socket.emit('presence:query', { userIds: Array.from(userIds) }, (res: any) => {
+        if (res?.success && Array.isArray(res.onlineUserIds)) {
+          setOnlineUserIds(new Set(res.onlineUserIds));
+        }
+      });
+    }
+  }, [conversations, servers]);
+
+  useEffect(() => {
+    queryPresence();
+    const interval = setInterval(queryPresence, 45000);
+    return () => clearInterval(interval);
+  }, [queryPresence]);
+
   useEffect(() => {
     loadBadges();
     const interval = setInterval(loadBadges, 30000);
@@ -247,6 +281,23 @@ export const AppContent: React.FC = () => {
         socket.emit('conversation:join', { conversationId: selectedConvIdRef.current });
         loadMessages(selectedConvIdRef.current);
       }
+      queryPresence();
+    });
+
+    socket.on('presence:online', (data: { userId: string }) => {
+      if (data?.userId) {
+        setOnlineUserIds((prev) => new Set([...prev, data.userId]));
+      }
+    });
+
+    socket.on('presence:offline', (data: { userId: string }) => {
+      if (data?.userId) {
+        setOnlineUserIds((prev) => {
+          const next = new Set(prev);
+          next.delete(data.userId);
+          return next;
+        });
+      }
     });
 
     socket.on('disconnect', () => {
@@ -300,10 +351,10 @@ export const AppContent: React.FC = () => {
       }
     });
 
-    socket.on('message:read_receipt', (data: { conversationId: string; messageId: string }) => {
+    socket.on('message:read_receipt', (data: { conversationId: string; messageId: string; readBy?: any[] }) => {
       if (data.conversationId === selectedConvIdRef.current) {
         setMessages((prev) =>
-          prev.map((m) => (m.id === data.messageId ? { ...m, status: 'read' } : m))
+          prev.map((m) => (m.id === data.messageId ? { ...m, status: 'read', readBy: data.readBy || m.readBy } : m))
         );
       }
     });
@@ -671,7 +722,16 @@ export const AppContent: React.FC = () => {
 
       {/* Main Content Area */}
       {currentView === 'admin' ? (
-        <AdminPanel onBackToChat={() => setCurrentView('chat')} />
+        <Suspense
+          fallback={
+            <div className="flex-1 flex flex-col items-center justify-center bg-[#07050d] text-purple-400">
+              <Loader2 className="w-8 h-8 animate-spin mb-2" />
+              <span className="text-xs font-mono">YÖNETİCİ PANELİ YÜKLENİYOR...</span>
+            </div>
+          }
+        >
+          <AdminPanel onBackToChat={() => setCurrentView('chat')} />
+        </Suspense>
       ) : (
         <div className="flex-1 flex overflow-hidden relative">
           {/* ========================================================= */}
@@ -725,6 +785,7 @@ export const AppContent: React.FC = () => {
               currentUser={user}
               onOpenProfile={() => setIsProfileOpen(true)}
               mutedConversationIds={mutedConversationIds}
+              onlineUserIds={onlineUserIds}
             />
           </div>
 
@@ -758,6 +819,7 @@ export const AppContent: React.FC = () => {
                 onDraftChange={(text) => handleDraftChange(selectedConversation.id, text)}
                 isMuted={mutedConversationIds.includes(selectedConversation.id)}
                 onToggleMute={handleToggleMuteConversation}
+                onlineUserIds={onlineUserIds}
               />
             ) : (
               <EmptyState onOpenNewChat={() => setIsNewChatOpen(true)} />
@@ -778,6 +840,7 @@ export const AppContent: React.FC = () => {
                   onInspectUser={handleInspectUser}
                   onClose={() => setIsMemberListOpen(false)}
                   onStartDirectChat={handleStartDirectChatFromMember}
+                  onlineUserIds={onlineUserIds}
                 />
               </div>
 
@@ -792,6 +855,7 @@ export const AppContent: React.FC = () => {
                     onClose={() => setIsMemberListOpen(false)}
                     isMobileOrDrawer={true}
                     onStartDirectChat={handleStartDirectChatFromMember}
+                    onlineUserIds={onlineUserIds}
                   />
                 </div>
               </div>
@@ -886,150 +950,172 @@ export const AppContent: React.FC = () => {
       </div>
 
       {/* ========================================================= */}
-      {/* 6. MODALS & OVERLAYS */}
+      {/* 6. MODALS & OVERLAYS (LAZY LOADED) */}
       {/* ========================================================= */}
-      {/* New Direct/Group Chat Modal */}
-      <NewChatModal
-        isOpen={isNewChatOpen}
-        onClose={() => setIsNewChatOpen(false)}
-        onSelectConversation={(id) => {
-          loadConversations();
-          setSelectedConversationId(id);
-        }}
-      />
-
-      {/* New Discord-Style Server Modal */}
-      <NewServerModal
-        isOpen={isNewServerOpen}
-        onClose={() => setIsNewServerOpen(false)}
-        onServerCreated={(server) => {
-          loadServers();
-          loadConversations();
-          setActiveServerId(server.id);
-          if (server.channels && server.channels.length > 0) {
-            setSelectedConversationId(server.channels[0].id);
-          }
-        }}
-      />
-
-      {/* Create Channel Modal */}
-      {activeServer && (
-        <CreateChannelModal
-          isOpen={isCreateChannelOpen}
-          onClose={() => setIsCreateChannelOpen(false)}
-          serverId={activeServer.id}
-          serverName={activeServer.name}
-          onChannelCreated={(channel) => {
+      <Suspense fallback={null}>
+        {/* New Direct/Group Chat Modal */}
+        <NewChatModal
+          isOpen={isNewChatOpen}
+          onClose={() => setIsNewChatOpen(false)}
+          onSelectConversation={(id) => {
             loadConversations();
-            loadServers();
-            setSelectedConversationId(channel.id);
+            setSelectedConversationId(id);
           }}
         />
-      )}
 
-      {/* Server Invite Modal */}
-      {isServerInviteOpen && (
-        <ServerInviteModal
-          isOpen={isServerInviteOpen}
-          onClose={() => setIsServerInviteOpen(false)}
-          serverId={activeServerId || selectedConversation?.serverId || selectedConversation?.id || ''}
-          serverName={activeServer?.name || selectedConversation?.name || 'XXQ Topluluğu'}
-        />
-      )}
-
-      {/* Community Settings Modal */}
-      {isCommunitySettingsOpen && activeServer && (
-        <CommunitySettingsModal
-          isOpen={isCommunitySettingsOpen}
-          onClose={() => setIsCommunitySettingsOpen(false)}
-          server={activeServer}
-          currentUser={user}
-          onServerUpdated={(updated) => {
-            setServers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-          }}
-        />
-      )}
-
-      {/* Join Community Modal */}
-      {isJoinCommunityOpen && (
-        <JoinCommunityModal
-          isOpen={isJoinCommunityOpen}
-          onClose={() => setIsJoinCommunityOpen(false)}
-          onJoined={(newServer) => {
+        {/* New Discord-Style Server Modal */}
+        <NewServerModal
+          isOpen={isNewServerOpen}
+          onClose={() => setIsNewServerOpen(false)}
+          onServerCreated={(server) => {
             loadServers();
             loadConversations();
-            handleSelectServer(newServer.id);
+            setActiveServerId(server.id);
+            if (server.channels && server.channels.length > 0) {
+              setSelectedConversationId(server.channels[0].id);
+            }
           }}
         />
-      )}
 
-      {/* Friends Modal */}
-      <FriendsModal
-        isOpen={isFriendsOpen}
-        onClose={() => {
-          setIsFriendsOpen(false);
-          loadBadges();
-        }}
-        onStartDirectChat={async (targetUser: User) => {
-          try {
-            const res = await api.createDirectConversation(targetUser.id);
-            await loadConversations();
-            setActiveServerId(null);
-            setSelectedConversationId(res.conversationId);
+        {/* Create Channel Modal */}
+        {activeServer && (
+          <CreateChannelModal
+            isOpen={isCreateChannelOpen}
+            onClose={() => setIsCreateChannelOpen(false)}
+            serverId={activeServer.id}
+            serverName={activeServer.name}
+            onChannelCreated={(channel) => {
+              loadConversations();
+              loadServers();
+              setSelectedConversationId(channel.id);
+            }}
+          />
+        )}
+
+        {/* Server Invite Modal */}
+        {isServerInviteOpen && (
+          <ServerInviteModal
+            isOpen={isServerInviteOpen}
+            onClose={() => setIsServerInviteOpen(false)}
+            serverId={activeServerId || selectedConversation?.serverId || selectedConversation?.id || ''}
+            serverName={activeServer?.name || selectedConversation?.name || 'XXQ Topluluğu'}
+          />
+        )}
+
+        {/* Community Settings Modal */}
+        {isCommunitySettingsOpen && activeServer && (
+          <CommunitySettingsModal
+            isOpen={isCommunitySettingsOpen}
+            onClose={() => setIsCommunitySettingsOpen(false)}
+            server={activeServer}
+            currentUser={user}
+            onServerUpdated={(updated) => {
+              setServers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+            }}
+          />
+        )}
+
+        {/* Join Community Modal */}
+        {isJoinCommunityOpen && (
+          <JoinCommunityModal
+            isOpen={isJoinCommunityOpen}
+            onClose={() => setIsJoinCommunityOpen(false)}
+            onJoined={(newServer) => {
+              loadServers();
+              loadConversations();
+              handleSelectServer(newServer.id);
+            }}
+          />
+        )}
+
+        {/* Friends Modal */}
+        <FriendsModal
+          isOpen={isFriendsOpen}
+          onClose={() => {
             setIsFriendsOpen(false);
-          } catch (err) {
-            console.error('Failed to start chat from friends:', err);
-          }
-        }}
-      />
+            loadBadges();
+          }}
+          onStartDirectChat={async (targetUser: User) => {
+            try {
+              const res = await api.createDirectConversation(targetUser.id);
+              await loadConversations();
+              setActiveServerId(null);
+              setSelectedConversationId(res.conversationId);
+              setIsFriendsOpen(false);
+            } catch (err) {
+              console.error('Failed to start chat from friends:', err);
+            }
+          }}
+        />
 
-      {/* Group & Server Invitations Modal */}
-      <InvitationsModal
-        isOpen={isInvitationsOpen}
-        onClose={() => {
-          setIsInvitationsOpen(false);
-          loadBadges();
-          loadConversations();
-          loadServers();
-        }}
-        onInvitationAccepted={(targetId: string, targetType: 'group' | 'server') => {
-          loadConversations();
-          loadServers();
-          if (targetType === 'server') {
-            handleSelectServer(targetId);
-          } else {
-            setActiveServerId(null);
-            setSelectedConversationId(targetId);
-          }
-          setIsInvitationsOpen(false);
-        }}
-      />
+        {/* Group & Server Invitations Modal */}
+        <InvitationsModal
+          isOpen={isInvitationsOpen}
+          onClose={() => {
+            setIsInvitationsOpen(false);
+            loadBadges();
+            loadConversations();
+            loadServers();
+          }}
+          onInvitationAccepted={(targetId: string, targetType: 'group' | 'server') => {
+            loadConversations();
+            loadServers();
+            if (targetType === 'server') {
+              handleSelectServer(targetId);
+            } else {
+              setActiveServerId(null);
+              setSelectedConversationId(targetId);
+            }
+            setIsInvitationsOpen(false);
+          }}
+        />
 
-      {/* Profile Edit Modal */}
-      <ProfileEditModal
-        isOpen={isProfileOpen}
-        onClose={() => setIsProfileOpen(false)}
-      />
+        {/* Profile Edit Modal */}
+        <ProfileEditModal
+          isOpen={isProfileOpen}
+          onClose={() => setIsProfileOpen(false)}
+        />
 
-      {/* Quick Search Modal */}
-      <SearchModal
-        isOpen={isSearchModalOpen}
-        onClose={() => setIsSearchModalOpen(false)}
-        onSelectConversation={(id) => {
-          setSelectedConversationId(id);
-          setIsSearchModalOpen(false);
-        }}
-        onStartDirectChat={async (email) => {
-          try {
-            const res = await api.createDirectConversation(email);
-            await loadConversations();
-            setSelectedConversationId(res.conversationId);
+        {/* Quick Search Modal */}
+        <SearchModal
+          isOpen={isSearchModalOpen}
+          onClose={() => setIsSearchModalOpen(false)}
+          onSelectConversation={(id) => {
+            setSelectedConversationId(id);
             setIsSearchModalOpen(false);
-          } catch (err) {
-            console.error('Failed to start chat from search:', err);
-          }
-        }}
-      />
+          }}
+          onStartDirectChat={async (email) => {
+            try {
+              const res = await api.createDirectConversation(email);
+              await loadConversations();
+              setSelectedConversationId(res.conversationId);
+              setIsSearchModalOpen(false);
+            } catch (err) {
+              console.error('Failed to start chat from search:', err);
+            }
+          }}
+        />
+
+        {/* Incoming Call Overlay */}
+        <IncomingCallModal
+          incomingCall={incomingCall}
+          onAccept={handleAcceptIncomingCall}
+          onReject={handleRejectIncomingCall}
+        />
+
+        {/* Active Call Modal */}
+        <ActiveCallModal
+          callState={activeCall}
+          currentUser={user}
+          onEndCall={() => setActiveCall(null)}
+        />
+
+        {/* Download Modal */}
+        <DownloadModal
+          isOpen={isDownloadModalOpen}
+          onClose={() => setIsDownloadModalOpen(false)}
+        />
+      </Suspense>
 
       {/* Inspected User Profile Modal */}
       {inspectedUser && (
@@ -1056,7 +1142,7 @@ export const AppContent: React.FC = () => {
 
             {/* Role badge */}
             <div className="mb-3">
-              {inspectedUser.isAdmin ? (
+              {(inspectedUser.isAdmin || inspectedUser.email?.toLowerCase() === 'codingdevelopia@gmail.com') ? (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60">
                   Platform Yöneticisi
                 </span>
@@ -1096,26 +1182,6 @@ export const AppContent: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Incoming Call Overlay */}
-      <IncomingCallModal
-        incomingCall={incomingCall}
-        onAccept={handleAcceptIncomingCall}
-        onReject={handleRejectIncomingCall}
-      />
-
-      {/* Active Call Modal */}
-      <ActiveCallModal
-        callState={activeCall}
-        currentUser={user}
-        onEndCall={() => setActiveCall(null)}
-      />
-
-      {/* Download Modal */}
-      <DownloadModal
-        isOpen={isDownloadModalOpen}
-        onClose={() => setIsDownloadModalOpen(false)}
-      />
     </div>
   );
 };

@@ -3,7 +3,6 @@ import { Conversation, Message, User, Attachment, UserRelationship } from '../..
 import { api } from '../../services/api';
 import { getSocket } from '../../services/socket';
 import { EmojiPicker, QuickReactionsBar } from './EmojiPicker';
-import { ForwardModal } from './ForwardModal';
 import {
   Send,
   ArrowLeft,
@@ -49,13 +48,66 @@ import {
   RotateCw,
   ExternalLink,
 } from 'lucide-react';
-import { ScreenShareModal } from './ScreenShareModal';
-import { GroupAvatarModal } from './GroupAvatarModal';
-import { GroupSettingsModal } from './GroupSettingsModal';
-import { ServerInviteModal } from './ServerInviteModal';
 import { SafeAvatar } from '../common/SafeAvatar';
 import { toSafeImageUrl } from '../../utils/sanitizeSvg';
-import { GifPickerModal, SelectedGif } from './GifPickerModal';
+import type { SelectedGif } from './GifPickerModal';
+
+const ForwardModal = React.lazy(() => import('./ForwardModal').then((m) => ({ default: m.ForwardModal })));
+const ScreenShareModal = React.lazy(() => import('./ScreenShareModal').then((m) => ({ default: m.ScreenShareModal })));
+const GroupAvatarModal = React.lazy(() => import('./GroupAvatarModal').then((m) => ({ default: m.GroupAvatarModal })));
+const GroupSettingsModal = React.lazy(() => import('./GroupSettingsModal').then((m) => ({ default: m.GroupSettingsModal })));
+const ServerInviteModal = React.lazy(() => import('./ServerInviteModal').then((m) => ({ default: m.ServerInviteModal })));
+const GifPickerModal = React.lazy(() => import('./GifPickerModal').then((m) => ({ default: m.GifPickerModal })));
+
+const ObservableVideo: React.FC<React.VideoHTMLAttributes<HTMLVideoElement>> = (props) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting && video && !video.paused) {
+            video.pause();
+          }
+        });
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, []);
+
+  return <video ref={videoRef} {...props} />;
+};
+
+const ObservableAudio: React.FC<React.AudioHTMLAttributes<HTMLAudioElement>> = (props) => {
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting && audio && !audio.paused) {
+            audio.pause();
+          }
+        });
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(audio);
+    return () => observer.disconnect();
+  }, []);
+
+  return <audio ref={audioRef} {...props} />;
+};
 
 interface ChatPaneProps {
   conversation: Conversation;
@@ -82,6 +134,7 @@ interface ChatPaneProps {
   onDraftChange?: (text: string) => void;
   isMuted?: boolean;
   onToggleMute?: (conversationId: string) => void;
+  onlineUserIds?: Set<string>;
 }
 
 export const ChatPane: React.FC<ChatPaneProps> = ({
@@ -102,6 +155,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   onDraftChange,
   isMuted = false,
   onToggleMute,
+  onlineUserIds,
 }) => {
   const [inputText, setInputText] = useState(draftText);
   const [sending, setSending] = useState(false);
@@ -109,6 +163,26 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
   useEffect(() => {
     setInputText(draftText || '');
   }, [conversation.id]);
+
+  // Truthful read receipt emission for peer messages
+  useEffect(() => {
+    if (!conversation.id || !currentUser) return;
+    const socket = getSocket();
+    if (!socket || !socket.connected) return;
+
+    const unreadFromPeers = messages.filter(
+      (m) => m.senderId !== currentUser.id && m.status !== 'read' && !m.id.startsWith('opt_')
+    );
+
+    if (unreadFromPeers.length > 0) {
+      unreadFromPeers.forEach((m) => {
+        socket.emit('message:read', {
+          conversationId: conversation.id,
+          messageId: m.id,
+        });
+      });
+    }
+  }, [conversation.id, messages, currentUser?.id]);
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -515,8 +589,13 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                   className="w-full h-full object-cover"
                 />
               </div>
-              {!isGroup && (
-                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#151221]" />
+              {!isGroup && !isChannel && (
+                <span
+                  className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[#151221] ${
+                    conversation.peer && onlineUserIds?.has(conversation.peer.id) ? 'bg-emerald-500' : 'bg-slate-500'
+                  }`}
+                  title={conversation.peer && onlineUserIds?.has(conversation.peer.id) ? 'Çevrimiçi' : 'Çevrimdışı'}
+                />
               )}
             </div>
 
@@ -546,7 +625,9 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                   ? `${typingUser} yazıyor...`
                   : isGroup
                   ? `${conversation.participantCount || conversation.participants?.length || 2} üye`
-                  : 'çevrimiçi • profili gör'}
+                  : conversation.peer && onlineUserIds?.has(conversation.peer.id)
+                  ? 'çevrimiçi • profili gör'
+                  : 'çevrimdışı • profili gör'}
               </span>
             </div>
           </div>
@@ -893,7 +974,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                         if (isVideo) {
                           return (
                             <div key={att.id} className="rounded-xl overflow-hidden bg-black/40 border border-purple-500/30 max-w-md">
-                              <video
+                              <ObservableVideo
                                 controls
                                 playsInline
                                 src={api.getAttachmentUrl(conversation.id, att.id)}
@@ -924,7 +1005,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
                                 </div>
                                 <span className="text-xs font-bold text-purple-200">Sesli Mesaj</span>
                               </div>
-                              <audio controls src={audioSrc} className="w-full h-8 accent-purple-500 rounded" />
+                              <ObservableAudio controls src={audioSrc} className="w-full h-8 accent-purple-500 rounded" />
                             </div>
                           );
                         }
@@ -1254,15 +1335,69 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         </div>
       )}
 
-      {/* Forward Modal */}
-      {forwardTarget && (
-        <ForwardModal
-          message={forwardTarget}
-          conversations={conversations}
-          onClose={() => setForwardTarget(null)}
-          onForwardSuccess={() => setForwardTarget(null)}
+      {/* Modals & Overlays (Lazy Loaded) */}
+      <React.Suspense fallback={null}>
+        {/* Forward Modal */}
+        {forwardTarget && (
+          <ForwardModal
+            message={forwardTarget}
+            conversations={conversations}
+            onClose={() => setForwardTarget(null)}
+            onForwardSuccess={() => setForwardTarget(null)}
+          />
+        )}
+
+        {/* Screen Share Modal */}
+        <ScreenShareModal
+          isOpen={isScreenShareOpen}
+          onClose={() => setIsScreenShareOpen(false)}
+          conversationId={conversation.id}
+          currentUser={currentUser}
         />
-      )}
+
+        {/* Group Avatar Modal */}
+        {isGroup && (
+          <GroupAvatarModal
+            isOpen={isGroupAvatarOpen}
+            onClose={() => setIsGroupAvatarOpen(false)}
+            conversation={conversation}
+            onAvatarUpdated={(newUrl) => {
+              conversation.avatarUrl = newUrl;
+              onRefreshConversations?.();
+            }}
+          />
+        )}
+
+        {/* Group Settings Modal */}
+        {isGroup && (
+          <GroupSettingsModal
+            isOpen={isGroupSettingsOpen}
+            onClose={() => setIsGroupSettingsOpen(false)}
+            conversation={conversation}
+            currentUser={currentUser}
+            onUpdated={() => {
+              onRefreshConversations?.();
+            }}
+          />
+        )}
+
+        {/* Server Invite Modal */}
+        {isServerInviteOpen && (conversation.serverId || conversation.id) && (
+          <ServerInviteModal
+            isOpen={isServerInviteOpen}
+            onClose={() => setIsServerInviteOpen(false)}
+            serverId={conversation.serverId || conversation.id}
+            serverName={conversation.name}
+          />
+        )}
+
+        {/* Tenor GIF Picker Modal */}
+        <GifPickerModal
+          isOpen={isGifPickerOpen}
+          onClose={() => setIsGifPickerOpen(false)}
+          onSelect={handleSelectGif}
+        />
+      </React.Suspense>
 
       {/* Group Members Modal */}
       {showGroupMembersModal && isGroup && (
@@ -1310,49 +1445,6 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
         </div>
       )}
 
-      {/* Screen Share Modal */}
-      <ScreenShareModal
-        isOpen={isScreenShareOpen}
-        onClose={() => setIsScreenShareOpen(false)}
-        conversationId={conversation.id}
-        currentUser={currentUser}
-      />
-
-      {/* Group Avatar Modal */}
-      {isGroup && (
-        <GroupAvatarModal
-          isOpen={isGroupAvatarOpen}
-          onClose={() => setIsGroupAvatarOpen(false)}
-          conversation={conversation}
-          onAvatarUpdated={(newUrl) => {
-            conversation.avatarUrl = newUrl;
-            onRefreshConversations?.();
-          }}
-        />
-      )}
-
-      {/* Group Settings Modal */}
-      {isGroup && (
-        <GroupSettingsModal
-          isOpen={isGroupSettingsOpen}
-          onClose={() => setIsGroupSettingsOpen(false)}
-          conversation={conversation}
-          currentUser={currentUser}
-          onUpdated={() => {
-            onRefreshConversations?.();
-          }}
-        />
-      )}
-
-      {/* Server Invite Modal */}
-      {isServerInviteOpen && (conversation.serverId || conversation.id) && (
-        <ServerInviteModal
-          isOpen={isServerInviteOpen}
-          onClose={() => setIsServerInviteOpen(false)}
-          serverId={conversation.serverId || conversation.id}
-          serverName={conversation.name}
-        />
-      )}
       {/* User Profile View Modal (Hakkımda, Rol, Katılım, Arkadaş & Engelleme vb.) */}
       {inspectedUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in select-none">
@@ -1415,7 +1507,7 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
 
               {/* Role badge */}
               <div className="mb-3">
-                {inspectedUser.isAdmin ? (
+                {(inspectedUser.isAdmin || inspectedUser.email?.toLowerCase() === 'codingdevelopia@gmail.com') ? (
                   <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60">
                     Platform Yöneticisi
                   </span>
@@ -1548,13 +1640,6 @@ export const ChatPane: React.FC<ChatPaneProps> = ({
           </div>
         </div>
       )}
-
-      {/* Tenor GIF Picker Modal */}
-      <GifPickerModal
-        isOpen={isGifPickerOpen}
-        onClose={() => setIsGifPickerOpen(false)}
-        onSelect={handleSelectGif}
-      />
     </main>
   );
 };

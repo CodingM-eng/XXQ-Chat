@@ -13,6 +13,7 @@ import {
   Layers,
   Sparkles,
   Info,
+  ShieldAlert,
 } from 'lucide-react';
 
 export type DetectedPlatform = 'windows' | 'android' | 'ios' | 'mac-intel' | 'mac-arm' | 'linux' | 'other';
@@ -264,6 +265,30 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                   <Download className="w-4 h-4" />
                   <span>Windows için İndir (.exe)</span>
                 </a>
+              </div>
+
+              {/* Windows Defender / SmartScreen Transparency & Guidance Card */}
+              <div className="bg-[#1a1435] border border-amber-500/40 rounded-2xl p-4 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                  <h4 className="text-xs font-bold text-amber-300 uppercase tracking-wider">
+                    Windows Defender & SmartScreen Güvenlik Uyarısı Hakkında
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Yeni derlenen açık kaynaklı yazılımlar Microsoft SmartScreen veritabanında otomatik indirme itibarı (reputation) kazanana ve ticari bir Authenticode (EV Code Signing) sertifikası ile imzalanana kadar Windows, <strong className="text-white">"Windows kişisel bilgisayarınızı korudu - Bilinmeyen Yayıncı"</strong> uyarısı gösterebilir.
+                </p>
+                <div className="bg-black/30 p-2.5 rounded-xl border border-amber-500/20 text-xs text-amber-200/90 space-y-1">
+                  <p className="font-semibold text-white">Nasıl Çalıştırılır?</p>
+                  <p>1. Açılan mavi SmartScreen penceresinde <strong className="text-amber-300">"Ek bilgi" (More info)</strong> bağlantısına tıklayın.</p>
+                  <p>2. Ardından beliren <strong className="text-emerald-300">"Yine de çalıştır" (Run anyway)</strong> butonuna basarak kurulumu başlatın.</p>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  İndirdiğiniz dosyanın bütünlüğünü ve değiştirilmediğini doğrulamak için PowerShell'de <code className="bg-black/40 px-1.5 py-0.5 rounded text-purple-300 select-all font-mono">Get-FileHash .\XXQ-Chat-Setup.exe</code> komutunu çalıştırarak yukarıda listelenen resmi SHA-256 sağlama özeti ile karşılaştırabilirsiniz.
+                </p>
+                <div className="pt-1 text-[10px] text-purple-300/80 border-t border-purple-900/30">
+                  <span>Geliştirici Notu: CI/CD ortamında dijital imzalama için <code className="text-purple-200 font-mono">CSC_LINK</code> ve <code className="text-purple-200 font-mono">CSC_KEY_PASSWORD</code> çevre değişkenleri desteklenmektedir.</span>
+                </div>
               </div>
 
               {/* Windows Setup Wizard Steps */}

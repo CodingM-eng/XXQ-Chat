@@ -1104,16 +1104,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-xs text-white">{item.display_name || item.displayName || item.email}</span>
-                          {item.is_admin === 1 && (
+                          {(item.is_admin === 1 || item.isAdmin === true || item.email?.toLowerCase() === 'codingdevelopia@gmail.com') ? (
                             <span className="px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 text-[10px] font-bold border border-purple-800">
                               Yönetici
                             </span>
-                          )}
-                          {item.is_moderator === 1 && (
+                          ) : (item.is_moderator === 1 || item.isModerator === true) ? (
                             <span className="px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 text-[10px] font-bold border border-indigo-800">
                               Moderatör
                             </span>
-                          )}
+                          ) : null}
                           {(item.is_family === 1 || item.is_family === true || item.isFamily === true) && (
                             <span className="px-1.5 py-0.5 rounded bg-pink-950 text-pink-300 text-[10px] font-bold border border-pink-800 flex items-center gap-1">
                               <Heart className="w-2.5 h-2.5 fill-pink-300" />
@@ -1187,7 +1186,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToChat }) => {
               </div>
             ) : (
               <div className="divide-y divide-[#201834]">
-                {moderators.map((mod) => (
+                {moderators
+                  .filter((mod) => mod.email?.toLowerCase() !== 'codingdevelopia@gmail.com')
+                  .map((mod) => (
                   <div key={mod.id} className="py-3 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-indigo-950 border border-indigo-800 flex items-center justify-center font-bold text-indigo-300 text-xs">

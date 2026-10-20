@@ -446,7 +446,7 @@ export const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ isOpen, onCl
             {/* Platform Role Badges */}
             <div className="flex items-center gap-1.5 mt-2">
               <span className="text-[10px] text-slate-400">Yetki / Rol:</span>
-              {user.isAdmin ? (
+              {(user.isAdmin || user.email?.toLowerCase() === 'codingdevelopia@gmail.com') ? (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-700/60 shadow-sm">
                   Platform Yöneticisi
                 </span>
