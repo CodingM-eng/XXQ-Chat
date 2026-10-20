@@ -1,6 +1,6 @@
 {
   "name": "xxq-chat-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "XXQ Chat native Windows desktop application",
   "main": "src/main.cjs",
   "scripts": {

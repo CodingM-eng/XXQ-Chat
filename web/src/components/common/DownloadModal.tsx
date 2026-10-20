@@ -257,14 +257,25 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                   )}
                 </div>
 
-                <a
-                  href="/api/downloads/windows"
-                  download="XXQ-Chat-Setup.exe"
-                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Windows için İndir (.exe)</span>
-                </a>
+                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  <a
+                    href="/api/downloads/windows"
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Windows için İndir (.exe)</span>
+                  </a>
+                  <a
+                    href="https://github.com/CodingM-eng/XXQ-Chat/releases/tag/v1.0.1"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-3 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-600/40 text-purple-200 font-medium text-xs transition-colors whitespace-nowrap"
+                    title="GitHub Releases resmi dağıtım sayfası"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>GitHub Releases</span>
+                  </a>
+                </div>
               </div>
 
               {/* Windows Defender / SmartScreen Transparency & Guidance Card */}
@@ -354,14 +365,25 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                   </p>
                 </div>
 
-                <a
-                  href="/api/downloads/android"
-                  download="XXQ-Chat.apk"
-                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>APK İndir (11.4 MB)</span>
-                </a>
+                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  <a
+                    href="/api/downloads/android"
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>APK İndir</span>
+                  </a>
+                  <a
+                    href="https://github.com/CodingM-eng/XXQ-Chat/releases/tag/v1.0.1"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-3 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-600/40 text-purple-200 font-medium text-xs transition-colors whitespace-nowrap"
+                    title="GitHub Releases resmi dağıtım sayfası"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>GitHub Releases</span>
+                  </a>
+                </div>
               </div>
 
               {/* Android Setup Steps */}

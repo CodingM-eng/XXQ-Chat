@@ -1,6 +1,6 @@
 {
   "name": "xxq-chat-web",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "XXQ Chat responsive web application and admin panel",
   "scripts": {

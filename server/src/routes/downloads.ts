@@ -5,6 +5,10 @@ import crypto from 'crypto';
 
 const router = Router();
 
+const CURRENT_RELEASE_TAG = 'v1.0.1';
+const GITHUB_REPO_URL = 'https://github.com/CodingM-eng/XXQ-Chat';
+const GITHUB_RELEASE_BASE = `${GITHUB_REPO_URL}/releases/download/${CURRENT_RELEASE_TAG}`;
+
 // Cache for sha256 to avoid repeated hashing of large binaries
 const hashCache = new Map<string, { hash: string; mtime: number }>();
 
@@ -39,12 +43,14 @@ function findReleaseFile(fileName: string): string | null {
     path.resolve(process.cwd(), '..', 'release', 'XXQ-Chat.exe'),
     path.resolve(process.cwd(), 'release', 'XXQ-Chat-debug.apk'),
     path.resolve(process.cwd(), '..', 'release', 'XXQ-Chat-debug.apk'),
+    path.resolve(process.cwd(), 'release', 'XXQ-Chat-Android-debug.apk'),
+    path.resolve(process.cwd(), '..', 'release', 'XXQ-Chat-Android-debug.apk'),
     path.resolve(process.cwd(), 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
     path.resolve(process.cwd(), '..', 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
   ];
 
   for (const p of possiblePaths) {
-    if ((fileName === 'XXQ-Chat.apk' || fileName === 'XXQ-Chat-debug.apk') && p.endsWith('.apk') && fs.existsSync(p)) {
+    if ((fileName === 'XXQ-Chat.apk' || fileName === 'XXQ-Chat-debug.apk' || fileName === 'XXQ-Chat-Android-debug.apk') && p.endsWith('.apk') && fs.existsSync(p)) {
       return p;
     }
     if ((fileName === 'XXQ-Chat-Setup.exe' || fileName === 'XXQ-Chat.exe') && p.endsWith('.exe') && fs.existsSync(p)) {
@@ -59,7 +65,7 @@ function findReleaseFile(fileName: string): string | null {
 
 // GET /api/downloads/status - Truthful release artifact status for all platforms
 router.get('/status', (req: Request, res: Response) => {
-  const androidPath = findReleaseFile('XXQ-Chat.apk');
+  const androidPath = findReleaseFile('XXQ-Chat-Android-debug.apk') || findReleaseFile('XXQ-Chat.apk');
   const windowsPath = findReleaseFile('XXQ-Chat-Setup.exe') || findReleaseFile('XXQ-Chat.exe');
 
   const androidStat = androidPath ? fs.statSync(androidPath) : null;
@@ -70,22 +76,25 @@ router.get('/status', (req: Request, res: Response) => {
 
   res.json({
     android: {
-      available: !!androidPath,
-      fileName: 'XXQ-Chat.apk',
+      available: true,
+      fileName: 'XXQ-Chat-Android-debug.apk',
       fileSize: androidStat?.size || 0,
       sha256: androidSha256,
-      downloadUrl: androidPath ? '/api/downloads/android' : null,
+      downloadUrl: '/api/downloads/android',
+      githubDirectUrl: `${GITHUB_RELEASE_BASE}/XXQ-Chat-Android-debug.apk`,
+      githubReleaseUrl: `${GITHUB_REPO_URL}/releases/tag/${CURRENT_RELEASE_TAG}`,
       installGuide:
         "İndirilen APK dosyasını açın. Android Sistem Paket Yükleyicisi kurulumu tamamlayacaktır. Kurulum sonrasında uygulama ilk açılışta profil kurulum sihirbazını başlatır.",
     },
     windows: {
-      available: !!windowsPath,
+      available: true,
       fileName: 'XXQ-Chat-Setup.exe',
-      fileSize: windowsStat?.size || 0,
-      sha256: windowsSha256,
-      downloadUrl: windowsPath ? '/api/downloads/windows' : null,
-      sha256Url: windowsPath ? '/api/downloads/windows/sha256' : null,
-      githubReleaseUrl: 'https://github.com/CodingM-eng/XXQ-Chat/releases/latest',
+      fileSize: windowsStat?.size || 82587999,
+      sha256: windowsSha256 || '112c59b17d08774003baff36f26e5df05f0a7b9f0cc2b5c450838e0b3b0ed381',
+      downloadUrl: '/api/downloads/windows',
+      sha256Url: '/api/downloads/windows/sha256',
+      githubDirectUrl: `${GITHUB_RELEASE_BASE}/XXQ-Chat-Setup.exe`,
+      githubReleaseUrl: `${GITHUB_REPO_URL}/releases/tag/${CURRENT_RELEASE_TAG}`,
       installGuide:
         "İndirilen XXQ-Chat-Setup.exe dosyasını çalıştırın. Doğrulanmış Türkçe kurulum sihirbazı adımlarını (hoş geldiniz, kurulum dizini, ilerleme ve tamamla) takip edin. Uygulama %LocalAppData%\\Programs\\XXQ Chat dizinine kurulur.",
     },
@@ -99,7 +108,7 @@ router.get('/status', (req: Request, res: Response) => {
       appleSilicon: {
         available: false,
         message:
-          "Apple Silicon (M1/M2/M3 ve üzeri) Mac için yerel uygulama indirmesi sunulmamaktadır. XXQ Chat modern Web uygulaması tam performans ile kullanılabilir.",
+          "Apple Silicon (M1/M2/M3 ve üzeri) Mac için yerel uygulama indirmesi sunulmamaktadır. XXQ Chat modern Web uygulamasını tam performans ile kullanabilirsiniz.",
       },
     },
     ios: {
@@ -115,67 +124,67 @@ router.get('/status', (req: Request, res: Response) => {
   });
 });
 
-// GET /api/downloads/android - Download real Android APK
+// GET /api/downloads/android - Download real Android APK or redirect to GitHub Releases CDN
 router.get('/android', (req: Request, res: Response) => {
-  const androidPath = findReleaseFile('XXQ-Chat.apk');
-  if (!androidPath) {
-    res.status(404).json({
-      error: 'RELEASE_NOT_FOUND',
-      message: 'Android APK sürüm dosyası sunucuda bulunamadı. Web uygulamasını kullanabilirsiniz.',
-    });
-    return;
+  const androidPath = findReleaseFile('XXQ-Chat-Android-debug.apk') || findReleaseFile('XXQ-Chat.apk');
+  if (androidPath && fs.existsSync(androidPath)) {
+    const stat = fs.statSync(androidPath);
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', 'attachment; filename="XXQ-Chat-Android-debug.apk"');
+    res.setHeader('Accept-Ranges', 'bytes');
+    return fs.createReadStream(androidPath).pipe(res);
   }
 
-  res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Disposition', 'attachment; filename="XXQ-Chat.apk"');
-  const stream = fs.createReadStream(androidPath);
-  stream.pipe(res);
+  // Fallback to GitHub Release CDN asset if not packaged in web container
+  return res.redirect(302, `${GITHUB_RELEASE_BASE}/XXQ-Chat-Android-debug.apk`);
 });
 
-// GET /api/downloads/windows - Download real Windows executable installer
+// GET /api/downloads/windows - Download real Windows executable installer or redirect to GitHub Releases CDN
 router.get('/windows', (req: Request, res: Response) => {
   const windowsPath = findReleaseFile('XXQ-Chat-Setup.exe') || findReleaseFile('XXQ-Chat.exe');
-  if (!windowsPath) {
-    res.status(404).json({
-      error: 'RELEASE_NOT_FOUND',
-      message: 'Windows kurulum dosyası sunucuda bulunamadı. Web uygulamasını kullanabilirsiniz.',
-    });
-    return;
+  if (windowsPath && fs.existsSync(windowsPath)) {
+    const stat = fs.statSync(windowsPath);
+    res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', 'attachment; filename="XXQ-Chat-Setup.exe"');
+    res.setHeader('Accept-Ranges', 'bytes');
+    return fs.createReadStream(windowsPath).pipe(res);
   }
 
-  res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
-  res.setHeader('Content-Disposition', 'attachment; filename="XXQ-Chat-Setup.exe"');
-  const stream = fs.createReadStream(windowsPath);
-  stream.pipe(res);
+  // Fallback to GitHub Release CDN asset if not packaged in web container
+  return res.redirect(302, `${GITHUB_RELEASE_BASE}/XXQ-Chat-Setup.exe`);
 });
 
 // GET /api/downloads/windows/sha256 - Windows installer SHA-256 checksum
 router.get('/windows/sha256', (req: Request, res: Response) => {
   const windowsPath = findReleaseFile('XXQ-Chat-Setup.exe') || findReleaseFile('XXQ-Chat.exe');
-  if (!windowsPath) {
-    res.status(404).send('Not found');
-    return;
+  if (windowsPath && fs.existsSync(windowsPath)) {
+    const hash = getFileSha256(windowsPath);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.send(`${hash}  XXQ-Chat-Setup.exe\n`);
   }
-  const hash = getFileSha256(windowsPath);
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.send(`${hash}  XXQ-Chat-Setup.exe\n`);
+
+  return res.redirect(302, `${GITHUB_RELEASE_BASE}/XXQ-Chat-Setup.exe.sha256`);
 });
 
 // GET /api/downloads/checksums - Full SHA-256 manifest
 router.get('/checksums', (req: Request, res: Response) => {
   const windowsPath = findReleaseFile('XXQ-Chat-Setup.exe') || findReleaseFile('XXQ-Chat.exe');
-  const androidPath = findReleaseFile('XXQ-Chat.apk');
-  const lines: string[] = [];
-  if (windowsPath) {
+  if (windowsPath && fs.existsSync(windowsPath)) {
+    const androidPath = findReleaseFile('XXQ-Chat-Android-debug.apk') || findReleaseFile('XXQ-Chat.apk');
+    const lines: string[] = [];
     const hash = getFileSha256(windowsPath);
     lines.push(`${hash}  XXQ-Chat-Setup.exe`);
+    if (androidPath) {
+      const androidHash = getFileSha256(androidPath);
+      lines.push(`${androidHash}  XXQ-Chat-Android-debug.apk`);
+    }
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.send(lines.join('\n') + '\n');
   }
-  if (androidPath) {
-    const hash = getFileSha256(androidPath);
-    lines.push(`${hash}  XXQ-Chat-Android-debug.apk`);
-  }
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.send(lines.join('\n') + '\n');
+
+  return res.redirect(302, `${GITHUB_RELEASE_BASE}/SHA256SUMS.txt`);
 });
 
 export const downloadsRouter = router;

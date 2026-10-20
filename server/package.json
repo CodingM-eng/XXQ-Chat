@@ -1,6 +1,6 @@
 {
   "name": "xxq-chat-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "XXQ Chat production backend server with real-time sockets and whitelist security",
   "main": "dist/index.js",
   "scripts": {
