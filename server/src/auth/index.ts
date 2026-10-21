@@ -15,7 +15,7 @@ export interface AuthUser {
   isAdmin: boolean;
   isModerator?: boolean;
   onboarded: boolean;
-  status: 'active' | 'pending' | 'blocked';
+  status: 'active' | 'pending' | 'rejected' | 'blocked';
 }
 
 declare global {
@@ -126,18 +126,23 @@ export async function authorizeUser(user: {
 
   // If whitelist mode is ON and account is unapproved:
   if (whitelistActive && !isApproved) {
+    // Check if user was previously rejected by an admin or authorized reviewer
+    const pendingReq = await dataStore.getPendingAccessRequestByEmail(normalizedEmail);
+    const isRejected = pendingReq?.status === 'rejected';
+
     // Record pending request in isolated table/collection (admin view only)
     await dataStore.recordPendingAccess(normalizedEmail, user.displayName, user.avatarUrl);
 
-    // Return pending status without adding to users directory
+    // Return rejected or pending status without adding to users directory
     return {
       id: existingUser?.id || user.id,
       email: normalizedEmail,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
       isAdmin: false,
+      isModerator: false,
       onboarded: false,
-      status: 'pending',
+      status: isRejected ? 'rejected' : 'pending',
     };
   }
 

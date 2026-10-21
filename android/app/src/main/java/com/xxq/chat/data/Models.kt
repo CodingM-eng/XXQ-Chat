@@ -9,6 +9,7 @@ data class User(
   val displayName: String,
   val avatarUrl: String? = null,
   val isAdmin: Boolean = false,
+  val status: String = "active",
   val lastActiveAt: String? = null
 )
 
@@ -16,7 +17,8 @@ data class User(
 data class WhitelistStatus(
   val modeActive: Boolean,
   val isApproved: Boolean,
-  val canAccessApp: Boolean
+  val canAccessApp: Boolean,
+  val status: String = "approved"
 )
 
 @Serializable
@@ -55,6 +57,17 @@ data class AuditLog(
   val action: String,
   val target: String? = null,
   val details: String? = null,
+  val createdAt: String
+)
+
+@Serializable
+data class SupportReport(
+  val id: String,
+  val userId: String,
+  val userDisplayName: String,
+  val title: String,
+  val description: String,
+  val status: String = "open",
   val createdAt: String
 )
 

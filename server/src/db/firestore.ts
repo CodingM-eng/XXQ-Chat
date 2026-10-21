@@ -269,11 +269,12 @@ export class FirestoreStore implements DataStore {
 
     if (doc.exists) {
       const d = doc.data()!;
+      const preservedStatus = (d.status === 'rejected' || d.status === 'approved') ? d.status : 'pending';
       await ref.set(
         {
           attemptCount: (d.attemptCount || 1) + 1,
           lastAttemptAt: now,
-          status: 'pending',
+          status: preservedStatus,
           displayName: displayName || d.displayName || null,
           avatarUrl: avatarUrl || d.avatarUrl || null,
         },
@@ -291,6 +292,24 @@ export class FirestoreStore implements DataStore {
         status: 'pending',
       });
     }
+  }
+
+  async getPendingAccessRequestByEmail(email: string): Promise<DbPendingAccessRequest | null> {
+    const normalized = email.toLowerCase().trim();
+    const doc = await this.getFirestore().collection('pending_access_requests').doc(normalized).get();
+    if (!doc.exists) return null;
+    const d = doc.data()!;
+    return {
+      id: d.id || doc.id,
+      email: d.email || normalized,
+      displayName: d.displayName || null,
+      avatarUrl: d.avatarUrl || null,
+      firstAttemptAt: d.firstAttemptAt || new Date().toISOString(),
+      lastAttemptAt: d.lastAttemptAt || new Date().toISOString(),
+      attemptCount: d.attemptCount || 1,
+      status: d.status as 'pending' | 'approved' | 'rejected',
+      resolvedAt: d.resolvedAt || null,
+    };
   }
 
   async getPendingAccessRequests(): Promise<DbPendingAccessRequest[]> {

@@ -14,28 +14,33 @@ interface DataRepository {
   val messages: StateFlow<Map<String, List<Message>>>
   val whitelistItems: StateFlow<List<WhitelistItem>>
   val auditLogs: StateFlow<List<AuditLog>>
+  val supportReports: StateFlow<List<SupportReport>>
 
   fun login(email: String, displayName: String, isAdmin: Boolean)
+  fun register(email: String, displayName: String)
   fun logout()
+  fun checkWhitelistStatus()
   fun toggleWhitelistMode(enabled: Boolean)
   fun addWhitelist(email: String)
   fun removeWhitelist(email: String)
+  fun rejectUser(email: String)
+  fun submitSupportMessage(title: String, description: String): Boolean
   fun sendMessage(conversationId: String, content: String)
 }
 
 class DefaultDataRepository : DataRepository {
-  private val _currentUser = MutableStateFlow<User?>(
-    User(
-      id = "usr_alice",
-      email = "alice@xxqchat.com",
-      displayName = "Alice (Onaylı)",
-      isAdmin = false
-    )
-  )
+  private val _currentUser = MutableStateFlow<User?>(null)
   override val currentUser = _currentUser.asStateFlow()
 
+  private val _rejectedEmails = mutableSetOf<String>()
+
   private val _whitelistStatus = MutableStateFlow(
-    WhitelistStatus(modeActive = true, isApproved = true, canAccessApp = true)
+    WhitelistStatus(
+      modeActive = true,
+      isApproved = false,
+      canAccessApp = false,
+      status = "pending"
+    )
   )
   override val whitelistStatus = _whitelistStatus.asStateFlow()
 
@@ -98,8 +103,8 @@ class DefaultDataRepository : DataRepository {
         Message(
           id = "m2",
           conversationId = "conv_admin",
-          senderId = "usr_alice",
-          senderName = "Alice (Onaylı)",
+          senderId = "usr_member",
+          senderName = "Üye",
           content = "Teşekkürler! Gerçek zamanlı mesajlaşma son derece hızlı.",
           status = "read",
           createdAt = "10:29"
@@ -121,7 +126,7 @@ class DefaultDataRepository : DataRepository {
   private val _whitelistItems = MutableStateFlow<List<WhitelistItem>>(
     listOf(
       WhitelistItem("admin@xxqchat.com", "system_bootstrap", "2026-10-15 10:00"),
-      WhitelistItem("alice@xxqchat.com", "admin@xxqchat.com", "2026-10-15 10:15")
+      WhitelistItem("onayli@xxqchat.com", "admin@xxqchat.com", "2026-10-15 10:15")
     )
   )
   override val whitelistItems = _whitelistItems.asStateFlow()
@@ -129,37 +134,94 @@ class DefaultDataRepository : DataRepository {
   private val _auditLogs = MutableStateFlow<List<AuditLog>>(
     listOf(
       AuditLog("a1", "admin@xxqchat.com", "WHITELIST_ENABLED", "SYSTEM", "Beyaz liste erişim denetimi etkinleştirildi", "10:00:00"),
-      AuditLog("a2", "admin@xxqchat.com", "USER_WHITELIST_APPROVED", "alice@xxqchat.com", "Hesap onaylandı", "10:15:20")
+      AuditLog("a2", "admin@xxqchat.com", "USER_WHITELIST_APPROVED", "onayli@xxqchat.com", "Hesap onaylandı", "10:15:20")
     )
   )
   override val auditLogs = _auditLogs.asStateFlow()
 
+  private val _supportReports = MutableStateFlow<List<SupportReport>>(emptyList())
+  override val supportReports = _supportReports.asStateFlow()
+
   override fun login(email: String, displayName: String, isAdmin: Boolean) {
-    val isWhitelisted = _whitelistItems.value.any { it.email.equals(email, ignoreCase = true) } || isAdmin
+    val cleanEmail = email.trim().lowercase()
+    val isWhitelisted = _whitelistItems.value.any { it.email.equals(cleanEmail, ignoreCase = true) } || isAdmin
+    val isRejected = _rejectedEmails.contains(cleanEmail)
+    val status = when {
+      isWhitelisted -> "approved"
+      isRejected -> "rejected"
+      else -> "pending"
+    }
+
     val canAccess = !_whitelistStatus.value.modeActive || isWhitelisted
 
     _currentUser.value = User(
-      id = "usr_" + email.hashCode().toString(),
-      email = email,
-      displayName = displayName,
-      isAdmin = isAdmin
+      id = "usr_" + cleanEmail.hashCode().toString(),
+      email = cleanEmail,
+      displayName = displayName.ifBlank { cleanEmail.substringBefore("@") },
+      isAdmin = isAdmin,
+      status = status
     )
 
     _whitelistStatus.value = WhitelistStatus(
       modeActive = _whitelistStatus.value.modeActive,
       isApproved = isWhitelisted,
-      canAccessApp = canAccess
+      canAccessApp = canAccess,
+      status = status
     )
+  }
+
+  override fun register(email: String, displayName: String) {
+    val cleanEmail = email.trim().lowercase()
+    val cleanName = displayName.trim().ifBlank { cleanEmail.substringBefore("@") }
+
+    login(cleanEmail, cleanName, false)
+
+    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    _auditLogs.value = listOf(
+      AuditLog(
+        id = "a_" + System.currentTimeMillis(),
+        actorEmail = cleanEmail,
+        action = "USER_ACCESS_REQUESTED",
+        target = cleanEmail,
+        details = "Yeni erişim başvurusu oluşturuldu ($cleanName)",
+        createdAt = time
+      )
+    ) + _auditLogs.value
   }
 
   override fun logout() {
     _currentUser.value = null
+    _whitelistStatus.value = WhitelistStatus(
+      modeActive = _whitelistStatus.value.modeActive,
+      isApproved = false,
+      canAccessApp = false,
+      status = "pending"
+    )
+  }
+
+  override fun checkWhitelistStatus() {
+    val user = _currentUser.value ?: return
+    val isWhitelisted = _whitelistItems.value.any { it.email.equals(user.email, ignoreCase = true) } || user.isAdmin
+    val isRejected = _rejectedEmails.contains(user.email.lowercase())
+    val status = when {
+      isWhitelisted -> "approved"
+      isRejected -> "rejected"
+      else -> "pending"
+    }
+    val canAccess = !_whitelistStatus.value.modeActive || isWhitelisted
+
+    _currentUser.value = user.copy(status = status)
+    _whitelistStatus.value = _whitelistStatus.value.copy(
+      isApproved = isWhitelisted,
+      canAccessApp = canAccess,
+      status = status
+    )
   }
 
   override fun toggleWhitelistMode(enabled: Boolean) {
     _whitelistStatus.value = _whitelistStatus.value.copy(modeActive = enabled)
     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-    val actor = _currentUser.value?.email ?: "admin"
+    val actor = _currentUser.value?.email ?: "admin@xxqchat.com"
     _auditLogs.value = listOf(
       AuditLog(
         id = "a_" + System.currentTimeMillis(),
@@ -170,38 +232,90 @@ class DefaultDataRepository : DataRepository {
         createdAt = time
       )
     ) + _auditLogs.value
+
+    checkWhitelistStatus()
   }
 
   override fun addWhitelist(email: String) {
+    val cleanEmail = email.trim().lowercase()
     val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
-    val actor = _currentUser.value?.email ?: "admin"
-    _whitelistItems.value = _whitelistItems.value + WhitelistItem(email, actor, time)
+    val actor = _currentUser.value?.email ?: "admin@xxqchat.com"
+    _rejectedEmails.remove(cleanEmail)
+    _whitelistItems.value = _whitelistItems.value.filterNot { it.email.equals(cleanEmail, ignoreCase = true) } +
+      WhitelistItem(cleanEmail, actor, time)
+
     _auditLogs.value = listOf(
       AuditLog(
         id = "a_" + System.currentTimeMillis(),
         actorEmail = actor,
         action = "USER_WHITELIST_APPROVED",
-        target = email,
+        target = cleanEmail,
         details = "Hesap mobil yönetici tarafından onaylandı",
         createdAt = time
       )
     ) + _auditLogs.value
+
+    if (_currentUser.value?.email?.equals(cleanEmail, ignoreCase = true) == true) {
+      checkWhitelistStatus()
+    }
   }
 
   override fun removeWhitelist(email: String) {
-    _whitelistItems.value = _whitelistItems.value.filterNot { it.email.equals(email, ignoreCase = true) }
+    val cleanEmail = email.trim().lowercase()
+    _whitelistItems.value = _whitelistItems.value.filterNot { it.email.equals(cleanEmail, ignoreCase = true) }
     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-    val actor = _currentUser.value?.email ?: "admin"
+    val actor = _currentUser.value?.email ?: "admin@xxqchat.com"
     _auditLogs.value = listOf(
       AuditLog(
         id = "a_" + System.currentTimeMillis(),
         actorEmail = actor,
         action = "USER_WHITELIST_REVOKED",
-        target = email,
+        target = cleanEmail,
         details = "Hesap mobil yönetici tarafından kaldırıldı",
         createdAt = time
       )
     ) + _auditLogs.value
+
+    if (_currentUser.value?.email?.equals(cleanEmail, ignoreCase = true) == true) {
+      checkWhitelistStatus()
+    }
+  }
+
+  override fun rejectUser(email: String) {
+    val cleanEmail = email.trim().lowercase()
+    _rejectedEmails.add(cleanEmail)
+    _whitelistItems.value = _whitelistItems.value.filterNot { it.email.equals(cleanEmail, ignoreCase = true) }
+    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    val actor = _currentUser.value?.email ?: "admin@xxqchat.com"
+    _auditLogs.value = listOf(
+      AuditLog(
+        id = "a_" + System.currentTimeMillis(),
+        actorEmail = actor,
+        action = "USER_WHITELIST_REJECTED",
+        target = cleanEmail,
+        details = "Hesap erişim talebi reddedildi",
+        createdAt = time
+      )
+    ) + _auditLogs.value
+
+    if (_currentUser.value?.email?.equals(cleanEmail, ignoreCase = true) == true) {
+      checkWhitelistStatus()
+    }
+  }
+
+  override fun submitSupportMessage(title: String, description: String): Boolean {
+    val user = _currentUser.value ?: return false
+    val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+    val report = SupportReport(
+      id = "rep_" + System.currentTimeMillis(),
+      userId = user.id,
+      userDisplayName = user.displayName,
+      title = title.trim(),
+      description = description.trim(),
+      createdAt = time
+    )
+    _supportReports.value = _supportReports.value + report
+    return true
   }
 
   override fun sendMessage(conversationId: String, content: String) {

@@ -15,7 +15,7 @@ export interface DbUser {
   accentColor?: string | null;
   themePreference?: 'dark' | 'light';
   onboarded: boolean;
-  status: 'active' | 'pending' | 'blocked';
+  status: 'active' | 'pending' | 'rejected' | 'blocked';
   createdAt: string;
   lastActiveAt: string;
 }
@@ -325,6 +325,7 @@ export interface DataStore {
 
   // Pending access requests
   recordPendingAccess(email: string, displayName?: string, avatarUrl?: string, ipAddress?: string): Promise<void>;
+  getPendingAccessRequestByEmail(email: string): Promise<DbPendingAccessRequest | null>;
   getPendingAccessRequests(): Promise<DbPendingAccessRequest[]>;
   getResolvedAccessRequests(limit?: number): Promise<DbPendingAccessRequest[]>;
   resolvePendingAccess(email: string, status: 'approved' | 'rejected'): Promise<void>;

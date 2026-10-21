@@ -81,6 +81,10 @@ export function setupSocketServer(httpServer: HttpServer): Server {
         return next(new Error('INVALID_TOKEN'));
       }
 
+      if (user.status === 'rejected') {
+        return next(new Error('ACCESS_DENIED_REJECTED'));
+      }
+
       if (user.status === 'pending') {
         return next(new Error('ACCESS_DENIED_NOT_WHITELISTED'));
       }
@@ -91,7 +95,9 @@ export function setupSocketServer(httpServer: HttpServer): Server {
         const approved = await isEmailWhitelisted(user.email);
         if (!approved) {
           await dataStore.recordPendingAccess(user.email, user.displayName, user.avatarUrl);
-          return next(new Error('ACCESS_DENIED_NOT_WHITELISTED'));
+          const pendingReq = await dataStore.getPendingAccessRequestByEmail(user.email);
+          const isRejected = pendingReq?.status === 'rejected';
+          return next(new Error(isRejected ? 'ACCESS_DENIED_REJECTED' : 'ACCESS_DENIED_NOT_WHITELISTED'));
         }
       }
 

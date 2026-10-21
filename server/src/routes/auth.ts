@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { generateDevToken, requireAuth, verifyFirebaseIdToken, authorizeUser } from '../auth/index.js';
-import { isWhitelistModeEnabled, isEmailWhitelisted } from '../db/index.js';
+import { isWhitelistModeEnabled, isEmailWhitelisted, dataStore } from '../db/index.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -13,12 +13,24 @@ router.get('/session', requireAuth, async (req, res) => {
   const whitelisted = await isEmailWhitelisted(user.email);
   const isApproved = user.isAdmin || whitelisted;
 
+  let requestStatus: 'pending' | 'approved' | 'rejected' = 'approved';
+  if (!isApproved) {
+    const pendingReq = await dataStore.getPendingAccessRequestByEmail(user.email);
+    requestStatus = pendingReq?.status === 'rejected' ? 'rejected' : 'pending';
+  }
+
+  const effectiveUser = {
+    ...user,
+    status: isApproved ? 'active' : requestStatus,
+  };
+
   res.json({
-    user,
+    user: effectiveUser,
     whitelist: {
       modeActive: whitelistMode,
       isApproved,
       canAccessApp: !whitelistMode || isApproved,
+      status: isApproved ? 'approved' : requestStatus,
     },
   });
 });
@@ -66,13 +78,23 @@ router.post(['/google', '/firebase'], async (req, res) => {
   const whitelisted = await isEmailWhitelisted(user.email);
   const isApproved = user.isAdmin || whitelisted;
 
+  let requestStatus: 'pending' | 'approved' | 'rejected' = 'approved';
+  if (!isApproved) {
+    const pendingReq = await dataStore.getPendingAccessRequestByEmail(user.email);
+    requestStatus = pendingReq?.status === 'rejected' ? 'rejected' : 'pending';
+  }
+
   res.json({
     token,
-    user,
+    user: {
+      ...user,
+      status: isApproved ? 'active' : requestStatus,
+    },
     whitelist: {
       modeActive: whitelistMode,
       isApproved,
       canAccessApp: !whitelistMode || isApproved,
+      status: isApproved ? 'approved' : requestStatus,
     },
   });
 });
@@ -122,13 +144,23 @@ router.post('/dev-login', async (req, res) => {
   const whitelisted = await isEmailWhitelisted(user.email);
   const isApproved = user.isAdmin || whitelisted;
 
+  let requestStatus: 'pending' | 'approved' | 'rejected' = 'approved';
+  if (!isApproved) {
+    const pendingReq = await dataStore.getPendingAccessRequestByEmail(user.email);
+    requestStatus = pendingReq?.status === 'rejected' ? 'rejected' : 'pending';
+  }
+
   res.json({
     token,
-    user,
+    user: {
+      ...user,
+      status: isApproved ? 'active' : requestStatus,
+    },
     whitelist: {
       modeActive: whitelistMode,
       isApproved,
       canAccessApp: !whitelistMode || isApproved,
+      status: isApproved ? 'approved' : requestStatus,
     },
   });
 });

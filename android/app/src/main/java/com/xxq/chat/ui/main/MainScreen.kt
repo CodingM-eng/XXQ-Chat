@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,7 +39,9 @@ fun MainScreen(
 
   var selectedConvId by remember { mutableStateOf<String?>(null) }
   var showAdminView by remember { mutableStateOf(false) }
-  var showLoginDialog by remember { mutableStateOf(false) }
+  var showProfileDialog by remember { mutableStateOf(false) }
+  var showSupportDialog by remember { mutableStateOf(false) }
+  var supportFeedback by remember { mutableStateOf<String?>(null) }
   var showNewChatDialog by remember { mutableStateOf(false) }
   var updateInfo by remember { mutableStateOf<AppUpdateCheckResult?>(null) }
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -63,48 +66,511 @@ fun MainScreen(
     )
   }
 
-  // 1. If Whitelist is Active and user is not approved
-  if (currentUser != null && whitelistStatus.modeActive && !whitelistStatus.isApproved) {
+  // 1. Unauthenticated View: Clean Sign-In / Registration Screen
+  if (currentUser == null) {
+    var selectedAuthTab by remember { mutableStateOf(0) } // 0: Giriş Yap, 1: Kayıt Ol
+    var emailInput by remember { mutableStateOf("") }
+    var displayNameInput by remember { mutableStateOf("") }
+    var authError by remember { mutableStateOf<String?>(null) }
+
     Scaffold(
-      topBar = {
-        TopAppBar(
-          title = { Text("XXQ Chat", fontWeight = FontWeight.Bold) },
-          colors = TopAppBarDefaults.topAppBarColors(containerColor = XXQDarkBg, titleContentColor = Color.White)
-        )
-      },
       containerColor = XXQDarkBg
     ) { padding ->
-      Column(
+      Box(
         modifier = Modifier
           .fillMaxSize()
           .padding(padding)
           .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        contentAlignment = Alignment.Center
       ) {
-        Text("🔒", fontSize = 56.sp)
-        Spacer(Modifier.height(16.dp))
-        Text("Erişim Kısıtlandı", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-        Spacer(Modifier.height(8.dp))
-        Text(
-          "XXQ Chat şu anda Beyaz Liste Modunda çalışmaktadır. Hesabınız (${currentUser?.email}) henüz onaylanmadı.",
-          fontSize = 13.sp,
-          color = XXQTextMuted,
-          modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(
-          onClick = { showLoginDialog = true },
-          colors = ButtonDefaults.buttonColors(containerColor = XXQPurple)
+        Card(
+          colors = CardDefaults.cardColors(containerColor = XXQCardBg),
+          shape = RoundedCornerShape(20.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 440.dp)
         ) {
-          Text("Hesap / Kimlik Değiştir")
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+          ) {
+            // App Branding Header
+            Box(
+              modifier = Modifier
+                .size(54.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(XXQPurple),
+              contentAlignment = Alignment.Center
+            ) {
+              Text("Q", fontWeight = FontWeight.ExtraBold, color = Color.White, fontSize = 30.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("XXQ Chat", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(
+              "Gizlilik ve Güvenlik Odaklı Topluluk Ağı",
+              fontSize = 12.sp,
+              color = XXQTextMuted,
+              textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            // Clean Auth Tabs: "Giriş Yap" and "Kayıt Ol"
+            TabRow(
+              selectedTabIndex = selectedAuthTab,
+              containerColor = XXQSidebarBg,
+              contentColor = Color.White,
+              modifier = Modifier.clip(RoundedCornerShape(10.dp))
+            ) {
+              Tab(
+                selected = selectedAuthTab == 0,
+                onClick = {
+                  selectedAuthTab = 0
+                  authError = null
+                },
+                text = { Text("Giriş Yap", fontWeight = FontWeight.SemiBold) }
+              )
+              Tab(
+                selected = selectedAuthTab == 1,
+                onClick = {
+                  selectedAuthTab = 1
+                  authError = null
+                },
+                text = { Text("Kayıt Ol", fontWeight = FontWeight.SemiBold) }
+              )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            authError?.let { err ->
+              Text(
+                err,
+                color = Color(0xFFF87171),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 12.dp)
+              )
+            }
+
+            if (selectedAuthTab == 0) {
+              // --- GİRİŞ YAP TAB ---
+              OutlinedTextField(
+                value = emailInput,
+                onValueChange = { emailInput = it },
+                label = { Text("E-posta Adresi") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedBorderColor = XXQPurpleLight,
+                  unfocusedBorderColor = XXQBorder,
+                  focusedTextColor = Color.White,
+                  unfocusedTextColor = Color.White,
+                  focusedLabelColor = XXQPurpleLight,
+                  unfocusedLabelColor = XXQTextMuted
+                )
+              )
+
+              Spacer(Modifier.height(16.dp))
+
+              Button(
+                onClick = {
+                  if (emailInput.isBlank() || !emailInput.contains("@")) {
+                    authError = "Lütfen geçerli bir e-posta adresi girin."
+                  } else {
+                    viewModel.login(emailInput.trim(), "", false)
+                  }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = XXQPurple),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(48.dp)
+              ) {
+                Text("Giriş Yap", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+              }
+
+              Spacer(Modifier.height(14.dp))
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                HorizontalDivider(modifier = Modifier.weight(1f), color = XXQBorder)
+                Text(" veya ", fontSize = 12.sp, color = XXQTextMuted, modifier = Modifier.padding(horizontal = 8.dp))
+                HorizontalDivider(modifier = Modifier.weight(1f), color = XXQBorder)
+              }
+
+              Spacer(Modifier.height(14.dp))
+
+              OutlinedButton(
+                onClick = {
+                  val testEmail = if (emailInput.isNotBlank()) emailInput.trim() else "kullanici@xxqchat.com"
+                  viewModel.login(testEmail, "Google Kullanıcısı", false)
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(48.dp)
+              ) {
+                Text("G  Google ile Giriş Yap", fontWeight = FontWeight.SemiBold)
+              }
+
+              Spacer(Modifier.height(16.dp))
+
+              Card(
+                colors = CardDefaults.cardColors(containerColor = XXQSidebarBg),
+                shape = RoundedCornerShape(8.dp)
+              ) {
+                Text(
+                  "ℹ️ Topluluk erişimi için onaylı Google hesabınızı veya davet edilmiş e-postanızı kullanın.",
+                  fontSize = 11.sp,
+                  color = XXQTextMuted,
+                  modifier = Modifier.padding(10.dp)
+                )
+              }
+            } else {
+              // --- KAYIT OL TAB ---
+              OutlinedTextField(
+                value = emailInput,
+                onValueChange = { emailInput = it },
+                label = { Text("E-posta Adresi") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedBorderColor = XXQPurpleLight,
+                  unfocusedBorderColor = XXQBorder,
+                  focusedTextColor = Color.White,
+                  unfocusedTextColor = Color.White,
+                  focusedLabelColor = XXQPurpleLight,
+                  unfocusedLabelColor = XXQTextMuted
+                )
+              )
+
+              Spacer(Modifier.height(12.dp))
+
+              OutlinedTextField(
+                value = displayNameInput,
+                onValueChange = { displayNameInput = it },
+                label = { Text("Görünen İsim (Ad Soyad)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedBorderColor = XXQPurpleLight,
+                  unfocusedBorderColor = XXQBorder,
+                  focusedTextColor = Color.White,
+                  unfocusedTextColor = Color.White,
+                  focusedLabelColor = XXQPurpleLight,
+                  unfocusedLabelColor = XXQTextMuted
+                )
+              )
+
+              Spacer(Modifier.height(16.dp))
+
+              Button(
+                onClick = {
+                  if (emailInput.isBlank() || !emailInput.contains("@")) {
+                    authError = "Lütfen geçerli bir e-posta adresi girin."
+                  } else {
+                    viewModel.register(emailInput.trim(), displayNameInput.trim())
+                  }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = XXQPurple),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(48.dp)
+              ) {
+                Text("Kayıt Ol", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+              }
+
+              Spacer(Modifier.height(14.dp))
+
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                HorizontalDivider(modifier = Modifier.weight(1f), color = XXQBorder)
+                Text(" veya ", fontSize = 12.sp, color = XXQTextMuted, modifier = Modifier.padding(horizontal = 8.dp))
+                HorizontalDivider(modifier = Modifier.weight(1f), color = XXQBorder)
+              }
+
+              Spacer(Modifier.height(14.dp))
+
+              OutlinedButton(
+                onClick = {
+                  val testEmail = if (emailInput.isNotBlank()) emailInput.trim() else "aday@xxqchat.com"
+                  val testName = if (displayNameInput.isNotBlank()) displayNameInput.trim() else "Yeni Üye Adayı"
+                  viewModel.register(testEmail, testName)
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(48.dp)
+              ) {
+                Text("G  Google ile Kayıt Ol", fontWeight = FontWeight.SemiBold)
+              }
+
+              Spacer(Modifier.height(16.dp))
+
+              Card(
+                colors = CardDefaults.cardColors(containerColor = XXQSidebarBg),
+                shape = RoundedCornerShape(8.dp)
+              ) {
+                Text(
+                  "ℹ️ Kayıt başvurunuz sistem yöneticisi veya moderatör onayı sonrasında aktifleşir.",
+                  fontSize = 11.sp,
+                  color = XXQTextMuted,
+                  modifier = Modifier.padding(10.dp)
+                )
+              }
+            }
+          }
         }
       }
     }
     return
   }
 
-  // 2. Admin View
+  // 2. Whitelist Restricted View: Pending or Rejected States
+  if (whitelistStatus.modeActive && !whitelistStatus.canAccessApp) {
+    val isRejected = whitelistStatus.status == "rejected" || currentUser?.status == "rejected"
+
+    Scaffold(
+      topBar = {
+        TopAppBar(
+          title = { Text("XXQ Chat", fontWeight = FontWeight.Bold) },
+          actions = {
+            TextButton(onClick = { viewModel.logout() }) {
+              Text("Çıkış Yap", color = XXQPurpleLight)
+            }
+          },
+          colors = TopAppBarDefaults.topAppBarColors(containerColor = XXQDarkBg, titleContentColor = Color.White)
+        )
+      },
+      containerColor = XXQDarkBg
+    ) { padding ->
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .padding(padding)
+          .padding(24.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        Card(
+          colors = CardDefaults.cardColors(containerColor = XXQCardBg),
+          shape = RoundedCornerShape(20.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 440.dp)
+        ) {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+          ) {
+            Text(if (isRejected) "🚫" else "⏳", fontSize = 52.sp)
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+              if (isRejected) "Erişim Talebiniz Onaylanmadı" else "Erişim Onayı Bekleniyor",
+              fontSize = 20.sp,
+              fontWeight = FontWeight.Bold,
+              color = Color.White,
+              textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+              if (isRejected)
+                "XXQ Chat yetkilileri tarafından başvurunuz incelenmiş ve bu aşamada onaylanmamıştır."
+              else
+                "XXQ Chat kontrollü erişim modundadır. Hesabınız sistem yöneticisi veya yetkili moderatör incelemesindedir.",
+              fontSize = 13.sp,
+              color = XXQTextMuted,
+              textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // Status Badge
+            Surface(
+              color = if (isRejected) Color(0xFF7F1D1D) else XXQPurpleDark,
+              shape = RoundedCornerShape(12.dp)
+            ) {
+              Text(
+                if (isRejected) "Durum: Reddedildi" else "Durum: İnceleniyor (Sırada)",
+                color = if (isRejected) Color(0xFFFCA5A5) else XXQPurpleLight,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+              )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Applicant Info Card (Displays display name, avoids exposing email)
+            Card(
+              colors = CardDefaults.cardColors(containerColor = XXQSidebarBg),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Column(modifier = Modifier.padding(14.dp)) {
+                Text(
+                  "Başvuran: ${currentUser?.displayName ?: "Kullanıcı"}",
+                  fontWeight = FontWeight.SemiBold,
+                  fontSize = 13.sp,
+                  color = Color.White
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                  if (isRejected)
+                    "Karar kaydı saklanmaktadır. Bir hata olduğunu düşünüyorsanız destek ekibine mesaj iletebilirsiniz."
+                  else
+                    "Topluluk güvenliği gereği yetkili onayı tamamlanana kadar sohbet ve kanal erişimi kapalı tutulur.",
+                  fontSize = 11.sp,
+                  color = XXQTextMuted
+                )
+              }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            supportFeedback?.let { msg ->
+              Text(
+                msg,
+                color = XXQSuccess,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 12.dp)
+              )
+            }
+
+            if (!isRejected) {
+              Button(
+                onClick = {
+                  viewModel.checkWhitelistStatus()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = XXQPurple),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(46.dp)
+              ) {
+                Text("Onay Durumunu Kontrol Et", fontWeight = FontWeight.Bold)
+              }
+              Spacer(Modifier.height(10.dp))
+            }
+
+            // "Destekle Konuş" Button
+            OutlinedButton(
+              onClick = { showSupportDialog = true },
+              shape = RoundedCornerShape(10.dp),
+              colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = if (isRejected) Color.White else XXQPurpleLight
+              ),
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+            ) {
+              Text("Destekle Konuş", fontWeight = FontWeight.SemiBold)
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            TextButton(
+              onClick = { viewModel.logout() }
+            ) {
+              Text("Çıkış Yap / Başka Hesapla Giriş Yap", color = XXQTextMuted, fontSize = 12.sp)
+            }
+          }
+        }
+      }
+    }
+
+    // Support Message Dialog
+    if (showSupportDialog) {
+      var supportTitle by remember { mutableStateOf("Erişim onayı hk.") }
+      var supportDesc by remember { mutableStateOf("") }
+      var supportError by remember { mutableStateOf<String?>(null) }
+
+      AlertDialog(
+        onDismissRequest = { showSupportDialog = false },
+        title = { Text("Destek Ekibiyle İletişime Geç", fontWeight = FontWeight.Bold) },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+              "Başvuran: ${currentUser?.displayName ?: "Kullanıcı"}",
+              fontWeight = FontWeight.SemiBold,
+              fontSize = 12.sp,
+              color = XXQPurpleLight
+            )
+
+            Card(
+              colors = CardDefaults.cardColors(containerColor = XXQSidebarBg),
+              shape = RoundedCornerShape(8.dp)
+            ) {
+              Text(
+                "ℹ️ Destek mesajı göndermek otomatik onay garantisi vermez; talebiniz yetkililer tarafından incelenir.",
+                fontSize = 11.sp,
+                color = XXQTextMuted,
+                modifier = Modifier.padding(8.dp)
+              )
+            }
+
+            supportError?.let {
+              Text(it, color = Color(0xFFF87171), fontSize = 11.sp)
+            }
+
+            OutlinedTextField(
+              value = supportTitle,
+              onValueChange = { supportTitle = it },
+              label = { Text("Konu") },
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+              value = supportDesc,
+              onValueChange = { supportDesc = it },
+              label = { Text("Mesajınız / Açıklama") },
+              minLines = 3,
+              modifier = Modifier.fillMaxWidth()
+            )
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              if (supportDesc.isBlank()) {
+                supportError = "Lütfen bir mesaj yazın."
+              } else {
+                viewModel.submitSupportMessage(supportTitle, supportDesc)
+                showSupportDialog = false
+                supportFeedback = "Destek mesajınız yetkililere başarıyla iletildi."
+              }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = XXQPurple)
+          ) {
+            Text("Mesajı Gönder")
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { showSupportDialog = false }) { Text("İptal") }
+        },
+        containerColor = XXQDarkBg,
+        titleContentColor = Color.White
+      )
+    }
+    return
+  }
+
+  // 3. Admin Security View (Platform Admin only)
   if (showAdminView) {
     Scaffold(
       topBar = {
@@ -216,7 +682,7 @@ fun MainScreen(
     return
   }
 
-  // 3. Direct Chat View
+  // 4. Direct Chat View
   if (selectedConvId != null) {
     val activeConv = conversations.find { it.id == selectedConvId }
     val convMessages = messagesMap[selectedConvId] ?: emptyList()
@@ -248,32 +714,31 @@ fun MainScreen(
         ) {
           Row(
             modifier = Modifier
-              .padding(8.dp)
-              .fillMaxWidth(),
+              .fillMaxWidth()
+              .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             TextField(
               value = inputText,
               onValueChange = { inputText = it },
-              placeholder = { Text("Bir mesaj yazın...", color = XXQTextMuted, fontSize = 14.sp) },
+              placeholder = { Text("Mesaj yazın...", color = XXQTextMuted) },
               modifier = Modifier
                 .weight(1f)
-                .background(XXQCardBg, RoundedCornerShape(24.dp)),
+                .clip(RoundedCornerShape(24.dp)),
               colors = TextFieldDefaults.colors(
-                focusedContainerColor = XXQCardBg,
-                unfocusedContainerColor = XXQCardBg,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
+                focusedContainerColor = XXQSidebarBg,
+                unfocusedContainerColor = XXQSidebarBg,
                 focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White
-              ),
-              shape = RoundedCornerShape(24.dp)
+                unfocusedTextColor = Color.White,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent
+              )
             )
             Spacer(Modifier.width(8.dp))
             IconButton(
               onClick = {
                 if (inputText.isNotBlank()) {
-                  viewModel.sendMessage(selectedConvId!!, inputText.trim())
+                  viewModel.sendMessage(selectedConvId!!, inputText)
                   inputText = ""
                 }
               },
@@ -339,7 +804,7 @@ fun MainScreen(
     return
   }
 
-  // 4. Default Conversation List View
+  // 5. Default Conversation List View
   Scaffold(
     topBar = {
       TopAppBar(
@@ -367,8 +832,21 @@ fun MainScreen(
               Text("🛡", fontSize = 18.sp)
             }
           }
-          IconButton(onClick = { showLoginDialog = true }) {
-            Text("👤", fontSize = 18.sp)
+          IconButton(onClick = { showProfileDialog = true }) {
+            Box(
+              modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(XXQPurple),
+              contentAlignment = Alignment.Center
+            ) {
+              Text(
+                (currentUser?.displayName?.take(1) ?: "U").uppercase(),
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                fontSize = 14.sp
+              )
+            }
           }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = XXQDarkBg, titleContentColor = Color.White)
@@ -441,48 +919,36 @@ fun MainScreen(
     }
   }
 
-  // Persona Switcher Dialog
-  if (showLoginDialog) {
+  // User Profile Dialog
+  if (showProfileDialog) {
     AlertDialog(
-      onDismissRequest = { showLoginDialog = false },
-      title = { Text("Kimlik / Hesap Değiştir", fontWeight = FontWeight.Bold) },
+      onDismissRequest = { showProfileDialog = false },
+      title = { Text("Kullanıcı Profili", fontWeight = FontWeight.Bold) },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Button(
-            onClick = {
-              viewModel.login("admin@xxqchat.com", "Sistem Yöneticisi", true)
-              showLoginDialog = false
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = XXQCardBg),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Text("Yönetici (admin@xxqchat.com)", color = XXQPurpleLight)
-          }
-          Button(
-            onClick = {
-              viewModel.login("alice@xxqchat.com", "Alice (Onaylı)", false)
-              showLoginDialog = false
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = XXQCardBg),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Text("Alice (Onaylı Üye)", color = XXQSuccess)
-          }
-          Button(
-            onClick = {
-              viewModel.login("eve@outsider.com", "Havva (Onaysız)", false)
-              showLoginDialog = false
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = XXQCardBg),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Text("Havva (Onaysız Dış Kullanıcı)", color = Color(0xFFF87171))
-          }
+          Text("İsim: ${currentUser?.displayName ?: "-"}", color = Color.White)
+          Text("E-posta: ${currentUser?.email ?: "-"}", color = XXQTextMuted, fontSize = 13.sp)
+          Text(
+            if (currentUser?.isAdmin == true) "Yetki: Sistem Yöneticisi" else "Yetki: Onaylı Üye",
+            color = if (currentUser?.isAdmin == true) XXQPurpleLight else XXQSuccess,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+          )
         }
       },
-      confirmButton = {},
+      confirmButton = {
+        Button(
+          onClick = {
+            viewModel.logout()
+            showProfileDialog = false
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+        ) {
+          Text("Çıkış Yap")
+        }
+      },
       dismissButton = {
-        TextButton(onClick = { showLoginDialog = false }) { Text("İptal") }
+        TextButton(onClick = { showProfileDialog = false }) { Text("Kapat") }
       },
       containerColor = XXQDarkBg,
       titleContentColor = Color.White

@@ -15,7 +15,7 @@ export interface User {
   accentColor?: string | null;
   themePreference?: 'dark' | 'light';
   onboarded?: boolean;
-  status?: 'active' | 'pending' | 'blocked';
+  status?: 'active' | 'pending' | 'rejected' | 'blocked';
   createdAt?: string;
   lastActiveAt?: string;
 }
@@ -24,6 +24,8 @@ export interface WhitelistStatus {
   modeActive: boolean;
   isApproved: boolean;
   canAccessApp: boolean;
+  status?: 'pending' | 'approved' | 'rejected';
+  rejectionReason?: string | null;
 }
 
 export interface MessageReply {

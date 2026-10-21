@@ -11,13 +11,22 @@ class MainScreenViewModel(private val repository: DataRepository) : ViewModel() 
   val messages: StateFlow<Map<String, List<Message>>> = repository.messages
   val whitelistItems: StateFlow<List<WhitelistItem>> = repository.whitelistItems
   val auditLogs: StateFlow<List<AuditLog>> = repository.auditLogs
+  val supportReports: StateFlow<List<SupportReport>> = repository.supportReports
 
   fun login(email: String, displayName: String, isAdmin: Boolean) {
     repository.login(email, displayName, isAdmin)
   }
 
+  fun register(email: String, displayName: String) {
+    repository.register(email, displayName)
+  }
+
   fun logout() {
     repository.logout()
+  }
+
+  fun checkWhitelistStatus() {
+    repository.checkWhitelistStatus()
   }
 
   fun toggleWhitelistMode(enabled: Boolean) {
@@ -30,6 +39,14 @@ class MainScreenViewModel(private val repository: DataRepository) : ViewModel() 
 
   fun removeWhitelist(email: String) {
     repository.removeWhitelist(email)
+  }
+
+  fun rejectUser(email: String) {
+    repository.rejectUser(email)
+  }
+
+  fun submitSupportMessage(title: String, description: String): Boolean {
+    return repository.submitSupportMessage(title, description)
   }
 
   fun sendMessage(conversationId: String, content: String) {

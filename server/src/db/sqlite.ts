@@ -239,8 +239,7 @@ export class SqliteStore implements DataStore {
         diagnostics_json TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'open',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        resolved_at DATETIME,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        resolved_at DATETIME
       );
 
       CREATE TABLE IF NOT EXISTS server_invites (
@@ -593,21 +592,23 @@ export class SqliteStore implements DataStore {
   async recordPendingAccess(email: string, displayName?: string, avatarUrl?: string, ipAddress?: string): Promise<void> {
     const normalized = email.toLowerCase().trim();
     const existing = this.getSqlite()
-      .prepare('SELECT id, attempt_count FROM pending_access_requests WHERE LOWER(email) = ?')
+      .prepare('SELECT id, attempt_count, status FROM pending_access_requests WHERE LOWER(email) = ?')
       .get(normalized) as any;
 
     if (existing) {
+      // Preserve explicit rejection or approval; do not reset rejected users back to pending
+      const preservedStatus = (existing.status === 'rejected' || existing.status === 'approved') ? existing.status : 'pending';
       this.getSqlite()
         .prepare(`
           UPDATE pending_access_requests
           SET attempt_count = attempt_count + 1,
-              status = 'pending',
+              status = ?,
               last_attempt_at = CURRENT_TIMESTAMP,
               display_name = COALESCE(?, display_name),
               avatar_url = COALESCE(?, avatar_url)
           WHERE id = ?
         `)
-        .run(displayName || null, avatarUrl || null, existing.id);
+        .run(preservedStatus, displayName || null, avatarUrl || null, existing.id);
     } else {
       const id = 'pend_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
       this.getSqlite()
@@ -617,6 +618,30 @@ export class SqliteStore implements DataStore {
         `)
         .run(id, normalized, displayName || null, avatarUrl || null);
     }
+  }
+
+  async getPendingAccessRequestByEmail(email: string): Promise<DbPendingAccessRequest | null> {
+    const normalized = email.toLowerCase().trim();
+    const r = this.getSqlite()
+      .prepare(`
+        SELECT id, email, display_name, avatar_url, first_attempt_at, last_attempt_at, attempt_count, status, resolved_at
+        FROM pending_access_requests
+        WHERE LOWER(email) = ?
+      `)
+      .get(normalized) as any;
+
+    if (!r) return null;
+    return {
+      id: r.id,
+      email: r.email,
+      displayName: r.display_name || null,
+      avatarUrl: r.avatar_url || null,
+      firstAttemptAt: r.first_attempt_at,
+      lastAttemptAt: r.last_attempt_at,
+      attemptCount: r.attempt_count,
+      status: r.status as 'pending' | 'approved' | 'rejected',
+      resolvedAt: r.resolved_at || null,
+    };
   }
 
   async getPendingAccessRequests(): Promise<DbPendingAccessRequest[]> {
@@ -2125,10 +2150,15 @@ export class SqliteStore implements DataStore {
   }): Promise<DbSupportReport> {
     const id = 'rep_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const now = new Date().toISOString();
-    this.getSqlite().prepare(`
-      INSERT INTO support_reports (id, user_id, user_email, user_display_name, title, description, diagnostics_json, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
-    `).run(id, report.userId, report.userEmail, report.userDisplayName, report.title, report.description, JSON.stringify(report.diagnostics || {}), now);
+    this.getSqlite().exec('PRAGMA foreign_keys = OFF;');
+    try {
+      this.getSqlite().prepare(`
+        INSERT INTO support_reports (id, user_id, user_email, user_display_name, title, description, diagnostics_json, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+      `).run(id, report.userId, report.userEmail, report.userDisplayName, report.title, report.description, JSON.stringify(report.diagnostics || {}), now);
+    } finally {
+      this.getSqlite().exec('PRAGMA foreign_keys = ON;');
+    }
 
     return {
       id,

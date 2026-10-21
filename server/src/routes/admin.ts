@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireAdmin } from '../auth/index.js';
+import { requireAuth, requireAdmin, requireModerator } from '../auth/index.js';
 import { dataStore, isWhitelistModeEnabled } from '../db/index.js';
 import { config } from '../config.js';
 import { onWhitelistRevoked, onWhitelistModeChanged } from '../sockets/index.js';
@@ -9,11 +9,11 @@ import { encryptSecret } from '../utils/crypto.js';
 
 const router = Router();
 
-// Apply auth and admin checks to all admin endpoints
-router.use(requireAuth, requireAdmin);
+// Apply base authentication check to all admin/moderator management endpoints
+router.use(requireAuth);
 
-// GET /api/admin/status
-router.get('/status', async (req, res) => {
+// GET /api/admin/status (Platform Admin only)
+router.get('/status', requireAdmin, async (req, res) => {
   const whitelistMode = await isWhitelistModeEnabled();
   const stats = await dataStore.getStats();
 
@@ -24,13 +24,13 @@ router.get('/status', async (req, res) => {
   });
 });
 
-// POST /api/admin/whitelist/toggle
+// POST /api/admin/whitelist/toggle (Platform Admin only)
 const toggleSchema = z.object({
   enabled: z.boolean(),
   confirmation: z.literal(true), // Explicit confirmation required
 });
 
-router.post('/whitelist/toggle', async (req, res) => {
+router.post('/whitelist/toggle', requireAdmin, async (req, res) => {
   const parseResult = toggleSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_INPUT', message: 'Beyaz liste modunu değiştirmek için onay gereklidir.' });
@@ -64,24 +64,28 @@ router.post('/whitelist/toggle', async (req, res) => {
   });
 });
 
-// GET /api/admin/whitelist
-router.get('/whitelist', async (req, res) => {
+// Whitelist and Pending Access Request Management (Platform Admin or Authorized Moderator)
+router.get('/whitelist', requireModerator, async (req, res) => {
   const items = await dataStore.getWhitelist();
   res.json({ whitelist: items });
 });
 
-// GET /api/admin/pending - list unapproved users pending admin review
-router.get('/pending', async (req, res) => {
+router.get('/pending', requireModerator, async (req, res) => {
   const requests = await dataStore.getPendingAccessRequests();
   res.json({ pendingRequests: requests });
 });
 
-// POST /api/admin/whitelist/approve - approve a pending request
+router.get('/pending/history', requireModerator, async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const requests = await dataStore.getResolvedAccessRequests(limit);
+  res.json({ resolvedRequests: requests });
+});
+
 const approveSchema = z.object({
   email: z.string().email('Geçerli bir e-posta adresi gereklidir.'),
 });
 
-router.post('/whitelist/approve', async (req, res) => {
+router.post('/whitelist/approve', requireModerator, async (req, res) => {
   const parseResult = approveSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
@@ -90,6 +94,7 @@ router.post('/whitelist/approve', async (req, res) => {
 
   const email = parseResult.data.email.toLowerCase().trim();
   const user = req.user!;
+  const reviewerRole = user.isAdmin ? 'Sistem Yöneticisi' : 'Moderatör';
 
   await dataStore.addToWhitelist(email, user.email);
 
@@ -98,19 +103,47 @@ router.post('/whitelist/approve', async (req, res) => {
     actorEmail: user.email,
     action: 'USER_WHITELIST_APPROVED',
     target: email,
-    details: `${email} kullanıcısı için uygulama erişimi onaylandı`,
+    details: `${email} kullanıcısı için uygulama erişimi ${reviewerRole} (${user.displayName || user.email}) tarafından onaylandı`,
     ipAddress: req.ip,
   });
 
   res.json({ success: true, email, message: `${email} hesabı başarıyla onaylandı.` });
 });
 
-// POST /api/admin/whitelist/add
+const rejectSchema = z.object({
+  email: z.string().email('Geçerli bir e-posta adresi gereklidir.'),
+});
+
+router.post('/whitelist/reject', requireModerator, async (req, res) => {
+  const parseResult = rejectSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
+    return;
+  }
+
+  const email = parseResult.data.email.toLowerCase().trim();
+  const user = req.user!;
+  const reviewerRole = user.isAdmin ? 'Sistem Yöneticisi' : 'Moderatör';
+
+  await dataStore.rejectPendingAccess(email);
+
+  await dataStore.recordAuditLog({
+    actorId: user.id,
+    actorEmail: user.email,
+    action: 'USER_WHITELIST_REJECTED',
+    target: email,
+    details: `${email} kullanıcısının erişim isteği ${reviewerRole} (${user.displayName || user.email}) tarafından reddedildi`,
+    ipAddress: req.ip,
+  });
+
+  res.json({ success: true, email, message: `${email} erişim isteği reddedildi.` });
+});
+
 const addWhitelistSchema = z.object({
   email: z.string().email(),
 });
 
-router.post('/whitelist/add', async (req, res) => {
+router.post('/whitelist/add', requireModerator, async (req, res) => {
   const parseResult = addWhitelistSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
@@ -119,6 +152,7 @@ router.post('/whitelist/add', async (req, res) => {
 
   const email = parseResult.data.email.toLowerCase().trim();
   const user = req.user!;
+  const reviewerRole = user.isAdmin ? 'Sistem Yöneticisi' : 'Moderatör';
 
   try {
     await dataStore.addToWhitelist(email, user.email);
@@ -128,7 +162,7 @@ router.post('/whitelist/add', async (req, res) => {
       actorEmail: user.email,
       action: 'USER_WHITELIST_APPROVED',
       target: email,
-      details: `${email} kullanıcısı için uygulama erişimi onaylandı`,
+      details: `${email} kullanıcısı için uygulama erişimi ${reviewerRole} (${user.displayName || user.email}) tarafından onaylandı`,
       ipAddress: req.ip,
     });
 
@@ -138,9 +172,12 @@ router.post('/whitelist/add', async (req, res) => {
   }
 });
 
-// DELETE /api/admin/whitelist/:email
-router.delete('/whitelist/:email', async (req, res) => {
-  const email = req.params.email.toLowerCase().trim();
+// All following administrative operations require Platform Administrator role (requireAdmin)
+router.use(requireAdmin);
+
+// DELETE /api/admin/whitelist/:email (Platform Admin only)
+router.delete('/whitelist/:email', requireAdmin, async (req, res) => {
+  const email = String(req.params.email).toLowerCase().trim();
   const user = req.user!;
 
   // Prevent removing the bootstrap admin email
@@ -261,42 +298,6 @@ router.delete('/moderators/:userId', async (req, res) => {
     user: updatedUser,
     message: `${targetUser.displayName || targetUser.email} kullanıcısının moderatör yetkisi kaldırıldı.`,
   });
-});
-
-// POST /api/admin/whitelist/reject - reject a pending access request
-const rejectSchema = z.object({
-  email: z.string().email(),
-});
-
-router.post('/whitelist/reject', async (req, res) => {
-  const parseResult = rejectSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    res.status(400).json({ error: 'INVALID_EMAIL', message: 'Geçerli bir e-posta adresi gereklidir.' });
-    return;
-  }
-
-  const email = parseResult.data.email.toLowerCase().trim();
-  const user = req.user!;
-
-  await dataStore.rejectPendingAccess(email);
-
-  await dataStore.recordAuditLog({
-    actorId: user.id,
-    actorEmail: user.email,
-    action: 'USER_WHITELIST_REJECTED',
-    target: email,
-    details: `${email} kullanıcısının erişim isteği reddedildi`,
-    ipAddress: req.ip,
-  });
-
-  res.json({ success: true, email, message: `${email} erişim isteği reddedildi.` });
-});
-
-// GET /api/admin/pending/history - view resolved request history
-router.get('/pending/history', async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 50, 100);
-  const requests = await dataStore.getResolvedAccessRequests(limit);
-  res.json({ resolvedRequests: requests });
 });
 
 // GET /api/admin/groups - list all groups
