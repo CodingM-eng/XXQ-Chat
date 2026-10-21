@@ -1,12 +1,15 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { User, WhitelistStatus } from '../types';
 import { api } from '../services/api';
 import { signInWithGoogle, isFirebaseConfigured, signOutFirebase } from '../services/firebase';
+import { probeBackendWithWakeup } from '../services/health';
 
 interface AuthContextType {
   user: User | null;
   whitelist: WhitelistStatus | null;
   isLoading: boolean;
+  isWakingServer: boolean;
+  serverStatusMessage: string | null;
   error: string | null;
   isFirebaseReady: boolean;
   theme: 'dark' | 'light';
@@ -16,6 +19,7 @@ interface AuthContextType {
   logout: () => void;
   refreshSession: () => Promise<void>;
   retrySession: () => Promise<void>;
+  cancelWakeUp: () => void;
   clearError: () => void;
   updateUser: (updatedUser: User) => void;
 }
@@ -26,24 +30,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [whitelist, setWhitelist] = useState<WhitelistStatus | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isWakingServer, setIsWakingServer] = useState<boolean>(false);
+  const [serverStatusMessage, setServerStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const wakeupControllerRef = useRef<AbortController | null>(null);
+
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const saved = localStorage.getItem('xxq_theme');
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('xxq_theme') : null;
     return saved === 'light' ? 'light' : 'dark';
   });
 
   // Apply theme to document element
   useEffect(() => {
-    if (theme === 'light') {
-      document.documentElement.classList.add('light');
-      document.documentElement.classList.remove('dark');
-    } else {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
+    if (typeof document !== 'undefined') {
+      if (theme === 'light') {
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
+      } else {
+        document.documentElement.classList.add('dark');
+        document.documentElement.classList.remove('light');
+      }
     }
-    localStorage.setItem('xxq_theme', theme);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('xxq_theme', theme);
+    }
   }, [theme]);
+
+  const cancelWakeUp = useCallback(() => {
+    if (wakeupControllerRef.current) {
+      wakeupControllerRef.current.abort();
+      wakeupControllerRef.current = null;
+    }
+    setIsWakingServer(false);
+    setServerStatusMessage(null);
+  }, []);
 
   const refreshSession = useCallback(async () => {
     const token = api.getToken();
@@ -61,7 +82,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
       setWhitelist(data.whitelist);
 
-      // If user has saved theme preference, respect it
       if (data.user.themePreference) {
         setTheme(data.user.themePreference);
       }
@@ -72,7 +92,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setWhitelist(null);
       } else if (err.status === 403 && err.body?.whitelistActive) {
-        // Whitelisted mode blocked
         setWhitelist({
           modeActive: true,
           isApproved: false,
@@ -88,6 +107,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     refreshSession();
+  }, [refreshSession]);
+
+  /**
+   * Bounded manual retry with cold-start server wakeup handling.
+   */
+  const retrySession = useCallback(async () => {
+    setError(null);
+    setIsLoading(true);
+    setIsWakingServer(true);
+
+    const controller = new AbortController();
+    wakeupControllerRef.current = controller;
+
+    try {
+      await probeBackendWithWakeup({
+        maxAttempts: 6,
+        signal: controller.signal,
+        onProgress: (p) => {
+          setServerStatusMessage(p.message);
+        },
+      });
+
+      // Server is confirmed online, now refresh or attempt session
+      setServerStatusMessage('Sunucu bağlandı. Oturum yenileniyor...');
+      await refreshSession();
+    } catch (err: any) {
+      if (err.code === 'ABORTED') {
+        setError('Sunucu bağlantısı iptal edildi.');
+      } else {
+        setError(err.message || 'Sunucuya bağlanılamadı.');
+      }
+    } finally {
+      setIsWakingServer(false);
+      setServerStatusMessage(null);
+      setIsLoading(false);
+      wakeupControllerRef.current = null;
+    }
   }, [refreshSession]);
 
   const toggleTheme = useCallback(() => {
@@ -124,7 +180,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       setError(null);
       const googleUser = await signInWithGoogle();
-      // Exchange cryptographically verified Google ID token with server
       const data = await api.loginWithGoogle(googleUser.idToken);
       setUser(data.user);
       setWhitelist(data.whitelist);
@@ -159,6 +214,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         whitelist,
         isLoading,
+        isWakingServer,
+        serverStatusMessage,
         error,
         isFirebaseReady: isFirebaseConfigured,
         theme,
@@ -167,7 +224,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithGoogle,
         logout,
         refreshSession,
-        retrySession: refreshSession,
+        retrySession,
+        cancelWakeUp,
         clearError: () => setError(null),
         updateUser,
       }}

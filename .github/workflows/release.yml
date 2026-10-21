@@ -29,6 +29,15 @@ jobs:
         run: pnpm install --frozen-lockfile --trust-lockfile
 
       - name: Build Web Production Assets
+        env:
+          VITE_API_URL: https://xxq-chat-backend.onrender.com
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || 'AIzaSyCCk8A6picstXW0qSMCXB75tAuj47BfJps' }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || 'xxq-chat.firebaseapp.com' }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || 'xxq-chat' }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET || 'xxq-chat.firebasestorage.app' }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID || '361932070636' }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || '1:361932070636:web:086c009ce9f7fb68998fc9' }}
+          VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID || 'G-CXJNKZYRLG' }}
         run: pnpm --filter xxq-chat-web build
 
       - name: Copy Web Dist to Desktop

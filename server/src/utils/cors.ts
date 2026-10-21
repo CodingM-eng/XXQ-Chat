@@ -30,8 +30,13 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
     return true;
   }
 
-  // Allow Electron desktop app / file scheme
-  if (cleanOrigin === 'file://' || cleanOrigin.startsWith('vscode-webview://') || cleanOrigin.startsWith('ionic://')) {
+  // Allow Electron desktop app / file scheme / local desktop origins
+  if (
+    cleanOrigin === 'file://' ||
+    cleanOrigin === 'null' ||
+    cleanOrigin.startsWith('vscode-webview://') ||
+    cleanOrigin.startsWith('ionic://')
+  ) {
     return true;
   }
 

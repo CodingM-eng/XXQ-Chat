@@ -88,8 +88,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Health check endpoints for Render and monitoring
-app.get(['/health', '/healthz'], async (req: Request, res: Response) => {
+// Health check endpoints for Render, desktop clients, and monitoring
+app.get(['/health', '/healthz', '/api/health'], async (req: Request, res: Response) => {
   try {
     const isHealthy = await dataStore.checkHealth();
     const whitelistActive = await isWhitelistModeEnabled();

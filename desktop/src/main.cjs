@@ -110,7 +110,40 @@ function createWindow() {
     }
   });
 
+  // Window Open Handler: allows Google & Firebase Auth popups while opening external links in default browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (
+      url.includes('firebaseapp.com') ||
+      url.startsWith('https://accounts.google.com') ||
+      url.includes('apis.google.com') ||
+      url.includes('googleapis.com')
+    ) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 680,
+          autoHideMenuBar: true,
+          webPreferences: {
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+          },
+        },
+      };
+    }
+
+    require('electron').shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   // IPC Event Handlers
+  ipcMain.on('shell:openExternal', (event, url) => {
+    if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+      require('electron').shell.openExternal(url);
+    }
+  });
+
   ipcMain.on('window:minimize', () => {
     mainWindow?.minimize();
   });

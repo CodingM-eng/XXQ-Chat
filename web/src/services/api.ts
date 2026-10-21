@@ -22,27 +22,11 @@ import {
   UserRelationship,
   MembershipInvitation,
 } from '../types';
+import { resolveBackendBaseUrl } from '../config/appConfig';
 
 export function getBackendBaseUrl(): string {
-  const envUrl = (import.meta.env.VITE_API_URL || '').trim();
-  if (envUrl) {
-    return envUrl.replace(/\/$/, '');
-  }
-  if (typeof window !== 'undefined') {
-    // If running on Render frontend domain (*.onrender.com), point to Render backend domain
-    if (window.location.hostname.endsWith('.onrender.com')) {
-      return 'https://xxq-chat-backend.onrender.com';
-    }
-    // If running locally in Vite dev server (port 5173, etc.)
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return 'http://localhost:4000';
-    }
-    return window.location.origin.replace(/\/$/, '');
-  }
-  return 'http://localhost:4000';
+  return resolveBackendBaseUrl();
 }
-
-const API_BASE = getBackendBaseUrl();
 
 class ApiService {
   private token: string | null = null;
@@ -83,13 +67,14 @@ class ApiService {
       headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
+    const baseUrl = getBackendBaseUrl();
     let lastError: any = null;
     const isIdempotent = !options.method || options.method === 'GET' || options.method === 'HEAD';
     const maxAttempts = isIdempotent ? retries + 1 : 1;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const response = await fetch(`${API_BASE}${endpoint}`, {
+        const response = await fetch(`${baseUrl}${endpoint}`, {
           ...options,
           headers,
         });
@@ -121,6 +106,14 @@ class ApiService {
     }
 
     if (lastError && (lastError.name === 'TypeError' || lastError.message === 'Failed to fetch')) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        const offlineError = new Error('İnternet bağlantınız kesilmiş görünüyor. Lütfen ağ bağlantınızı kontrol edin.');
+        (offlineError as any).status = 0;
+        (offlineError as any).code = 'OFFLINE';
+        (offlineError as any).isNetworkError = true;
+        throw offlineError;
+      }
+
       const friendlyError = new Error('Sunucuya bağlanılamadı. Sunucu uyku modundan (cold-start) uyanıyor veya internet bağlantınız kesilmiş olabilir. Lütfen "Yeniden Dene" seçeneğini kullanın.');
       (friendlyError as any).status = 0;
       (friendlyError as any).code = 'FAILED_TO_FETCH';
@@ -208,7 +201,7 @@ class ApiService {
     const token = this.getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${API_BASE}/api/users/avatar`, {
+    const res = await fetch(`${getBackendBaseUrl()}/api/users/avatar`, {
       method: 'POST',
       headers,
       body: formData,
@@ -234,7 +227,7 @@ class ApiService {
     const token = this.getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${API_BASE}/api/users/banner`, {
+    const res = await fetch(`${getBackendBaseUrl()}/api/users/banner`, {
       method: 'POST',
       headers,
       body: formData,
@@ -447,7 +440,7 @@ class ApiService {
     const token = this.getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${API_BASE}/api/servers/${serverId}/logo`, {
+    const res = await fetch(`${getBackendBaseUrl()}/api/servers/${serverId}/logo`, {
       method: 'POST',
       headers,
       body: formData,
@@ -479,7 +472,7 @@ class ApiService {
     const token = this.getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${API_BASE}/api/servers/${serverId}/banner`, {
+    const res = await fetch(`${getBackendBaseUrl()}/api/servers/${serverId}/banner`, {
       method: 'POST',
       headers,
       body: formData,
@@ -718,7 +711,7 @@ class ApiService {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/attachments`, {
+      const response = await fetch(`${getBackendBaseUrl()}/api/conversations/${conversationId}/attachments`, {
         method: 'POST',
         headers,
         body: formData,
@@ -746,7 +739,7 @@ class ApiService {
   getAttachmentUrl(conversationId: string, attachmentId: string): string {
     const token = this.getToken();
     const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
-    return `${API_BASE}/api/conversations/${conversationId}/attachments/${attachmentId}${tokenParam}`;
+    return `${getBackendBaseUrl()}/api/conversations/${conversationId}/attachments/${attachmentId}${tokenParam}`;
   }
 
   async downloadAttachment(conversationId: string, attachmentId: string, fileName: string): Promise<void> {
@@ -955,7 +948,7 @@ class ApiService {
     const token = this.getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/avatar`, {
+    const res = await fetch(`${getBackendBaseUrl()}/api/conversations/${conversationId}/avatar`, {
       method: 'POST',
       headers,
       body: formData,

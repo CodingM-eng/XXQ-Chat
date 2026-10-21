@@ -1,10 +1,21 @@
 import React, { useState } from 'react';
 import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, Sparkles, User, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
+import { Shield, Sparkles, User, AlertCircle, ArrowRight, RefreshCw, X } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { loginWithDev, loginWithGoogle, isFirebaseReady, error, retrySession, clearError } = useAuth();
+  const {
+    loginWithDev,
+    loginWithGoogle,
+    isFirebaseReady,
+    error,
+    retrySession,
+    clearError,
+    isWakingServer,
+    serverStatusMessage,
+    cancelWakeUp,
+  } = useAuth();
+
   const [customEmail, setCustomEmail] = useState('');
   const [customName, setCustomName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -43,7 +54,7 @@ export const AuthModal: React.FC = () => {
       clearError();
       await loginWithGoogle();
     } catch (err: any) {
-      setUiError(err.message || 'Google ile giriş başarısız oldu. Firebase yapılandırılmamışsa lütfen Test Girişini kullanın.');
+      setUiError(err.message || 'Google ile giriş başarısız oldu.');
     } finally {
       setLoading(false);
     }
@@ -67,7 +78,35 @@ export const AuthModal: React.FC = () => {
           Yeni nesil güvenli ve gerçek zamanlı mesajlaşma
         </p>
 
-        {(uiError || error) && (
+        {/* Server Cold-Start Waking Banner */}
+        {isWakingServer && (
+          <div className="w-full p-3.5 mb-4 rounded-xl bg-purple-950/80 border border-purple-700/60 text-purple-200 text-xs flex flex-col gap-2.5 shadow-lg shadow-purple-950/50 animate-fade-in">
+            <div className="flex items-start gap-2.5">
+              <RefreshCw className="w-4 h-4 animate-spin text-purple-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-purple-100">
+                  {serverStatusMessage || 'Sunucu uyandırılıyor...'}
+                </p>
+                <p className="text-[11px] text-purple-300/80 mt-0.5">
+                  Render Free servisleri uyku modundan çıkarken 30-50 saniye sürebilir.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={cancelWakeUp}
+                className="px-3 py-1 bg-purple-900/60 hover:bg-purple-800 border border-purple-600/40 text-purple-200 hover:text-white rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1"
+              >
+                <X className="w-3 h-3" />
+                <span>İptal Et</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Error Notification */}
+        {(uiError || error) && !isWakingServer && (
           <div className="w-full p-3 mb-4 rounded-xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex flex-col gap-2">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
@@ -87,18 +126,18 @@ export const AuthModal: React.FC = () => {
           </div>
         )}
 
-        {loading && (
+        {loading && !isWakingServer && (
           <div className="w-full p-2.5 mb-4 rounded-xl bg-purple-950/60 border border-purple-800/40 text-purple-200 text-xs flex items-center justify-center gap-2 animate-pulse">
             <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
-            <span>Sunucuya bağlanılıyor, lütfen bekleyin...</span>
+            <span>İşlem yapılıyor, lütfen bekleyin...</span>
           </div>
         )}
 
         {/* Google Authentication Button */}
         <button
           onClick={handleGoogleLogin}
-          disabled={loading}
-          className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs rounded-xl shadow-lg transition-all mb-4 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          disabled={loading || isWakingServer}
+          className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-900 font-semibold text-xs rounded-xl shadow-lg transition-all mb-4 focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24">
             <path
@@ -122,8 +161,8 @@ export const AuthModal: React.FC = () => {
         </button>
 
         {!isFirebaseReady && (
-          <p className="text-[11px] text-slate-500 mb-6 text-center leading-relaxed">
-            * Firebase OAuth kimlik bilgileri <code className="text-brand-300">.env</code> dosyasında yapılandırılabilir. Aşağıdaki onaylı test hesaplarını hemen kullanabilirsiniz.
+          <p className="text-[11px] text-amber-300/90 mb-4 text-center leading-relaxed bg-amber-950/40 border border-amber-600/30 p-2 rounded-xl">
+            Firebase yapılandırması eksik. Lütfen aşağıdaki onaylı test hesaplarını kullanın.
           </p>
         )}
 
@@ -137,8 +176,8 @@ export const AuthModal: React.FC = () => {
         <div className="w-full space-y-2 mt-3 mb-6">
           <button
             onClick={() => handleDevLogin('admin@xxqchat.com', 'Sistem Yöneticisi')}
-            disabled={loading}
-            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group"
+            disabled={loading || isWakingServer}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group disabled:opacity-50"
           >
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-sky-950 border border-sky-800 flex items-center justify-center text-sky-400">
@@ -154,8 +193,8 @@ export const AuthModal: React.FC = () => {
 
           <button
             onClick={() => handleDevLogin('alice@xxqchat.com', 'Alice (Onaylı)')}
-            disabled={loading}
-            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group"
+            disabled={loading || isWakingServer}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group disabled:opacity-50"
           >
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400">
@@ -171,8 +210,8 @@ export const AuthModal: React.FC = () => {
 
           <button
             onClick={() => handleDevLogin('eve@outsider.com', 'Eve (Onaysız)')}
-            disabled={loading}
-            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group"
+            disabled={loading || isWakingServer}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors group disabled:opacity-50"
           >
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-rose-950 border border-rose-800 flex items-center justify-center text-rose-400">
@@ -194,11 +233,12 @@ export const AuthModal: React.FC = () => {
             value={customEmail}
             onChange={(e) => setCustomEmail(e.target.value)}
             placeholder="Veya özel e-posta ile giriş yapın..."
-            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            disabled={loading || isWakingServer}
+            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={loading || !customEmail.trim()}
+            disabled={loading || isWakingServer || !customEmail.trim()}
             className="w-full py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors"
           >
             Özel E-posta ile Giriş Yap
