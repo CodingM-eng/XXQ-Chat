@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../services/api';
+import { api, getBackendBaseUrl } from '../../services/api';
 import {
   X,
   Download,
@@ -119,6 +119,13 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
   };
 
   const currentTab = selectedTab;
+  const backendUrl = getBackendBaseUrl();
+  const windowsDownloadUrl = downloadStatus?.windows?.githubDirectUrl || `${backendUrl}/api/downloads/windows`;
+  const windowsReleaseUrl = downloadStatus?.windows?.githubReleaseUrl || 'https://github.com/CodingM-eng/XXQ-Chat/releases/tag/v1.0.1';
+  const windowsSha256Url = downloadStatus?.windows?.sha256Url || `${backendUrl}/api/downloads/windows/sha256`;
+
+  const androidDownloadUrl = downloadStatus?.android?.githubDirectUrl || `${backendUrl}/api/downloads/android`;
+  const androidReleaseUrl = downloadStatus?.android?.githubReleaseUrl || 'https://github.com/CodingM-eng/XXQ-Chat/releases/tag/v1.0.1';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in">
@@ -246,7 +253,7 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                       <span className="text-purple-300 font-semibold shrink-0">SHA-256:</span>
                       <span className="truncate select-all text-purple-100">{downloadStatus.windows.sha256}</span>
                       <a
-                        href="/api/downloads/windows/sha256"
+                        href={windowsSha256Url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-purple-400 hover:text-purple-200 text-[10px] underline shrink-0 font-sans"
@@ -258,15 +265,21 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  {downloadStatus?.windows?.available !== false ? (
+                    <a
+                      href={windowsDownloadUrl}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Windows için İndir (.exe)</span>
+                    </a>
+                  ) : (
+                    <div className="text-xs text-amber-300 bg-amber-950/40 border border-amber-600/30 px-3 py-2 rounded-xl">
+                      Windows kurulum paketi hazırlanıyor.
+                    </div>
+                  )}
                   <a
-                    href="/api/downloads/windows"
-                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Windows için İndir (.exe)</span>
-                  </a>
-                  <a
-                    href="https://github.com/CodingM-eng/XXQ-Chat/releases/tag/v1.0.1"
+                    href={windowsReleaseUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-3 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-600/40 text-purple-200 font-medium text-xs transition-colors whitespace-nowrap"
@@ -361,20 +374,32 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({ isOpen, onClose })
                     Android 8.0 ve üzeri • Sistem Paket Yükleyicisi Destekli • Sesli & Görüntülü Arama
                   </p>
                   <p className="text-[11px] text-purple-300 mt-1">
-                    Dosya: <code className="text-white">XXQ-Chat-debug.apk</code> ({formatFileSize(downloadStatus?.android?.fileSize) || '11.4 MB'})
+                    Dosya: <code className="text-white">{downloadStatus?.android?.fileName || 'XXQ-Chat-Android-debug.apk'}</code> ({formatFileSize(downloadStatus?.android?.fileSize) || '12.0 MB'})
                   </p>
+                  {downloadStatus?.android?.sha256 && (
+                    <div className="mt-2 p-2 rounded-lg bg-black/40 border border-purple-500/20 text-[10px] text-slate-300 font-mono flex items-center justify-between gap-2 overflow-x-auto">
+                      <span className="text-purple-300 font-semibold shrink-0">SHA-256:</span>
+                      <span className="truncate select-all text-purple-100">{downloadStatus.android.sha256}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  {downloadStatus?.android?.available !== false ? (
+                    <a
+                      href={androidDownloadUrl}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>APK İndir</span>
+                    </a>
+                  ) : (
+                    <div className="text-xs text-amber-300 bg-amber-950/40 border border-amber-600/30 px-3 py-2 rounded-xl">
+                      Android paketi hazırlanıyor.
+                    </div>
+                  )}
                   <a
-                    href="/api/downloads/android"
-                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-lg shadow-purple-900/40 transition-all hover:scale-[1.02] active:scale-[0.98] whitespace-nowrap"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>APK İndir</span>
-                  </a>
-                  <a
-                    href="https://github.com/CodingM-eng/XXQ-Chat/releases/tag/v1.0.1"
+                    href={androidReleaseUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-3 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 border border-purple-600/40 text-purple-200 font-medium text-xs transition-colors whitespace-nowrap"

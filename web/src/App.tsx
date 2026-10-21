@@ -84,7 +84,40 @@ export const AppContent: React.FC = () => {
 
   // Modals & Panels
   const [isMemberListOpen, setIsMemberListOpen] = useState(false);
-  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.toLowerCase();
+      const search = window.location.search.toLowerCase();
+      return (
+        path.includes('/downloads') ||
+        path.includes('/indir') ||
+        path.includes('/api/downloads') ||
+        search.includes('download=true') ||
+        search.includes('indir=true')
+      );
+    }
+    return false;
+  });
+
+  // Keep download modal synced with browser history/URLs
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const path = window.location.pathname.toLowerCase();
+      const search = window.location.search.toLowerCase();
+      if (
+        path.includes('/downloads') ||
+        path.includes('/indir') ||
+        path.includes('/api/downloads') ||
+        search.includes('download=true') ||
+        search.includes('indir=true')
+      ) {
+        setIsDownloadModalOpen(true);
+      }
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    return () => window.removeEventListener('popstate', handleUrlChange);
+  }, []);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isNewServerOpen, setIsNewServerOpen] = useState(false);
   const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
@@ -1113,7 +1146,17 @@ export const AppContent: React.FC = () => {
         {/* Download Modal */}
         <DownloadModal
           isOpen={isDownloadModalOpen}
-          onClose={() => setIsDownloadModalOpen(false)}
+          onClose={() => {
+            setIsDownloadModalOpen(false);
+            if (
+              window.location.pathname.toLowerCase().includes('/downloads') ||
+              window.location.pathname.toLowerCase().includes('/indir') ||
+              window.location.search.toLowerCase().includes('download=true') ||
+              window.location.search.toLowerCase().includes('indir=true')
+            ) {
+              window.history.replaceState({}, '', '/');
+            }
+          }}
         />
       </Suspense>
 

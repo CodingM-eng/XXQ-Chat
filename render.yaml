@@ -61,6 +61,9 @@ services:
     buildCommand: corepack pnpm install --frozen-lockfile --trust-lockfile && corepack pnpm --filter xxq-chat-web build
     staticPublishPath: ./web/dist
     routes:
+      - type: redirect
+        source: /api/*
+        destination: https://xxq-chat-backend.onrender.com/api/*
       - type: rewrite
         source: /*
         destination: /index.html
