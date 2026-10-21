@@ -10,6 +10,13 @@
     "src/**/*",
     "web/**/*"
   ],
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "CodingM-eng",
+      "repo": "XXQ-Chat"
+    }
+  ],
   "win": {
     "target": [
       {
@@ -29,5 +36,22 @@
     "createStartMenuShortcut": true,
     "runAfterFinish": true,
     "artifactName": "XXQ-Chat-Setup.exe"
+  },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      },
+      {
+        "target": "deb",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Network;Chat;InstantMessaging",
+    "maintainer": "XXQ Chat Team <dev@xxqchat.com>",
+    "executableName": "xxq-chat",
+    "synopsis": "XXQ Chat Güvenli ve Gerçek Zamanlı Mesajlaşma",
+    "description": "XXQ Chat modern, güvenli ve gerçek zamanlı masaüstü mesajlaşma istemcisi"
   }
 }

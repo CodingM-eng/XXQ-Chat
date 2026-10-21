@@ -17,6 +17,7 @@ import { invitationsRouter } from './routes/invitations.js';
 import { friendsRouter } from './routes/friends.js';
 import { gifsRouter } from './routes/gifs.js';
 import { downloadsRouter } from './routes/downloads.js';
+import { updatesRouter } from './routes/updates.js';
 import { isAllowedOrigin } from './utils/cors.js';
 
 // Asynchronously initialize database
@@ -127,6 +128,7 @@ app.use('/api/search', searchRouter);
 app.use('/api/support', supportRouter);
 app.use('/api/gifs', gifsRouter);
 app.use('/api/downloads', downloadsRouter);
+app.use('/api/updates', updatesRouter);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

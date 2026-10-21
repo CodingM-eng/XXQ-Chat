@@ -32,6 +32,7 @@ import type { ActiveCallState } from './components/chat/ActiveCallModal';
 // Performance optimization: Lazy-load non-critical modals and heavy admin chunks
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel').then((m) => ({ default: m.AdminPanel })));
 const DownloadModal = lazy(() => import('./components/common/DownloadModal').then((m) => ({ default: m.DownloadModal })));
+const UpdateNotificationModal = lazy(() => import('./components/common/UpdateNotificationModal').then((m) => ({ default: m.UpdateNotificationModal })));
 const ActiveCallModal = lazy(() => import('./components/chat/ActiveCallModal').then((m) => ({ default: m.ActiveCallModal })));
 const IncomingCallModal = lazy(() => import('./components/chat/IncomingCallModal').then((m) => ({ default: m.IncomingCallModal })));
 const NewChatModal = lazy(() => import('./components/chat/NewChatModal').then((m) => ({ default: m.NewChatModal })));
@@ -1158,6 +1159,9 @@ export const AppContent: React.FC = () => {
             }
           }}
         />
+
+        {/* Cross-Platform Update Notification Modal */}
+        <UpdateNotificationModal />
       </Suspense>
 
       {/* Inspected User Profile Modal */}

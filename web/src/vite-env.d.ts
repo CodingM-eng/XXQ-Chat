@@ -35,6 +35,17 @@ interface ElectronAPI {
   isMaximized?: () => Promise<boolean>;
   showNotification?: (title: string, body: string) => void;
   getAppVersion?: () => Promise<string>;
+  updater?: {
+    check?: () => Promise<any>;
+    download?: () => Promise<any>;
+    install?: () => Promise<void>;
+    cancel?: () => Promise<void>;
+    onUpdateAvailable?: (callback: (data: any) => void) => () => void;
+    onUpdateProgress?: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
+    onUpdateDownloaded?: (callback: (data: any) => void) => () => void;
+    onUpdateError?: (callback: (err: { error: string; isManual?: boolean }) => void) => () => void;
+    onUpdateNotAvailable?: (callback: (data: any) => void) => () => void;
+  };
 }
 
 interface Window {

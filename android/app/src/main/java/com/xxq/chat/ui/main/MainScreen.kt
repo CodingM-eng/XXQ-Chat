@@ -40,6 +40,28 @@ fun MainScreen(
   var showAdminView by remember { mutableStateOf(false) }
   var showLoginDialog by remember { mutableStateOf(false) }
   var showNewChatDialog by remember { mutableStateOf(false) }
+  var updateInfo by remember { mutableStateOf<AppUpdateCheckResult?>(null) }
+  val context = androidx.compose.ui.platform.LocalContext.current
+
+  LaunchedEffect(Unit) {
+    try {
+      val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+      val currentVer = packageInfo.versionName ?: "1.0.0"
+      val result = UpdateManager.checkForUpdates(currentVersion = currentVer)
+      if (result != null && result.updateAvailable && result.artifact != null) {
+        updateInfo = result
+      }
+    } catch (e: Exception) {
+      android.util.Log.w("MainScreen", "Güncelleme denetimi atlandı: ${e.message}")
+    }
+  }
+
+  updateInfo?.let { update ->
+    UpdateDialog(
+      updateInfo = update,
+      onDismiss = { updateInfo = null }
+    )
+  }
 
   // 1. If Whitelist is Active and user is not approved
   if (currentUser != null && whitelistStatus.modeActive && !whitelistStatus.isApproved) {

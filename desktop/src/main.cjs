@@ -1,10 +1,12 @@
 const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage, session, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { DesktopUpdater } = require('./updater.cjs');
 
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+const updater = new DesktopUpdater();
 
 // Request single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -89,8 +91,17 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
   }
 
+  updater.setMainWindow(mainWindow);
+
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+
+    // Check for trustworthy updates on app startup (after short delay)
+    setTimeout(() => {
+      updater.checkForUpdates(false).catch((err) => {
+        console.warn('[Updater] Startup check error:', err.message);
+      });
+    }, 2500);
   });
 
   // Minimize to tray on close if user prefers
@@ -173,6 +184,12 @@ function createWindow() {
       new Notification({ title, body }).show();
     }
   });
+
+  // Cross-Platform In-App Updater Handlers
+  ipcMain.handle('updater:check', () => updater.checkForUpdates(true));
+  ipcMain.handle('updater:download', () => updater.startDownload());
+  ipcMain.handle('updater:install', () => updater.installAndRestart());
+  ipcMain.handle('updater:cancel', () => updater.cancelDownload());
 }
 
 app.on('before-quit', () => {

@@ -31,4 +31,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   showNotification: (title, body) => ipcRenderer.send('notification:show', { title, body }),
   getAppVersion: () => ipcRenderer.invoke('app:version'),
+
+  // Cross-Platform Auto-Updater API
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    cancel: () => ipcRenderer.invoke('updater:cancel'),
+    onUpdateAvailable: (callback) => {
+      const listener = (_, data) => callback(data);
+      ipcRenderer.on('updater:update-available', listener);
+      return () => ipcRenderer.removeListener('updater:update-available', listener);
+    },
+    onUpdateProgress: (callback) => {
+      const listener = (_, data) => callback(data);
+      ipcRenderer.on('updater:download-progress', listener);
+      return () => ipcRenderer.removeListener('updater:download-progress', listener);
+    },
+    onUpdateDownloaded: (callback) => {
+      const listener = (_, data) => callback(data);
+      ipcRenderer.on('updater:update-downloaded', listener);
+      return () => ipcRenderer.removeListener('updater:update-downloaded', listener);
+    },
+    onUpdateError: (callback) => {
+      const listener = (_, data) => callback(data);
+      ipcRenderer.on('updater:error', listener);
+      return () => ipcRenderer.removeListener('updater:error', listener);
+    },
+    onUpdateNotAvailable: (callback) => {
+      const listener = (_, data) => callback(data);
+      ipcRenderer.on('updater:update-not-available', listener);
+      return () => ipcRenderer.removeListener('updater:update-not-available', listener);
+    },
+  },
 });

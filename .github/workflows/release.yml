@@ -107,9 +107,71 @@ jobs:
           name: xxq-chat-android-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
+  build-linux-packages:
+    name: Build Linux Packages (.AppImage, .deb)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --trust-lockfile
+
+      - name: Build Web Production Assets
+        env:
+          VITE_API_URL: https://xxq-chat-backend.onrender.com
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || 'AIzaSyCCk8A6picstXW0qSMCXB75tAuj47BfJps' }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || 'xxq-chat.firebaseapp.com' }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || 'xxq-chat' }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET || 'xxq-chat.firebasestorage.app' }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID || '361932070636' }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || '1:361932070636:web:086c009ce9f7fb68998fc9' }}
+          VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID || 'G-CXJNKZYRLG' }}
+        run: pnpm --filter xxq-chat-web build
+
+      - name: Copy Web Dist to Desktop
+        run: |
+          mkdir -p desktop/web
+          cp -r web/dist/* desktop/web/
+
+      - name: Build Linux Packages (AppImage & deb)
+        run: pnpm --filter xxq-chat-desktop run build:linux
+
+      - name: Verify Linux Packages
+        run: |
+          ls -la desktop/release/
+          shopt -s nullglob
+          appimages=(desktop/release/*.AppImage)
+          debs=(desktop/release/*.deb)
+          if [ ${#appimages[@]} -eq 0 ] && [ ${#debs[@]} -eq 0 ]; then
+            echo "Expected Linux packages not found!"
+            exit 1
+          fi
+
+      - name: Upload Linux Package Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xxq-chat-linux-packages
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: warn
+
   publish-github-release:
     name: Create GitHub Release with Artifacts
-    needs: [build-windows-exe, build-android-apk]
+    needs: [build-windows-exe, build-android-apk, build-linux-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -130,6 +192,13 @@ jobs:
           name: xxq-chat-android-apk
           path: release-artifacts/android
 
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: xxq-chat-linux-packages
+          path: release-artifacts/linux
+
       - name: Prepare Release Assets & Checksums
         run: |
           mkdir -p dist-release
@@ -139,8 +208,11 @@ jobs:
             cp release-artifacts/windows/XXQ-Chat-Windows-x64.zip dist-release/XXQ-Chat-Windows-x64.zip
           fi
           cp release-artifacts/android/app-debug.apk dist-release/XXQ-Chat-Android-debug.apk
+          if [ -d release-artifacts/linux ]; then
+            cp release-artifacts/linux/* dist-release/ 2>/dev/null || true
+          fi
           cd dist-release
-          sha256sum XXQ-Chat-Setup.exe XXQ-Chat-Android-debug.apk > SHA256SUMS.txt
+          sha256sum $(find . -maxdepth 1 -type f ! -name "*.sha256" ! -name "SHA256SUMS.txt") > SHA256SUMS.txt
           cat SHA256SUMS.txt
           cd ..
 
@@ -148,11 +220,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-release/XXQ-Chat-Setup.exe
-            dist-release/XXQ-Chat-Setup.exe.sha256
-            dist-release/XXQ-Chat-Windows-x64.zip
-            dist-release/XXQ-Chat-Android-debug.apk
-            dist-release/SHA256SUMS.txt
+            dist-release/*
           name: XXQ Chat Release ${{ github.ref_name }}
           draft: false
           prerelease: false

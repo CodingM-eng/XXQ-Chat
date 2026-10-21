@@ -57,3 +57,24 @@ data class AuditLog(
   val details: String? = null,
   val createdAt: String
 )
+
+@Serializable
+data class AppUpdateArtifact(
+  val fileName: String,
+  val fileSize: Long,
+  val sha256: String,
+  val downloadUrl: String,
+  val installType: String = "apk",
+  val instruction: String? = null
+)
+
+@Serializable
+data class AppUpdateCheckResult(
+  val updateAvailable: Boolean,
+  val currentInstalledVersion: String,
+  val latestVersion: String,
+  val releaseNotes: String? = null,
+  val githubReleaseUrl: String? = null,
+  val artifact: AppUpdateArtifact? = null,
+  val message: String? = null
+)
